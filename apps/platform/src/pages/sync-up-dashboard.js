@@ -1,0 +1,6 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+// Sync-Up Dashboard — real-time view of active memory tunnels & sync state
+export function SyncUpDashboard() {
+    return (_jsxs("div", { className: "space-y-6", children: [_jsxs("div", { className: "flex items-center justify-between", children: [_jsx("h2", { className: "text-2xl font-bold", children: "Sync-Up Dashboard" }), _jsx("button", { className: "rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500 transition", children: "+ New Tunnel" })] }), _jsxs("section", { children: [_jsx("h3", { className: "mb-3 text-sm font-medium text-zinc-400", children: "Active Memory Tunnels" }), _jsx("div", { className: "grid gap-4 md:grid-cols-2 lg:grid-cols-3" })] }), _jsxs("section", { className: "rounded-xl border border-zinc-800 bg-zinc-950 p-6", children: [_jsx("h3", { className: "mb-2 text-sm font-medium text-zinc-400", children: "Token Compression" }), _jsx("p", { className: "text-4xl font-bold text-indigo-400", children: "92.3%" }), _jsx("p", { className: "text-sm text-zinc-500", children: "Average across active tunnels" })] }), _jsx("section", { children: _jsx("h3", { className: "mb-3 text-sm font-medium text-zinc-400", children: "Recent Sync Activity" }) })] }));
+}
+//# sourceMappingURL=sync-up-dashboard.js.map

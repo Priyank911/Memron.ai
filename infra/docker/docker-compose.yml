@@ -1,0 +1,43 @@
+services:
+  # ────── Data Stores ──────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: memron
+      POSTGRES_PASSWORD: memron
+      POSTGRES_DB: memron
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+  # ────── IPFS Node ──────
+  ipfs:
+    image: ipfs/kubo:latest
+    ports:
+      - "4001:4001"      # Swarm
+      - "5001:5001"      # API
+      - "8080:8080"      # Gateway
+    volumes:
+      - ipfs-data:/data/ipfs
+
+  # ────── Observability ──────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    ports:
+      - "4317:4317"      # gRPC
+      - "4318:4318"      # HTTP
+    volumes:
+      - ./otel-config.yaml:/etc/otelcol-contrib/config.yaml
+
+volumes:
+  redis-data:
+  pg-data:
+  ipfs-data:

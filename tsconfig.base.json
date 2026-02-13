@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "incremental": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "@memron/mcp-bridge": ["./packages/mcp-bridge/src"],
+      "@memron/lit-encryption": ["./packages/lit-encryption/src"],
+      "@memron/ipfs-persistence": ["./packages/ipfs-persistence/src"],
+      "@memron/memory-core": ["./packages/memory-core/src"],
+      "@memron/trust-registry": ["./packages/trust-registry/src"],
+      "@memron/shared-types": ["./packages/shared-types/src"],
+      "@memron/ui": ["./packages/ui/src"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next", "coverage"]
+}

@@ -1,0 +1,32 @@
+FROM node:20-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+
+# Install dependencies
+FROM base AS deps
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json ./
+COPY apps/platform/package.json ./apps/platform/
+COPY packages/shared-types/package.json ./packages/shared-types/
+COPY packages/mcp-bridge/package.json ./packages/mcp-bridge/
+COPY packages/memory-core/package.json ./packages/memory-core/
+COPY packages/lit-encryption/package.json ./packages/lit-encryption/
+COPY packages/ipfs-persistence/package.json ./packages/ipfs-persistence/
+COPY packages/trust-registry/package.json ./packages/trust-registry/
+COPY packages/ui/package.json ./packages/ui/
+COPY services/memory-tunnel-api/package.json ./services/memory-tunnel-api/
+COPY services/gateway/package.json ./services/gateway/
+COPY services/workers/package.json ./services/workers/
+RUN pnpm install --frozen-lockfile
+
+# Build
+FROM deps AS build
+COPY . .
+RUN pnpm turbo build --filter=@memron/memory-tunnel-api
+
+# Production
+FROM base AS production
+COPY --from=build /app/services/memory-tunnel-api/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+EXPOSE 4200
+CMD ["node", "dist/index.js"]

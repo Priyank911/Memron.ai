@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+.pnpm-store
+package-lock.json
+
+# Source control
+.git
+.gitignore
+
+# Env files (Vercel handles these separately)
+.env*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Testing
+coverage
+.nyc_output
+
+# Build artifacts (Vercel builds these)
+.next
+out
+
+# Documentation
+README.md
+CHANGELOG.md
+
+# CI/CD
+.github
+
+# Misc
+*.log
+.DS_Store

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@memron/mcp-bridge": ["../../packages/mcp-bridge/src"],
+      "@memron/shared-types": ["../../packages/shared-types/src"],
+      "@memron/ui": ["../../packages/ui/src"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite-env.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}
