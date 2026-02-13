@@ -1,6 +1,6 @@
 <div align="center">
 
-![Memron](./apps/landing/public/logo_w.png)
+<img src="./apps/landing/public/logo_w.png" alt="Memron" width="180"/>
 
 # Memron
 
