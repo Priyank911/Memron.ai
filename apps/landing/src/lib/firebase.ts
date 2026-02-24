@@ -14,7 +14,7 @@ function getServiceAccount(): admin.ServiceAccount | undefined {
         try {
             return JSON.parse(Buffer.from(raw, 'base64').toString('utf-8')) as admin.ServiceAccount;
         } catch {
-            console.error('[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY');
+            console.error('[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY. Expected raw JSON or base64-encoded JSON string.');
             return undefined;
         }
     }
@@ -39,8 +39,8 @@ if (!admin.apps.length) {
     }
 }
 
-const app = admin.apps[0]!;
-const db = admin.firestore();
+const app = admin.apps[0] ?? null;
+const db = app ? admin.firestore() : (null as unknown as admin.firestore.Firestore);
 
 // ─── User Operations ────────────────────────────────────────
 
