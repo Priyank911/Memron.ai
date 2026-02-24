@@ -6,6 +6,8 @@ const nextConfig = {
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.memron.ai' },
+      { protocol: 'https', hostname: 'img.clerk.com' },
+      { protocol: 'https', hostname: 'img.clerkusercontent.com' },
     ],
     formats: ['image/avif', 'image/webp'],
   },

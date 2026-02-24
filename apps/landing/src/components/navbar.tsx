@@ -311,7 +311,7 @@ export function Navbar() {
           <div className="navbar-actions desktop-only">
             <GitHubStars />
             <ThemeToggle />
-            <Link href="/early-access" className="signin-btn">
+            <Link href="/login" className="signin-btn">
               <span className="signin-btn-bg"></span>
               <span className="signin-btn-text">Get Early Access</span>
               <span className="signin-btn-arrow">
@@ -454,7 +454,7 @@ export function Navbar() {
             <GitHubStars />
             <ThemeToggle />
           </div>
-          <Link href="/early-access" className="sidebar-cta" onClick={closeMobileMenu}>
+          <Link href="/login" className="sidebar-cta" onClick={closeMobileMenu}>
             Get Early Access
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M5 12h14M12 5l7 7-7 7"/>

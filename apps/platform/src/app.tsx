@@ -8,7 +8,7 @@ import { DropInbox } from './pages/drop-inbox';
 import { AccessControl } from './pages/access-control';
 import { TrustScores } from './pages/trust-scores';
 import { Settings } from './pages/settings';
-import { ConnectWallet } from './pages/connect-wallet';
+import { LoginPage } from './pages/login';
 
 const queryClient = new QueryClient();
 
@@ -18,7 +18,7 @@ export function App() {
       <WalletProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/connect" element={<ConnectWallet />} />
+            <Route path="/login" element={<LoginPage />} />
             <Route path="/" element={<DashboardLayout />}>
               <Route index element={<SyncUpDashboard />} />
               <Route path="memory" element={<MemoryExplorer />} />

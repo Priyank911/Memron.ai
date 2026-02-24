@@ -1,0 +1,579 @@
+/* ================================================================
+   Login Page — Split-screen layout
+   Left: White panel — login form
+   Right: Black panel — Memron branding & project showcase
+   ================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* ---- Root ---- */
+.login-page {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+}
+
+/* ================================================================
+   LEFT PANEL — White
+   ================================================================ */
+.login-left {
+    flex: 0 0 48%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: #ffffff;
+    padding: 3rem 2.5rem;
+    position: relative;
+}
+
+/* subtle radial glow */
+.login-left::before {
+    content: '';
+    position: absolute;
+    top: -80px;
+    right: -80px;
+    width: 280px;
+    height: 280px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.045) 0%, transparent 70%);
+    pointer-events: none;
+}
+
+.login-left-inner {
+    width: 100%;
+    max-width: 400px;
+    opacity: 0;
+    animation: loginFadeUp 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ---- Logo ---- */
+.login-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 2.75rem;
+}
+
+.login-logo-img {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+}
+
+.login-logo-text {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #09090b;
+    letter-spacing: -0.025em;
+}
+
+/* ---- Title ---- */
+.login-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.85rem;
+    font-weight: 700;
+    color: #09090b;
+    letter-spacing: -0.03em;
+    margin-bottom: 0.4rem;
+}
+
+.login-subtitle {
+    font-size: 0.92rem;
+    color: #71717a;
+    line-height: 1.55;
+    margin-bottom: 2rem;
+}
+
+/* ---- Form ---- */
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+}
+
+.login-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.login-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #3f3f46;
+    letter-spacing: 0.02em;
+}
+
+.login-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #fafafa;
+    border: 1.5px solid #e4e4e7;
+    border-radius: 10px;
+    padding: 0 14px;
+    height: 48px;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.login-input-wrap:focus-within {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08);
+    background: #fff;
+}
+
+.login-input-icon {
+    width: 18px;
+    height: 18px;
+    color: #a1a1aa;
+    flex-shrink: 0;
+}
+
+.login-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: 0.9rem;
+    color: #09090b;
+    outline: none;
+    font-family: inherit;
+}
+
+.login-input::placeholder {
+    color: #a1a1aa;
+}
+
+/* ---- Remember / Forgot row ---- */
+.login-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.login-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.84rem;
+    color: #3f3f46;
+    cursor: pointer;
+    user-select: none;
+}
+
+.login-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: #6366f1;
+    cursor: pointer;
+}
+
+.login-forgot {
+    font-size: 0.82rem;
+    color: #6366f1;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.login-forgot:hover {
+    color: #4f46e5;
+}
+
+/* ---- Primary button ---- */
+.login-btn {
+    width: 100%;
+    height: 48px;
+    border: none;
+    border-radius: 10px;
+    background: #09090b;
+    color: #fff;
+    font-family: inherit;
+    font-size: 0.92rem;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+    transition: background 0.25s, box-shadow 0.25s, transform 0.2s;
+}
+
+.login-btn:hover {
+    background: #18181b;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+    transform: translateY(-1px);
+}
+
+.login-btn:active {
+    transform: translateY(0);
+}
+
+/* ---- Divider ---- */
+.login-divider {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.login-divider-line {
+    flex: 1;
+    height: 1px;
+    background: #e4e4e7;
+}
+
+.login-divider-text {
+    font-size: 0.75rem;
+    color: #a1a1aa;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+}
+
+/* ---- Social buttons row ---- */
+.login-social-row {
+    display: flex;
+    gap: 12px;
+}
+
+.login-social-btn {
+    flex: 1;
+    height: 46px;
+    border: 1.5px solid #e4e4e7;
+    border-radius: 10px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-family: inherit;
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: #09090b;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s, transform 0.2s;
+    position: relative;
+}
+
+.login-social-btn:hover {
+    border-color: #d4d4d8;
+    background: #fafafa;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    transform: translateY(-1px);
+}
+
+.login-social-btn svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+/* "Last used" badge */
+.login-badge {
+    position: absolute;
+    top: -9px;
+    right: -6px;
+    background: #10b981;
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+    line-height: 1.4;
+    box-shadow: 0 1px 4px rgba(16, 185, 129, 0.3);
+}
+
+/* ---- Footer ---- */
+.login-footer {
+    margin-top: 2rem;
+    text-align: center;
+}
+
+.login-footer-text {
+    font-size: 0.82rem;
+    color: #a1a1aa;
+    line-height: 1.5;
+}
+
+.login-footer-text a {
+    color: #6366f1;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.login-footer-text a:hover {
+    text-decoration: underline;
+    color: #4f46e5;
+}
+
+/* ================================================================
+   RIGHT PANEL — Black
+   ================================================================ */
+.login-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-start;
+    background: #09090b;
+    position: relative;
+    padding: 3rem;
+    overflow: hidden;
+}
+
+/* ---- Gradient orbs ---- */
+.login-right::before {
+    content: '';
+    position: absolute;
+    top: -25%;
+    right: -15%;
+    width: 550px;
+    height: 550px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.10) 0%, transparent 70%);
+    animation: loginFloat 9s ease-in-out infinite;
+    pointer-events: none;
+}
+
+.login-right::after {
+    content: '';
+    position: absolute;
+    bottom: -20%;
+    left: -10%;
+    width: 450px;
+    height: 450px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, transparent 70%);
+    animation: loginFloat 12s ease-in-out infinite reverse;
+    pointer-events: none;
+}
+
+/* ---- Big watermark logo ---- */
+.login-watermark {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -55%);
+    width: 380px;
+    height: 380px;
+    object-fit: contain;
+    opacity: 0.07;
+    pointer-events: none;
+    animation: loginPulse 8s ease-in-out infinite;
+}
+
+/* ---- Right content wrapper ---- */
+.login-right-content {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 520px;
+    opacity: 0;
+    animation: loginFadeUp 0.65s 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ---- Brand label ---- */
+.login-brand {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #6366f1;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: 0.6rem;
+}
+
+/* ---- Headline ---- */
+.login-headline {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 2.25rem;
+    font-weight: 700;
+    color: #fafafa;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+    margin-bottom: 0.75rem;
+}
+
+.login-desc {
+    font-size: 0.9rem;
+    color: #a1a1aa;
+    line-height: 1.7;
+    margin-bottom: 2.25rem;
+    max-width: 440px;
+}
+
+/* ---- Stats row ---- */
+.login-stats {
+    display: flex;
+    gap: 2.5rem;
+    margin-bottom: 2.25rem;
+}
+
+.login-stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.login-stat-val {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #fafafa;
+}
+
+.login-stat-val .accent {
+    color: #6366f1;
+}
+
+.login-stat-label {
+    font-size: 0.72rem;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* ---- Feature card (glass) ---- */
+.login-card {
+    background: rgba(255, 255, 255, 0.035);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 18px;
+    padding: 1.5rem 1.75rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s;
+}
+
+.login-card:hover {
+    border-color: rgba(99, 102, 241, 0.18);
+}
+
+.login-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #6366f1, transparent);
+    opacity: 0.4;
+}
+
+.login-card-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #fafafa;
+    margin-bottom: 0.4rem;
+}
+
+.login-card-desc {
+    font-size: 0.83rem;
+    color: #71717a;
+    line-height: 1.6;
+    margin-bottom: 1.1rem;
+}
+
+/* ---- Platform pills ---- */
+.login-pills {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.login-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border-radius: 100px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.74rem;
+    font-weight: 500;
+    color: #d4d4d8;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.login-pill:hover {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(99, 102, 241, 0.22);
+    color: #a5b4fc;
+}
+
+.login-pill-dot {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: #3f3f46;
+}
+
+/* ================================================================
+   Animations
+   ================================================================ */
+@keyframes loginFadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(18px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes loginFloat {
+
+    0%,
+    100% {
+        transform: translate(0, 0) scale(1);
+    }
+
+    50% {
+        transform: translate(12px, -16px) scale(1.04);
+    }
+}
+
+@keyframes loginPulse {
+
+    0%,
+    100% {
+        opacity: 0.07;
+    }
+
+    50% {
+        opacity: 0.11;
+    }
+}
+
+/* ================================================================
+   Responsive
+   ================================================================ */
+@media (max-width: 1024px) {
+    .login-page {
+        flex-direction: column;
+    }
+
+    .login-left {
+        flex: none;
+        min-height: 100vh;
+    }
+
+    .login-right {
+        display: none;
+    }
+}
+
+@media (max-width: 640px) {
+    .login-left {
+        padding: 2rem 1.25rem;
+    }
+
+    .login-title {
+        font-size: 1.55rem;
+    }
+}

@@ -91,3 +91,6 @@ Thumbs.db
 
 # Type declarations (auto-generated)
 *.tsbuildinfo
+
+# clerk configuration (can include secrets)
+/.clerk/
