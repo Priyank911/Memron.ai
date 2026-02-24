@@ -624,7 +624,7 @@ export default function HomePage() {
                         <g className="cpp-pill">
                           <rect x="0" y="0" width="240" height="32" rx="8" fill="var(--cpp-pill-bg)" />
                           <circle cx="16" cy="16" r="9" fill="none" stroke="var(--cpp-accent-green)" strokeWidth="1.5" />
-                          <path d="M12 10 l4 4 l8 -8" fill="none" stroke="var(--cpp-accent-green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M11 16 l3 3 l6 -6" fill="none" stroke="var(--cpp-accent-green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                           <text x="35" y="20" className="cpp-pill-text">Hash: bafk...x7q2</text>
                         </g>
                       </g>

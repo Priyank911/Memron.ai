@@ -1,15 +1,18 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 
 export function FlowchartCard() {
   const cardRef = useRef<HTMLDivElement>(null);
+  const flowchartRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
   const currentValues = useRef({ scale: 0.88, borderRadius: 28, margin: 40, shadow: 0.15, frame: 0 });
+  const [isFlowchartVisible, setIsFlowchartVisible] = useState(false);
 
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-  const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+  // Ultra-smooth easeOutQuart for silky transitions
+  const easeOutQuart = (t: number) => 1 - Math.pow(1 - t, 4);
 
   const updateStyles = useCallback(() => {
     const el = cardRef.current;
@@ -17,8 +20,9 @@ export function FlowchartCard() {
 
     const rect = el.getBoundingClientRect();
     const wh = window.innerHeight;
-    const startPoint = wh * 0.85;
-    const endPoint = wh * 0.15;
+    // Earlier start point for more gradual expansion
+    const startPoint = wh * 0.9;
+    const endPoint = wh * 0.2;
 
     let progress: number;
     if (rect.top > startPoint) {
@@ -30,7 +34,7 @@ export function FlowchartCard() {
       progress = Math.min(Math.max(progress, 0), 1);
     }
 
-    const easedProgress = easeOut(progress);
+    const easedProgress = easeOutQuart(progress);
 
     // Target values
     const targetScale = 0.88 + easedProgress * 0.12;
@@ -39,8 +43,8 @@ export function FlowchartCard() {
     const targetShadow = 0.15 - easedProgress * 0.1;
     const targetFrame = easedProgress * 0.8;
 
-    // Smooth interpolation (lerp) at ~0.18 factor for buttery smoothness
-    const lerpFactor = 0.18;
+    // Increased lerp factor for more responsive, smoother motion (0.25 = perfect balance)
+    const lerpFactor = 0.25;
     const cv = currentValues.current;
     cv.scale = lerp(cv.scale, targetScale, lerpFactor);
     cv.borderRadius = lerp(cv.borderRadius, targetBorderRadius, lerpFactor);
@@ -64,7 +68,27 @@ export function FlowchartCard() {
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(updateStyles);
-    return () => cancelAnimationFrame(rafRef.current);
+    
+    // Intersection Observer for flowchart animations
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+            setIsFlowchartVisible(true);
+          }
+        });
+      },
+      { threshold: [0.3], rootMargin: '-50px' }
+    );
+
+    if (flowchartRef.current) {
+      observer.observe(flowchartRef.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      observer.disconnect();
+    };
   }, [updateStyles]);
 
   return (
@@ -72,10 +96,13 @@ export function FlowchartCard() {
       ref={cardRef}
       className="flowchart-card-wrapper"
       style={{
-        willChange: 'transform, border-radius',
+        willChange: 'transform, border-radius, margin, box-shadow',
         transform: 'scale(0.88)',
         borderRadius: '28px',
         margin: '0 40px',
+        transformStyle: 'preserve-3d',
+        backfaceVisibility: 'hidden',
+        WebkitFontSmoothing: 'antialiased',
       }}
     >
       <div className="flowchart-card-inner">
@@ -104,10 +131,10 @@ export function FlowchartCard() {
           </div>
 
           {/* Right: Flowchart */}
-          <div className="showcase-flowchart">
+          <div ref={flowchartRef} className={`showcase-flowchart ${isFlowchartVisible ? 'flowchart-animated' : ''}`}>
             {/* Input Stage - Messages */}
-            <div className="flowchart-column">
-              <div className="flow-box messages-box">
+            <div className="flowchart-column flow-col-1">
+              <div className="flow-box messages-box flow-box-animated">
                 <div className="message-line">
                   <span className="msg-label">User</span>
                   <div className="msg-bar"></div>
@@ -120,12 +147,12 @@ export function FlowchartCard() {
               <span className="flow-label">Conversations</span>
             </div>
 
-            <div className="flow-arrow">→</div>
+            <div className="flow-arrow flow-arrow-1">→</div>
 
             {/* Processing Stage - MCP */}
-            <div className="flowchart-column">
+            <div className="flowchart-column flow-col-2">
               <div className="flow-phase-label">Extraction Phase</div>
-              <div className="flow-box llm-box">
+              <div className="flow-box llm-box flow-box-animated">
                 <div className="llm-header">MCP Server</div>
                 <div className="llm-content">
                   <div className="llm-item">Summary</div>
@@ -145,12 +172,12 @@ export function FlowchartCard() {
               </div>
             </div>
 
-            <div className="flow-arrow">→</div>
+            <div className="flow-arrow flow-arrow-2">→</div>
 
             {/* Output Stage - Web3 */}
-            <div className="flowchart-column">
+            <div className="flowchart-column flow-col-3">
               <div className="flow-phase-label">Sync Phase</div>
-              <div className="flow-box web3-box">
+              <div className="flow-box web3-box flow-box-animated">
                 <div className="web3-header">
                   <svg className="web3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
