@@ -170,12 +170,11 @@ export async function checkHealth(): Promise<{
     try {
         const start = Date.now();
         const { db } = await import('./firebase');
-        const { doc, getDoc } = await import('firebase/firestore');
         // Try to read a non-existent doc (fast operation to verify connectivity)
-        await getDoc(doc(db, '_health', 'ping'));
+        await db.collection('_health').doc('ping').get();
         fbHealth = { connected: true, latencyMs: Date.now() - start };
     } catch (error: any) {
-        // Firebase throws if truly disconnected; permission errors mean it's connected
+        // Firebase Admin throws if truly disconnected; permission errors mean it's connected
         if (error.code === 'permission-denied') {
             fbHealth = { connected: true, latencyMs: 0 };
         } else {

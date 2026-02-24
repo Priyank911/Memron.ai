@@ -1,33 +1,46 @@
-// Firebase Configuration - Secondary/Backup Database
-// Used for redundant storage and real-time sync capabilities
+// Firebase Admin Configuration - Secondary/Backup Database
+// Uses Firebase Admin SDK for server-side operations (bypasses Firestore security rules)
 
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import {
-    getFirestore,
-    doc,
-    setDoc,
-    getDoc,
-    updateDoc,
-    serverTimestamp,
-    collection,
-    query,
-    where,
-    getDocs,
-} from 'firebase/firestore';
+import * as admin from 'firebase-admin';
 
-const firebaseConfig = {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-    measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
-};
+// Parse service account from environment variable
+function getServiceAccount(): admin.ServiceAccount | undefined {
+    const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    if (!raw) return undefined;
+    try {
+        return JSON.parse(raw) as admin.ServiceAccount;
+    } catch {
+        // Try base64-encoded JSON
+        try {
+            return JSON.parse(Buffer.from(raw, 'base64').toString('utf-8')) as admin.ServiceAccount;
+        } catch {
+            console.error('[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY');
+            return undefined;
+        }
+    }
+}
 
-// Initialize Firebase (prevent duplicate initialization)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
+// Initialize Firebase Admin (prevent duplicate initialization)
+if (!admin.apps.length) {
+    const serviceAccount = getServiceAccount();
+    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+
+    if (serviceAccount) {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+        });
+    } else if (projectId) {
+        // Fallback: initialize with project ID only (works in Google Cloud environments)
+        admin.initializeApp({
+            projectId,
+        });
+    } else {
+        console.warn('[Firebase] No service account or project ID configured. Firebase will not work.');
+    }
+}
+
+const app = admin.apps[0]!;
+const db = admin.firestore();
 
 // ─── User Operations ────────────────────────────────────────
 
@@ -59,23 +72,23 @@ export async function saveUserToFirebase(userData: {
     provider?: string;
 }): Promise<{ success: boolean; error?: string }> {
     try {
-        const userRef = doc(db, 'users', userData.clerkId);
-        const existingUser = await getDoc(userRef);
+        const userRef = db.collection('users').doc(userData.clerkId);
+        const existingUser = await userRef.get();
 
-        if (existingUser.exists()) {
+        if (existingUser.exists) {
             // Update existing user
-            await updateDoc(userRef, {
+            await userRef.update({
                 email: userData.email,
                 firstName: userData.firstName || null,
                 lastName: userData.lastName || null,
                 fullName: userData.fullName || null,
                 imageUrl: userData.imageUrl || null,
-                updatedAt: serverTimestamp(),
-                lastLoginAt: serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
             });
         } else {
             // Create new user
-            await setDoc(userRef, {
+            await userRef.set({
                 clerkId: userData.clerkId,
                 email: userData.email,
                 firstName: userData.firstName || null,
@@ -83,9 +96,9 @@ export async function saveUserToFirebase(userData: {
                 fullName: userData.fullName || null,
                 imageUrl: userData.imageUrl || null,
                 provider: userData.provider || 'email',
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-                lastLoginAt: serverTimestamp(),
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
                 isActive: true,
             });
         }
@@ -105,10 +118,10 @@ export async function getUserFromFirebase(
     clerkId: string
 ): Promise<FirebaseUser | null> {
     try {
-        const userRef = doc(db, 'users', clerkId);
-        const userSnap = await getDoc(userRef);
+        const userRef = db.collection('users').doc(clerkId);
+        const userSnap = await userRef.get();
 
-        if (userSnap.exists()) {
+        if (userSnap.exists) {
             return userSnap.data() as FirebaseUser;
         }
         return null;
@@ -125,9 +138,8 @@ export async function getUserByEmailFromFirebase(
     email: string
 ): Promise<FirebaseUser | null> {
     try {
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('email', '==', email));
-        const querySnap = await getDocs(q);
+        const usersRef = db.collection('users');
+        const querySnap = await usersRef.where('email', '==', email).get();
 
         if (!querySnap.empty) {
             return querySnap.docs[0].data() as FirebaseUser;

@@ -12,7 +12,7 @@ const pool = new Pool({
     user: process.env.PG_USER,
     password: process.env.PG_PASSWORD,
     ssl: {
-        rejectUnauthorized: true, // Aiven uses valid SSL certs
+        rejectUnauthorized: false, // Aiven uses self-signed certificates
     },
     max: 10, // Maximum connections in pool
     idleTimeoutMillis: 30000,
