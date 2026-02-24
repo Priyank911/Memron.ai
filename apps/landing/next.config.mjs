@@ -11,6 +11,8 @@ const nextConfig = {
     ],
     formats: ['image/avif', 'image/webp'],
   },
+  // Exclude Node.js-only packages from Edge/Middleware bundling
+  serverExternalPackages: ['pg', 'firebase', 'firebase-admin'],
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion', 'gsap'],
   },

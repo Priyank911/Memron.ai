@@ -3,11 +3,16 @@
 import { useUser, useClerk } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { useUserSync } from '@/lib/hooks/use-user-sync';
 
 export default function DashboardPage() {
   const { user, isLoaded } = useUser();
   const { signOut } = useClerk();
   const router = useRouter();
+
+  // Sync user data to PostgreSQL + Firebase on every login
+  useUserSync();
+
 
   const handleSignOut = async () => {
     await signOut();
@@ -41,7 +46,7 @@ export default function DashboardPage() {
               />
               <span className="text-xl font-bold text-white">Memron</span>
             </div>
-            
+
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-3">
                 {user?.imageUrl && (
@@ -62,7 +67,7 @@ export default function DashboardPage() {
                   </p>
                 </div>
               </div>
-              
+
               <button
                 onClick={handleSignOut}
                 className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg transition-colors"
@@ -131,7 +136,7 @@ export default function DashboardPage() {
         {/* Quick Actions */}
         <div className="bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-xl p-8">
           <h2 className="text-2xl font-bold text-white mb-6">Quick Actions</h2>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <button className="flex items-start gap-4 p-4 bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-all text-left group">
               <div className="p-3 bg-indigo-500/10 rounded-lg group-hover:bg-indigo-500/20 transition-colors">
