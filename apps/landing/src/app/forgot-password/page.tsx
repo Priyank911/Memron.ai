@@ -1,7 +1,7 @@
 'use client';
 
 import { useSignIn } from '@clerk/nextjs';
-import { useState } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Image from 'next/image';
 
 export default function ForgotPasswordPage() {
@@ -11,9 +11,57 @@ export default function ForgotPasswordPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [resetStage, setResetStage] = useState<'email' | 'code' | 'complete'>('email');
-  const [code, setCode] = useState('');
+  const [otp, setOtp] = useState<string[]>(Array(6).fill(''));
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const [otpError, setOtpError] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // ─── OTP helpers ─────────────────────────────────────────────
+  const otpValue = otp.join('');
+
+  const handleOtpChange = useCallback((index: number, value: string) => {
+    const digit = value.replace(/\D/g, '').slice(-1);
+    setOtp(prev => {
+      const next = [...prev];
+      next[index] = digit;
+      return next;
+    });
+    setOtpError('');
+    setError('');
+    if (digit && index < 5) {
+      otpRefs.current[index + 1]?.focus();
+    }
+  }, []);
+
+  const handleOtpKeyDown = useCallback((index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otp[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+    if (e.key === 'ArrowLeft' && index > 0) { e.preventDefault(); otpRefs.current[index - 1]?.focus(); }
+    if (e.key === 'ArrowRight' && index < 5) { e.preventDefault(); otpRefs.current[index + 1]?.focus(); }
+  }, [otp]);
+
+  const handleOtpPaste = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pasted) return;
+    setOtp(prev => {
+      const next = [...prev];
+      for (let i = 0; i < 6; i++) next[i] = pasted[i] || '';
+      return next;
+    });
+    setOtpError('');
+    setError('');
+    setTimeout(() => otpRefs.current[Math.min(pasted.length, 5)]?.focus(), 0);
+  }, []);
+
+  // Focus first OTP box when entering code stage
+  useEffect(() => {
+    if (resetStage === 'code') {
+      setTimeout(() => otpRefs.current[0]?.focus(), 200);
+    }
+  }, [resetStage]);
 
   // ─── Shared styles ─────────────────────────────────────────
   const inputStyle: React.CSSProperties = {
@@ -74,7 +122,7 @@ export default function ForgotPasswordPage() {
       setError('');
       const result = await signIn.attemptFirstFactor({
         strategy: 'reset_password_email_code',
-        code,
+        code: otpValue,
         password: newPassword,
       });
 
@@ -147,20 +195,45 @@ export default function ForgotPasswordPage() {
 
           {success && <div style={successBoxStyle}>{success}</div>}
           {error && <div style={errorBoxStyle}>{error}</div>}
+          {otpError && (
+            <div style={errorBoxStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+                {otpError}
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
               <label style={labelStyle}>Verification Code</label>
-              <div style={inputWrapStyle}>
-                <input
-                  type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="Enter 6-digit code"
-                  maxLength={6}
-                  required
-                  style={{ ...inputStyle, textAlign: 'center', fontSize: '1.2rem', letterSpacing: '0.15em' }}
-                />
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                {otp.map((digit, i) => (
+                  <input
+                    key={i}
+                    ref={el => { otpRefs.current[i] = el; }}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={digit}
+                    onChange={e => handleOtpChange(i, e.target.value)}
+                    onKeyDown={e => handleOtpKeyDown(i, e)}
+                    onPaste={i === 0 ? handleOtpPaste : undefined}
+                    maxLength={1}
+                    disabled={isLoading}
+                    style={{
+                      width: 48, height: 56, textAlign: 'center' as const,
+                      fontSize: '1.35rem', fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif",
+                      color: '#09090b', background: isLoading ? '#f4f4f5' : '#fafafa',
+                      border: `1.5px solid ${otpError ? '#fca5a5' : digit ? '#6366f1' : '#e4e4e7'}`,
+                      borderRadius: 10, outline: 'none',
+                      transition: 'border-color 0.2s, box-shadow 0.2s',
+                      caretColor: '#6366f1',
+                    }}
+                    onFocus={e => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.12)'; }}
+                    onBlur={e => { e.currentTarget.style.borderColor = digit ? '#6366f1' : '#e4e4e7'; e.currentTarget.style.boxShadow = 'none'; }}
+                  />
+                ))}
               </div>
             </div>
 
@@ -200,13 +273,13 @@ export default function ForgotPasswordPage() {
               </div>
             </div>
 
-            <button type="submit" disabled={isLoading || code.length !== 6} style={btnStyle}>
+            <button type="submit" disabled={isLoading || otpValue.length !== 6} style={btnStyle}>
               {isLoading ? 'Resetting...' : 'Reset Password'}
             </button>
 
             <button
               type="button"
-              onClick={() => { setResetStage('email'); setError(''); setSuccess(''); }}
+              onClick={() => { setResetStage('email'); setError(''); setSuccess(''); setOtp(Array(6).fill('')); setOtpError(''); }}
               style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '0.85rem', cursor: 'pointer', fontFamily: "'Inter', sans-serif", fontWeight: 500 }}
             >
               ← Back

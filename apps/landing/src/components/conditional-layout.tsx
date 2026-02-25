@@ -5,7 +5,7 @@ import { Navbar } from './navbar';
 import { DottedBackground } from './dotted-background';
 import { CursorNodes } from './cursor-nodes';
 
-const CLEAN_ROUTES = ['/login', '/sign-up', '/forgot-password', '/sso-callback', '/dashboard'];
+const CLEAN_ROUTES = ['/login', '/sign-up', '/forgot-password', '/sso-callback', '/dashboard', '/onboarding'];
 
 export function ConditionalLayout({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();

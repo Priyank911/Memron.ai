@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 import { Webhook } from 'svix';
-import { syncUser } from '@/lib/db';
+import { syncUser, deactivateUser, updateLastLogin } from '@/lib/db';
 
 // Clerk sends webhooks signed with Svix
 // Verify the webhook signature to prevent spoofing
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
         console.log(`[Webhook] Received Clerk event: ${eventType}`);
 
-        // Handle user creation and updates
+        // ─── User Creation & Updates ─────────────────────
         if (
             eventType === 'user.created' ||
             eventType === 'user.updated'
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
             // Determine auth provider
             const provider = email_addresses?.[0]?.verification?.strategy || 'email';
 
-            // Sync to both databases concurrently
+            // Sync to both databases concurrently with timeout protection
             const result = await syncUser({
                 clerkId: id,
                 email: primaryEmail,
@@ -84,23 +84,39 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        // Handle user deletion
+        // ─── User Deletion ───────────────────────────────
         if (eventType === 'user.deleted') {
             const { id } = payload.data;
-            console.log(`[Webhook] User ${id} deleted — soft delete in databases`);
+            console.log(`[Webhook] User ${id} deleted — deactivating in both databases`);
 
-            // For now, we log. In production, you'd soft-delete from both DBs
-            // await deactivateUser(id);
+            const result = await deactivateUser(id);
 
-            return NextResponse.json({ received: true, action: 'deletion_logged' });
+            console.log(`[Webhook] Deactivation result: ${result.source} (pg: ${result.postgres.success}, fb: ${result.firebase.success})`);
+
+            return NextResponse.json({
+                received: true,
+                action: 'deactivated',
+                success: result.success,
+                source: result.source,
+            });
         }
 
-        // Handle session events (sign-in tracking)
+        // ─── Session Created (Login Tracking) ────────────
         if (eventType === 'session.created') {
             const userId = payload.data?.user_id;
             if (userId) {
-                console.log(`[Webhook] Session created for user ${userId}`);
-                // Could update last_login_at here
+                console.log(`[Webhook] Session created for user ${userId} — updating last login`);
+
+                const result = await updateLastLogin(userId);
+
+                console.log(`[Webhook] Last login update: ${result.source} (pg: ${result.postgres.success}, fb: ${result.firebase.success})`);
+
+                return NextResponse.json({
+                    received: true,
+                    action: 'last_login_updated',
+                    success: result.success,
+                    source: result.source,
+                });
             }
             return NextResponse.json({ received: true });
         }

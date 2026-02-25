@@ -615,6 +615,51 @@ body {
   background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
 }
 
+/* Loading spinner animation */
+.loading-spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Button loading state */
+.signin-btn.loading {
+  pointer-events: none;
+}
+
+.signin-btn.loading .signin-btn-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signin-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.9;
+}
+
+/* Sidebar CTA loading state */
+.sidebar-cta.loading {
+  pointer-events: none;
+  gap: 10px;
+}
+
+.sidebar-cta.loading .loading-spinner {
+  color: currentColor;
+}
+
+.sidebar-cta:disabled {
+  cursor: not-allowed;
+  opacity: 0.9;
+}
+
 /* Selection */
 ::selection {
   background: rgba(139, 92, 246, 0.3);

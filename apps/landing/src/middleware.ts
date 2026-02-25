@@ -19,22 +19,40 @@ const isAuthRoute = createRouteMatcher([
 ])
 
 const isDashboardRoute = createRouteMatcher(['/dashboard(.*)'])
+const isOnboardingRoute = createRouteMatcher(['/onboarding(.*)'])
 
 export default clerkMiddleware(async (auth, request) => {
   const { userId } = await auth()
 
-  // If user is signed in and tries to access any auth page, redirect to dashboard
+  // If user is signed in and tries to access any auth page, send to dashboard.
+  // The dashboard's useUserSync hook will redirect to /onboarding if they're new.
   if (userId && isAuthRoute(request)) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  // Protect dashboard routes — redirect unauthenticated users to login
-  if (isDashboardRoute(request) && !userId) {
+  // Protect dashboard routes.
+  // Cookie is always set by the server (GET /api/onboarding heals it on every check),
+  // so cookie-absent + signed-in means: new user or cleared cookie.
+  // Redirect both cases to /onboarding — the page itself distinguishes:
+  //   already-onboarded → DB check heals cookie + sends back to /dashboard
+  //   new user          → shows onboarding flow
+  if (isDashboardRoute(request)) {
+    if (!userId) {
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
+    const onboardedCookie = request.cookies.get('memron_onboarded')?.value
+    if (onboardedCookie !== 'true') {
+      return NextResponse.redirect(new URL('/onboarding', request.url))
+    }
+  }
+
+  // Protect onboarding route — must be signed in
+  if (isOnboardingRoute(request) && !userId) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
   // Protect all other private routes
-  if (!isPublicRoute(request)) {
+  if (!isPublicRoute(request) && !isOnboardingRoute(request) && !isDashboardRoute(request)) {
     await auth.protect()
   }
 })

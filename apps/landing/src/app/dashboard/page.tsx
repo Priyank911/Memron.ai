@@ -4,17 +4,76 @@ import { useUser, useClerk } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useUserSync } from '@/lib/hooks/use-user-sync';
+import { useEffect, useState } from 'react';
+
+interface OrgInfo {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+interface UserInfo {
+  universalId: string;
+  email: string;
+  fullName: string | null;
+}
 
 export default function DashboardPage() {
   const { user, isLoaded } = useUser();
   const { signOut } = useClerk();
   const router = useRouter();
+  const [organization, setOrganization] = useState<OrgInfo | null>(null);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
 
   // Sync user data to PostgreSQL + Firebase on every login
   useUserSync();
 
+  // Prevent back navigation to landing page
+  useEffect(() => {
+    // Replace current history entry to prevent back navigation to login/landing
+    window.history.replaceState(null, '', '/dashboard');
+    
+    // Handle browser back button
+    const handlePopState = () => {
+      // Push dashboard back on stack when user tries to go back
+      window.history.pushState(null, '', '/dashboard');
+    };
+    
+    // Push initial state
+    window.history.pushState(null, '', '/dashboard');
+    
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Fetch organization info
+  useEffect(() => {
+    const fetchOrgInfo = async () => {
+      try {
+        const res = await fetch('/api/onboarding', { credentials: 'include' });
+        if (!res.ok) return;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) return;
+        const data = await res.json();
+        if (data.organization) {
+          setOrganization(data.organization);
+        }
+        if (data.user) {
+          setUserInfo(data.user);
+        }
+      } catch (err) {
+        console.error('Failed to fetch org info:', err);
+      }
+    };
+    
+    if (isLoaded && user) {
+      fetchOrgInfo();
+    }
+  }, [isLoaded, user]);
 
   const handleSignOut = async () => {
+    // Clear onboarded cookie on sign out
+    document.cookie = 'memron_onboarded=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
     await signOut();
     router.push('/');
   };
@@ -89,7 +148,34 @@ export default function DashboardPage() {
           <p className="text-zinc-400 text-lg">
             Your AI memory infrastructure dashboard
           </p>
+          {userInfo?.universalId && (
+            <p className="text-xs text-zinc-600 mt-2 font-mono">
+              User ID: {userInfo.universalId}
+            </p>
+          )}
         </div>
+
+        {/* Organization Card */}
+        {organization && (
+          <div className="mb-8 bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-xl p-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-indigo-500/20 rounded-xl flex items-center justify-center">
+                  <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-white">{organization.name}</h3>
+                  <p className="text-sm text-zinc-400">{organization.slug}</p>
+                </div>
+              </div>
+              <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-full">
+                Active
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
