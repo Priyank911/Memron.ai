@@ -2,7 +2,7 @@
 
 import { useSignUp, useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 
 export default function SignUpPage() {
@@ -14,7 +14,10 @@ export default function SignUpPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [verifying, setVerifying] = useState(false);
-  const [code, setCode] = useState('');
+  const [otp, setOtp] = useState<string[]>(Array(6).fill(''));
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const [otpError, setOtpError] = useState('');
+  const [otpVerifying, setOtpVerifying] = useState(false);
   const router = useRouter();
   const { isSignedIn } = useAuth();
 
@@ -24,6 +27,90 @@ export default function SignUpPage() {
       router.replace('/dashboard');
     }
   }, [isSignedIn, router]);
+
+  // ─── OTP helpers ───────────────────────────────────────────
+  const otpValue = otp.join('');
+
+  const handleOtpChange = useCallback((index: number, value: string) => {
+    // Allow only digits
+    const digit = value.replace(/\D/g, '').slice(-1);
+    setOtp(prev => {
+      const next = [...prev];
+      next[index] = digit;
+      return next;
+    });
+    setOtpError('');
+    setError('');
+    // Auto-focus next box
+    if (digit && index < 5) {
+      otpRefs.current[index + 1]?.focus();
+    }
+  }, []);
+
+  const handleOtpKeyDown = useCallback((index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otp[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+    if (e.key === 'ArrowLeft' && index > 0) {
+      e.preventDefault();
+      otpRefs.current[index - 1]?.focus();
+    }
+    if (e.key === 'ArrowRight' && index < 5) {
+      e.preventDefault();
+      otpRefs.current[index + 1]?.focus();
+    }
+  }, [otp]);
+
+  const handleOtpPaste = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pasted) return;
+    setOtp(prev => {
+      const next = [...prev];
+      for (let i = 0; i < 6; i++) next[i] = pasted[i] || '';
+      return next;
+    });
+    setOtpError('');
+    setError('');
+    // Focus the last filled box or the next empty one
+    const focusIdx = Math.min(pasted.length, 5);
+    setTimeout(() => otpRefs.current[focusIdx]?.focus(), 0);
+  }, []);
+
+  // Auto-verify when all 6 digits are filled
+  useEffect(() => {
+    if (otpValue.length !== 6 || !verifying || !isLoaded || otpVerifying) return;
+
+    const verify = async () => {
+      setOtpVerifying(true);
+      setError('');
+      setOtpError('');
+      try {
+        const completeSignUp = await signUp.attemptEmailAddressVerification({ code: otpValue });
+        if (completeSignUp.status === 'complete') {
+          await setActive({ session: completeSignUp.createdSessionId });
+          router.replace('/dashboard');
+        }
+      } catch (err: any) {
+        const msg = err.errors?.[0]?.message || 'Invalid verification code';
+        setOtpError(msg);
+        // Clear all boxes and refocus the first one so user can retry
+        setOtp(Array(6).fill(''));
+        setTimeout(() => otpRefs.current[0]?.focus(), 100);
+      } finally {
+        setOtpVerifying(false);
+      }
+    };
+
+    verify();
+  }, [otpValue, verifying, isLoaded, otpVerifying]);
+
+  // Focus first OTP box on mount
+  useEffect(() => {
+    if (verifying) {
+      setTimeout(() => otpRefs.current[0]?.focus(), 200);
+    }
+  }, [verifying]);
 
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,28 +129,10 @@ export default function SignUpPage() {
       // Send verification email
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
       setVerifying(true);
+      setOtp(Array(6).fill(''));
+      setOtpError('');
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Failed to sign up');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isLoaded) return;
-
-    try {
-      setIsLoading(true);
-      setError('');
-      const completeSignUp = await signUp.attemptEmailAddressVerification({ code });
-
-      if (completeSignUp.status === 'complete') {
-        await setActive({ session: completeSignUp.createdSessionId });
-        router.replace('/dashboard');
-      }
-    } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Verification failed');
     } finally {
       setIsLoading(false);
     }
@@ -196,35 +265,67 @@ export default function SignUpPage() {
             </p>
 
             {error && <div style={errorBoxStyle}>{error}</div>}
+            {otpError && (
+              <div style={errorBoxStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+                  {otpError}
+                </div>
+              </div>
+            )}
 
-            <form onSubmit={handleVerify} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'left' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'left' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                 <label style={labelStyle}>Verification Code</label>
-                <div style={inputWrapStyle}>
-                  <input
-                    type="text"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    placeholder="Enter 6-digit code"
-                    maxLength={6}
-                    required
-                    style={{ ...inputStyle, textAlign: 'center', fontSize: '1.2rem', letterSpacing: '0.15em' }}
-                  />
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                  {otp.map((digit, i) => (
+                    <input
+                      key={i}
+                      ref={el => { otpRefs.current[i] = el; }}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={digit}
+                      onChange={e => handleOtpChange(i, e.target.value)}
+                      onKeyDown={e => handleOtpKeyDown(i, e)}
+                      onPaste={i === 0 ? handleOtpPaste : undefined}
+                      maxLength={1}
+                      disabled={otpVerifying}
+                      style={{
+                        width: 48, height: 56, textAlign: 'center' as const,
+                        fontSize: '1.35rem', fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif",
+                        color: '#09090b', background: otpVerifying ? '#f4f4f5' : '#fafafa',
+                        border: `1.5px solid ${otpError ? '#fca5a5' : digit ? '#6366f1' : '#e4e4e7'}`,
+                        borderRadius: 10, outline: 'none',
+                        transition: 'border-color 0.2s, box-shadow 0.2s',
+                        caretColor: '#6366f1',
+                      }}
+                      onFocus={e => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.12)'; }}
+                      onBlur={e => { e.currentTarget.style.borderColor = digit ? '#6366f1' : '#e4e4e7'; e.currentTarget.style.boxShadow = 'none'; }}
+                    />
+                  ))}
                 </div>
               </div>
 
-              <button type="submit" disabled={isLoading || code.length !== 6} style={btnPrimaryStyle}>
-                {isLoading ? 'Verifying...' : 'Verify Email'}
-              </button>
+              {/* Auto-verifying indicator */}
+              {otpVerifying && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#6366f1', fontSize: '0.85rem', fontWeight: 500, fontFamily: "'Inter', sans-serif" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.7s linear infinite' }}>
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity=".2"/>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+                  </svg>
+                  Verifying...
+                </div>
+              )}
 
               <button
                 type="button"
-                onClick={() => { setVerifying(false); setError(''); }}
+                onClick={() => { setVerifying(false); setError(''); setOtpError(''); setOtp(Array(6).fill('')); }}
                 style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '0.85rem', cursor: 'pointer', fontFamily: "'Inter', sans-serif", fontWeight: 500 }}
               >
                 ← Back to sign up
               </button>
-            </form>
+            </div>
           </div>
         </div>
 
@@ -232,6 +333,9 @@ export default function SignUpPage() {
           @keyframes loginFadeUp {
             from { opacity: 0; transform: translateY(18px); }
             to   { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
           }
           .signup-page input::placeholder { color: #a1a1aa !important; }
           .signup-page input:focus { outline: none !important; }
@@ -324,6 +428,7 @@ export default function SignUpPage() {
                 <label style={labelStyle}>First Name</label>
                 <div style={inputWrapStyle}>
                   <input
+                    suppressHydrationWarning
                     type="text"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
@@ -336,6 +441,7 @@ export default function SignUpPage() {
                 <label style={labelStyle}>Last Name</label>
                 <div style={inputWrapStyle}>
                   <input
+                    suppressHydrationWarning
                     type="text"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
@@ -355,6 +461,7 @@ export default function SignUpPage() {
                   <path d="M22 7l-10 5L2 7" />
                 </svg>
                 <input
+                  suppressHydrationWarning
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -374,6 +481,7 @@ export default function SignUpPage() {
                   <path d="M7 11V7a5 5 0 0110 0v4" />
                 </svg>
                 <input
+                  suppressHydrationWarning
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -386,7 +494,7 @@ export default function SignUpPage() {
             </div>
 
             {/* Submit */}
-            <button type="submit" disabled={isLoading} style={btnPrimaryStyle}>
+            <button suppressHydrationWarning type="submit" disabled={isLoading} style={btnPrimaryStyle}>
               {isLoading ? 'Creating account...' : 'Create account'}
             </button>
 
@@ -400,6 +508,7 @@ export default function SignUpPage() {
             {/* Social buttons */}
             <div style={{ display: 'flex', gap: '12px' }}>
               <button
+                suppressHydrationWarning
                 type="button"
                 onClick={() => handleOAuthSignUp('oauth_google')}
                 disabled={isLoading}
@@ -420,6 +529,7 @@ export default function SignUpPage() {
               </button>
 
               <button
+                suppressHydrationWarning
                 type="button"
                 onClick={() => handleOAuthSignUp('oauth_github')}
                 disabled={isLoading}

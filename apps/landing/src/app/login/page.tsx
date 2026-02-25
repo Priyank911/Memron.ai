@@ -174,6 +174,7 @@ export default function LoginPage() {
                   <path d="M22 7l-10 5L2 7" />
                 </svg>
                 <input
+                  suppressHydrationWarning
                   id="email"
                   type="email"
                   value={email}
@@ -220,6 +221,7 @@ export default function LoginPage() {
                   <path d="M7 11V7a5 5 0 0110 0v4" />
                 </svg>
                 <input
+                  suppressHydrationWarning
                   id="password"
                   type="password"
                   value={password}
@@ -254,6 +256,7 @@ export default function LoginPage() {
                 fontFamily: "'Inter', sans-serif",
               }}>
                 <input
+                  suppressHydrationWarning
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
@@ -273,6 +276,7 @@ export default function LoginPage() {
 
             {/* Submit */}
             <button
+              suppressHydrationWarning
               type="submit"
               disabled={isLoading}
               style={{
@@ -315,6 +319,7 @@ export default function LoginPage() {
             {/* Social buttons */}
             <div style={{ display: 'flex', gap: '12px' }}>
               <button
+                suppressHydrationWarning
                 type="button"
                 onClick={() => handleOAuthSignIn('oauth_google')}
                 disabled={isLoading}
@@ -366,6 +371,7 @@ export default function LoginPage() {
               </button>
 
               <button
+                suppressHydrationWarning
                 type="button"
                 onClick={() => handleOAuthSignIn('oauth_github')}
                 disabled={isLoading}

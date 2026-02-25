@@ -21,11 +21,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           colorText: '#ffffff',
         },
       }}
+      dynamic
+      signInUrl="/login"
+      signUpUrl="/sign-up"
+      afterSignInUrl="/dashboard"
+      afterSignUpUrl="/dashboard"
     >
       <html lang="en" data-theme="dark">
         <head>
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+          <link rel="preconnect" href="https://major-dolphin-47.clerk.accounts.dev" />
           <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
         </head>
         <body>

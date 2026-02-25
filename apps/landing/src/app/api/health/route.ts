@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 
 // Database health check endpoint
 // Returns the status of both PostgreSQL and Firebase connections
+// Both checks run concurrently with timeout protection
 
 import { NextResponse } from 'next/server';
 import { checkHealth } from '@/lib/db';
@@ -21,13 +22,14 @@ export async function GET() {
         return NextResponse.json({
             status: overallStatus,
             timestamp: new Date().toISOString(),
+            strategy: 'dual-write-failover',
             databases: {
                 postgres: {
                     status: health.postgres.connected ? 'connected' : 'disconnected',
                     latency: health.postgres.latencyMs
                         ? `${health.postgres.latencyMs}ms`
                         : undefined,
-                    role: 'primary',
+                    role: 'primary (Aiven)',
                     error: health.postgres.error,
                 },
                 firebase: {
@@ -35,9 +37,15 @@ export async function GET() {
                     latency: health.firebase.latencyMs
                         ? `${health.firebase.latencyMs}ms`
                         : undefined,
-                    role: 'backup',
+                    role: 'backup (Firestore)',
                     error: health.firebase.error,
                 },
+            },
+            features: {
+                dualWrite: true,
+                failoverReads: true,
+                autoRepair: true,
+                timeoutMs: 8000,
             },
         });
     } catch (error: any) {

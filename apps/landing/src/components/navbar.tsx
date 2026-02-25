@@ -1,9 +1,34 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { ThemeToggle } from './theme-toggle';
+
+// Loading spinner component
+function LoadingSpinner({ size = 16 }: { size?: number }) {
+  return (
+    <svg 
+      className="loading-spinner" 
+      width={size} 
+      height={size} 
+      viewBox="0 0 24 24" 
+      fill="none"
+    >
+      <circle 
+        cx="12" 
+        cy="12" 
+        r="10" 
+        stroke="currentColor" 
+        strokeWidth="3" 
+        strokeLinecap="round"
+        strokeDasharray="31.4 31.4"
+        strokeDashoffset="0"
+      />
+    </svg>
+  );
+}
 
 function HamburgerIcon({ open }: { open: boolean }) {
   return (
@@ -172,9 +197,19 @@ function MemronIcon() {
 }
 
 export function Navbar() {
+  const router = useRouter();
   const navRef = useRef<HTMLElement>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileDropdown, setMobileDropdown] = useState<string | null>(null);
+  const [isNavigating, setIsNavigating] = useState(false);
+
+  // Handle navigation with loading state
+  const handleLoginClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsNavigating(true);
+    // Small delay to show loading state before navigation
+    router.push('/login');
+  }, [router]);
 
   useEffect(() => {
     const el = navRef.current;
@@ -311,15 +346,30 @@ export function Navbar() {
           <div className="navbar-actions desktop-only">
             <GitHubStars />
             <ThemeToggle />
-            <Link href="/login" className="signin-btn">
+            <button 
+              onClick={handleLoginClick} 
+              className={`signin-btn ${isNavigating ? 'loading' : ''}`}
+              disabled={isNavigating}
+            >
               <span className="signin-btn-bg"></span>
-              <span className="signin-btn-text">Get Early Access</span>
-              <span className="signin-btn-arrow">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 12h14M12 5l7 7-7 7"/>
-                </svg>
+              <span className="signin-btn-text">
+                {isNavigating ? (
+                  <>
+                    <LoadingSpinner size={14} />
+                    <span>Loading...</span>
+                  </>
+                ) : (
+                  'Get Early Access'
+                )}
               </span>
-            </Link>
+              {!isNavigating && (
+                <span className="signin-btn-arrow">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                  </svg>
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Mobile Actions */}
@@ -454,12 +504,25 @@ export function Navbar() {
             <GitHubStars />
             <ThemeToggle />
           </div>
-          <Link href="/login" className="sidebar-cta" onClick={closeMobileMenu}>
-            Get Early Access
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M12 5l7 7-7 7"/>
-            </svg>
-          </Link>
+          <button 
+            onClick={(e) => { closeMobileMenu(); handleLoginClick(e); }} 
+            className={`sidebar-cta ${isNavigating ? 'loading' : ''}`}
+            disabled={isNavigating}
+          >
+            {isNavigating ? (
+              <>
+                <LoadingSpinner size={16} />
+                <span>Loading...</span>
+              </>
+            ) : (
+              <>
+                Get Early Access
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+              </>
+            )}
+          </button>
         </div>
       </aside>
     </>
