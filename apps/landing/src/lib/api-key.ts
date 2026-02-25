@@ -4,7 +4,7 @@
  * Generates secure, production-grade API keys with the format:
  * mm_{environment}_{random_string}
  * 
- * Example: mm_live_7kXf9mP2qR4tW8vZ...
+ * Example: mm_live_XXXXXXXXXXXX...
  */
 
 import { createHash, randomBytes } from 'crypto';
@@ -64,9 +64,9 @@ export function hashApiKey(key: string): string {
  * const key = generateApiKey('live');
  * // Returns:
  * // {
- * //   fullKey: 'mm_live_7kXf9mP2qR4tW8vZ1nB3dC5hJ6kL8mN0pQ2rS4tU6vW8xY0z',
- * //   prefix: 'mm_live_7kXf',
- * //   hash: 'a1b2c3d4e5f6...',
+ * //   fullKey: 'mm_live_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+ * //   prefix: 'mm_live_XXXX',
+ * //   hash: 'sha256_hash_value...',
  * //   environment: 'live',
  * //   createdAt: Date
  * // }
@@ -124,8 +124,8 @@ export function extractKeyPrefix(fullKey: string): string | null {
  * Shows only prefix and last 4 characters
  * 
  * @example
- * maskApiKey('mm_live_7kXf9mP2qR4tW8vZ1nB3dC5hJ6kL8mN0pQ2rS4tU6vW8xY0z')
- * // Returns: 'mm_live_7kXf••••••••••••••••••••••••••••••••••••Y0z'
+ * maskApiKey('mm_live_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')
+ * // Returns: 'mm_live_XXXX••••••••••••••••••••••••••••••••••••XXXX'
  */
 export function maskApiKey(fullKey: string): string {
     if (!isValidApiKeyFormat(fullKey)) {
