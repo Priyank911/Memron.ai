@@ -2,9 +2,144 @@
 
 import { useSignIn, useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 
+const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// ─── Transition phases after clicking "Sign in" ──────────────
+type LoginPhase = 'form' | 'authenticating' | 'syncing' | 'ready';
+
+const PHASE_LABELS: Record<Exclude<LoginPhase, 'form'>, string> = {
+  authenticating: 'Verifying credentials…',
+  syncing:        'Preparing your workspace…',
+  ready:          'Dashboard ready!',
+};
+
+const PHASE_STEPS = [
+  { key: 'authenticating', label: 'Authenticate' },
+  { key: 'syncing',        label: 'Sync account' },
+  { key: 'ready',          label: 'Launch dashboard' },
+] as const;
+
+// ─── Animated transition overlay ──────────────────────────────
+function LoginTransition({ phase }: { phase: Exclude<LoginPhase, 'form'> }) {
+  const activeIdx = PHASE_STEPS.findIndex(s => s.key === phase);
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 10000,
+      background: '#09090b',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Inter', 'Space Grotesk', sans-serif",
+      animation: 'ltFadeIn 0.35s ease',
+    }}>
+      {/* Ambient glow */}
+      <div style={{
+        position: 'absolute', width: 420, height: 420, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)',
+        filter: 'blur(60px)', pointerEvents: 'none',
+      }} />
+
+      {/* Logo */}
+      <div style={{
+        position: 'relative', marginBottom: 40,
+        animation: 'ltLogoIn 0.5s cubic-bezier(0.16,1,0.3,1) forwards',
+      }}>
+        <Image src="/logo_w.png" alt="Memron" width={56} height={56} style={{ objectFit: 'contain' }} />
+      </div>
+
+      {/* Animated ring */}
+      <div style={{ position: 'relative', width: 80, height: 80, marginBottom: 36 }}>
+        <svg width="80" height="80" viewBox="0 0 80 80" style={{ animation: 'ltSpin 1.2s linear infinite' }}>
+          <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(99,102,241,0.12)" strokeWidth="3" />
+          <circle cx="40" cy="40" r="34" fill="none" stroke="#6366f1" strokeWidth="3"
+            strokeLinecap="round" strokeDasharray="160" strokeDashoffset={phase === 'ready' ? '0' : '120'}
+            style={{ transition: 'stroke-dashoffset 0.8s ease' }}
+          />
+        </svg>
+        {phase === 'ready' && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'ltCheckPop 0.35s cubic-bezier(0.16,1,0.3,1)',
+          }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </div>
+        )}
+      </div>
+
+      {/* Phase label */}
+      <p style={{
+        fontSize: '1.05rem', fontWeight: 600, color: '#f4f4f5',
+        letterSpacing: '-0.01em', marginBottom: 32,
+        animation: 'ltTextFade 0.3s ease', fontFamily: "'Space Grotesk', sans-serif",
+      }} key={phase}>
+        {PHASE_LABELS[phase]}
+      </p>
+
+      {/* Step indicators */}
+      <div style={{ display: 'flex', gap: 28 }}>
+        {PHASE_STEPS.map((step, i) => {
+          const done = i < activeIdx;
+          const active = i === activeIdx;
+          return (
+            <div key={step.key} style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+              opacity: done || active ? 1 : 0.35,
+              transition: 'opacity 0.3s ease',
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: done ? 'rgba(34,197,94,0.15)' : active ? 'rgba(99,102,241,0.18)' : 'rgba(63,63,70,0.2)',
+                border: `1.5px solid ${done ? 'rgba(34,197,94,0.4)' : active ? 'rgba(99,102,241,0.5)' : 'rgba(63,63,70,0.3)'}`,
+                transition: 'all 0.3s ease',
+              }}>
+                {done ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                ) : (
+                  <span style={{
+                    fontSize: '0.72rem', fontWeight: 700,
+                    color: active ? '#818cf8' : '#52525b',
+                  }}>{i + 1}</span>
+                )}
+              </div>
+              <span style={{
+                fontSize: '0.68rem', fontWeight: 500,
+                color: done ? '#86efac' : active ? '#c7d2fe' : '#52525b',
+                transition: 'color 0.3s ease', whiteSpace: 'nowrap',
+              }}>{step.label}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Bottom bar animation */}
+      <div style={{
+        position: 'absolute', bottom: 0, left: 0, height: 3,
+        background: 'linear-gradient(90deg, #6366f1, #818cf8, #6366f1)',
+        borderRadius: '0 2px 0 0',
+        width: phase === 'authenticating' ? '30%' : phase === 'syncing' ? '70%' : '100%',
+        transition: 'width 0.6s cubic-bezier(0.16,1,0.3,1)',
+      }} />
+
+      <style>{`
+        @keyframes ltFadeIn  { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes ltLogoIn  { from { opacity: 0; transform: scale(0.8) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        @keyframes ltSpin    { to { transform: rotate(360deg); } }
+        @keyframes ltCheckPop { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
+        @keyframes ltTextFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Main login component ─────────────────────────────────────
 export default function LoginPage() {
   const { isLoaded, signIn, setActive } = useSignIn();
   const { isSignedIn } = useAuth();
@@ -13,14 +148,84 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginPhase, setLoginPhase] = useState<LoginPhase>('form');
   const router = useRouter();
+  const redirectingRef = useRef(false);
 
-  // Redirect if already signed in
+  // Redirect if user lands on this page already signed in
   useEffect(() => {
-    if (isSignedIn) {
-      router.replace('/dashboard');
-    }
+    if (!isSignedIn || redirectingRef.current) return;
+    redirectingRef.current = true;
+    setLoginPhase('syncing');
+
+    (async () => {
+      // Fast path: cookie present
+      if (document.cookie.includes('memron_onboarded=true')) {
+        setLoginPhase('ready');
+        await delay(600);
+        router.replace('/dashboard');
+        return;
+      }
+
+      // Cookie absent — check the API before deciding
+      try {
+        const res = await fetch('/api/onboarding', { credentials: 'include' });
+        if (res.ok) {
+          const ct = res.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            const data = await res.json();
+            if (data.isOnboarded) {
+              document.cookie = 'memron_onboarded=true; path=/; max-age=31536000; SameSite=Lax';
+              setLoginPhase('ready');
+              await delay(600);
+              router.replace('/dashboard');
+              return;
+            }
+          }
+        }
+      } catch { /* fall through */ }
+      router.replace('/onboarding');
+    })();
   }, [isSignedIn, router]);
+
+  /**
+   * Resolve destination after login — sets cookie before navigating
+   * so the middleware never bounces through /onboarding.
+   */
+  const resolveAndNavigate = async () => {
+    // Quick check: cookie already present
+    if (document.cookie.includes('memron_onboarded=true')) {
+      return '/dashboard';
+    }
+
+    setLoginPhase('syncing');
+
+    try {
+      // Sync user record
+      await fetch('/api/user/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+
+      // Check onboarding status — the /api/onboarding response also sets
+      // the cookie via Set-Cookie header, and we double-set client-side
+      const res = await fetch('/api/onboarding', { credentials: 'include' });
+      if (res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          const data = await res.json();
+          if (data.isOnboarded) {
+            document.cookie = 'memron_onboarded=true; path=/; max-age=31536000; SameSite=Lax';
+            return '/dashboard';
+          }
+        }
+      }
+    } catch { /* Network error — fall through */ }
+
+    return '/onboarding';
+  };
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,16 +234,28 @@ export default function LoginPage() {
     try {
       setIsLoading(true);
       setError('');
+      setLoginPhase('authenticating');
+
       const result = await signIn.create({
         identifier: email,
         password,
       });
 
       if (result.status === 'complete') {
+        redirectingRef.current = true;
         await setActive({ session: result.createdSessionId });
-        router.replace('/dashboard');
+
+        const dest = await resolveAndNavigate();
+
+        // Show "ready" phase briefly before navigating
+        setLoginPhase('ready');
+        await delay(700);
+
+        // Navigate — cookie is already set, middleware will pass through
+        router.replace(dest);
       }
     } catch (err: any) {
+      setLoginPhase('form');
       setError(err.errors?.[0]?.message || 'Failed to sign in');
     } finally {
       setIsLoading(false);
@@ -60,6 +277,11 @@ export default function LoginPage() {
       setIsLoading(false);
     }
   };
+
+  // Show transition overlay when not in form phase
+  if (loginPhase !== 'form') {
+    return <LoginTransition phase={loginPhase} />;
+  }
 
   return (
     <div className="login-page" style={{
@@ -223,7 +445,7 @@ export default function LoginPage() {
                 <input
                   suppressHydrationWarning
                   id="password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
@@ -240,6 +462,24 @@ export default function LoginPage() {
                   }}
                   onFocus={(e) => e.target.style.boxShadow = 'none'}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex={-1}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#a1a1aa', padding: '4px', display: 'flex' }}
+                >
+                  {showPassword ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
               </div>
             </div>
 

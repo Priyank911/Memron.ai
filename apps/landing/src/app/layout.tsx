@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import '@/styles/globals.css';
 import { ConditionalLayout } from '@/components/conditional-layout';
+import { CookieConsent } from '@/components/cookie-consent';
 import { ClerkProvider } from '@clerk/nextjs';
 
 export const metadata: Metadata = {
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </head>
         <body>
           <ConditionalLayout>{children}</ConditionalLayout>
+          <CookieConsent />
         </body>
       </html>
     </ClerkProvider>

@@ -18,15 +18,23 @@ export default function SignUpPage() {
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [otpError, setOtpError] = useState('');
   const [otpVerifying, setOtpVerifying] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
   const { isSignedIn } = useAuth();
 
-  // Redirect if already signed in
+  // Track whether we're handling the post-verification redirect ourselves
+  // to prevent the isSignedIn effect from racing with the verify redirect
+  const redirectingRef = useRef(false);
+
+  // Redirect if already signed in (client-side fallback; middleware handles server-side)
   useEffect(() => {
-    if (isSignedIn) {
-      router.replace('/dashboard');
+    if (isSignedIn && !redirectingRef.current && !verifying) {
+      // User is signed in but landed on sign-up page.
+      // Check onboarding cookie: if onboarded → dashboard, otherwise → onboarding
+      const isOnboarded = document.cookie.includes('memron_onboarded=true');
+      router.replace(isOnboarded ? '/dashboard' : '/onboarding');
     }
-  }, [isSignedIn, router]);
+  }, [isSignedIn, verifying, router]);
 
   // ─── OTP helpers ───────────────────────────────────────────
   const otpValue = otp.join('');
@@ -88,11 +96,54 @@ export default function SignUpPage() {
       try {
         const completeSignUp = await signUp.attemptEmailAddressVerification({ code: otpValue });
         if (completeSignUp.status === 'complete') {
+          // Prevent the isSignedIn effect from firing a competing redirect
+          redirectingRef.current = true;
           await setActive({ session: completeSignUp.createdSessionId });
-          router.replace('/dashboard');
+
+          // Sync user to our databases before navigating so that the
+          // onboarding page can find the user record immediately
+          try {
+            await fetch('/api/user/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+            });
+          } catch {
+            // Non-blocking — onboarding page retries this anyway
+          }
+
+          // New sign-up always needs onboarding; go there directly
+          // (avoids the brief dashboard flash)
+          router.replace('/onboarding');
         }
       } catch (err: any) {
         const msg = err.errors?.[0]?.message || 'Invalid verification code';
+        const code = err.errors?.[0]?.code || '';
+
+        // "Session already exists" means the sign-up actually succeeded and
+        // Clerk already activated a session. Treat this as success.
+        if (
+          msg.toLowerCase().includes('session already exists') ||
+          msg.toLowerCase().includes('session_exists') ||
+          code === 'session_exists'
+        ) {
+          redirectingRef.current = true;
+
+          // Sync user to our databases
+          try {
+            await fetch('/api/user/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+            });
+          } catch {
+            // Non-blocking
+          }
+
+          router.replace('/onboarding');
+          return;
+        }
+
         setOtpError(msg);
         // Clear all boxes and refocus the first one so user can retry
         setOtp(Array(6).fill(''));
@@ -146,7 +197,7 @@ export default function SignUpPage() {
       await signUp.authenticateWithRedirect({
         strategy,
         redirectUrl: '/sso-callback',
-        redirectUrlComplete: '/dashboard',
+        redirectUrlComplete: '/onboarding',
       });
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Failed to sign up');
@@ -482,7 +533,7 @@ export default function SignUpPage() {
                 </svg>
                 <input
                   suppressHydrationWarning
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Min. 8 characters"
@@ -490,6 +541,24 @@ export default function SignUpPage() {
                   minLength={8}
                   style={inputStyle}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex={-1}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#a1a1aa', padding: '4px', display: 'flex' }}
+                >
+                  {showPassword ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
               </div>
             </div>
 

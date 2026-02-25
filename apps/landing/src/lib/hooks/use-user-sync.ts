@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useUser } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 
@@ -32,11 +32,27 @@ function getCookie(name: string): string | null {
     return null;
 }
 
-export function useUserSync() {
+/**
+ * Returns { isReady } — `false` until we have confirmed this user
+ * is onboarded and belongs on the dashboard.  The dashboard should
+ * show a loading spinner while isReady === false to prevent any
+ * flash of content before a potential redirect to /onboarding.
+ */
+export function useUserSync(): { isReady: boolean } {
     const { user, isLoaded } = useUser();
     const router = useRouter();
     const retryCount = useRef(0);
     const isSyncing = useRef(false);
+    // Tracks whether the onboarding check has completed and confirmed
+    // this user is onboarded (i.e. the dashboard may render).
+    const [isReady, setIsReady] = useState(() => {
+        // Fast path: if the onboarded cookie already exists we can
+        // render immediately — the server middleware already validated it.
+        if (typeof document !== 'undefined') {
+            return document.cookie.includes('memron_onboarded=true');
+        }
+        return false;
+    });
 
     const syncUser = useCallback(async () => {
         // Prevent concurrent syncs
@@ -122,6 +138,7 @@ export function useUserSync() {
             if (data.isOnboarded) {
                 // Returning user — heal cookie in case it was cleared, then stay put
                 setCookie('memron_onboarded', 'true', 365);
+                setIsReady(true);
             } else {
                 // Genuinely new user — send them through onboarding
                 if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/onboarding')) {
@@ -130,6 +147,9 @@ export function useUserSync() {
             }
         } catch (err) {
             console.error('[UserSync] Failed to check onboarding:', err);
+            // On network error, allow rendering to avoid infinite loading.
+            // The middleware is the primary guard; this is defense-in-depth.
+            setIsReady(true);
         }
     }, [router]);
 
@@ -145,10 +165,14 @@ export function useUserSync() {
             const hasOnboardedCookie = getCookie('memron_onboarded') === 'true';
             if (!hasOnboardedCookie) {
                 checkOnboardingStatus();
+            } else {
+                setIsReady(true);
             }
             return;
         }
 
         syncUser();
     }, [isLoaded, user, syncUser, checkOnboardingStatus]);
+
+    return { isReady };
 }

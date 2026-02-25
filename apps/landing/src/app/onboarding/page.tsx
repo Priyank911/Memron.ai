@@ -128,7 +128,9 @@ export default function OnboardingPage() {
         if (!ct.includes('application/json')) { setChecking(false); return; }
         const d = await r.json();
         if (d.isOnboarded) {
-          // Already done — middleware cookie healed via server Set-Cookie header
+          // Already done — heal cookie client-side so middleware
+          // allows the /dashboard navigation without bouncing back here.
+          document.cookie = 'memron_onboarded=true; path=/; max-age=31536000; SameSite=Lax';
           router.replace('/dashboard');
           return;
         }
@@ -218,7 +220,7 @@ export default function OnboardingPage() {
       <div style={{ minHeight: '100vh', background: '#09090b', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
         <Spin sz={24} />
         <span style={{ fontSize: '0.78rem', color: '#3f3f46', fontFamily: "'Inter',sans-serif" }}>
-          {checking ? 'Setting up your account…' : 'Loading…'}
+          Loading…
         </span>
       </div>
     );
