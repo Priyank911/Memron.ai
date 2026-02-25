@@ -15,6 +15,14 @@ const nextConfig = {
   serverExternalPackages: ['pg', 'firebase', 'firebase-admin'],
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion', 'gsap'],
+    serverActions: {
+      allowedOrigins: [
+        'localhost:3000',
+        '*.app.github.dev',
+        '*.github.dev',
+        '*.githubpreview.dev',
+      ],
+    },
   },
 };
 

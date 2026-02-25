@@ -25,8 +25,9 @@ export default function DashboardPage() {
   const [organization, setOrganization] = useState<OrgInfo | null>(null);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
 
-  // Sync user data to PostgreSQL + Firebase on every login
-  useUserSync();
+  // Sync user data to PostgreSQL + Firebase on every login.
+  // isReady becomes true only after confirming the user is onboarded.
+  const { isReady } = useUserSync();
 
   // Prevent back navigation to landing page
   useEffect(() => {
@@ -78,9 +79,9 @@ export default function DashboardPage() {
     router.push('/');
   };
 
-  if (!isLoaded) {
+  if (!isLoaded || !isReady) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: '#09090b' }}>
         <div className="text-center">
           <div className="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500 mb-4"></div>
           <p className="text-zinc-400">Loading...</p>

@@ -24,10 +24,12 @@ const isOnboardingRoute = createRouteMatcher(['/onboarding(.*)'])
 export default clerkMiddleware(async (auth, request) => {
   const { userId } = await auth()
 
-  // If user is signed in and tries to access any auth page, send to dashboard.
-  // The dashboard's useUserSync hook will redirect to /onboarding if they're new.
+  // If user is signed in and tries to access any auth page, route them
+  // to the correct destination based on the onboarding cookie.
+  // This avoids a double-redirect: /login → /dashboard → /onboarding.
   if (userId && isAuthRoute(request)) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+    const isOnboarded = request.cookies.get('memron_onboarded')?.value === 'true'
+    return NextResponse.redirect(new URL(isOnboarded ? '/dashboard' : '/onboarding', request.url))
   }
 
   // Protect dashboard routes.

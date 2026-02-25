@@ -261,11 +261,12 @@ export async function deactivateUser(clerkId: string): Promise<SyncResult> {
             return { success: true };
         })(), DB_TIMEOUT_MS, 'PostgreSQL deactivate'),
         withTimeout((async () => {
-            const { doc, updateDoc, serverTimestamp } = await import('firebase/firestore');
-            const { db } = await import('./firebase');
-            await updateDoc(doc(db, 'users', clerkId), {
+            const { getFirebaseAdmin } = await import('./firebase');
+            const fb = getFirebaseAdmin();
+            if (!fb) throw new Error('Firebase not configured');
+            await fb.db.collection('users').doc(clerkId).update({
                 isActive: false,
-                updatedAt: serverTimestamp(),
+                updatedAt: new Date(),
             });
             return { success: true };
         })(), DB_TIMEOUT_MS, 'Firebase deactivate'),
@@ -309,10 +310,11 @@ export async function updateLastLogin(clerkId: string): Promise<SyncResult> {
             return { success: true };
         })(), DB_TIMEOUT_MS, 'PostgreSQL updateLastLogin'),
         withTimeout((async () => {
-            const { doc, updateDoc, serverTimestamp } = await import('firebase/firestore');
-            const { db } = await import('./firebase');
-            await updateDoc(doc(db, 'users', clerkId), {
-                lastLoginAt: serverTimestamp(),
+            const { getFirebaseAdmin } = await import('./firebase');
+            const fb = getFirebaseAdmin();
+            if (!fb) throw new Error('Firebase not configured');
+            await fb.db.collection('users').doc(clerkId).update({
+                lastLoginAt: new Date(),
             });
             return { success: true };
         })(), DB_TIMEOUT_MS, 'Firebase updateLastLogin'),
@@ -355,13 +357,13 @@ export async function checkHealth(): Promise<{
         // Firebase health with timeout
         withTimeout((async () => {
             const start = Date.now();
-            const { db } = await import('./firebase');
-            const { doc, getDoc } = await import('firebase/firestore');
+            const { getFirebaseAdmin } = await import('./firebase');
+            const fb = getFirebaseAdmin();
+            if (!fb) throw new Error('Firebase not configured');
             try {
-                await getDoc(doc(db, '_health', 'ping'));
+                await fb.db.collection('_health').doc('ping').get();
                 return { connected: true, latencyMs: Date.now() - start };
             } catch (error: any) {
-                // Firebase throws if truly disconnected; permission errors mean it's connected
                 if (error.code === 'permission-denied') {
                     return { connected: true, latencyMs: Date.now() - start };
                 }

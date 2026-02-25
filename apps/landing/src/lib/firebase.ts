@@ -14,7 +14,7 @@ let db: Firestore | null = null;
  * Initialize Firebase Admin SDK
  * Uses service account credentials from environment variables
  */
-function getFirebaseAdmin(): { app: App; db: Firestore } | null {
+export function getFirebaseAdmin(): { app: App; db: Firestore } | null {
     // Return cached instances if available
     if (firebaseApp && db) {
         return { app: firebaseApp, db };
