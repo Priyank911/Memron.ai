@@ -19,9 +19,6 @@
     "@memron/shared-types": "workspace:*",
     "@memron/mcp-bridge": "workspace:*",
     "@memron/memory-core": "workspace:*",
-    "@memron/lit-encryption": "workspace:*",
-    "@memron/ipfs-persistence": "workspace:*",
-    "@memron/trust-registry": "workspace:*",
     "nanoid": "^5.0.0",
     "pino": "^9.0.0"
   },

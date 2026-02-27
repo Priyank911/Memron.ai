@@ -1,5 +1,5 @@
 /**
- * Trust Registry — on-chain collaborative memory scores.
+ * Trust Registry — collaborative memory scores.
  */
 export interface TrustScore {
   /** DID of the scored agent */
@@ -12,12 +12,10 @@ export interface TrustScore {
   disputes: number;
   /** Number of unique collaborators */
   collaborators: number;
-  /** On-chain verification status */
+  /** Verification status */
   verified: boolean;
   /** RFC3339 timestamp of last score update */
   lastUpdated: string;
-  /** On-chain transaction hash of latest attestation */
-  attestationTxHash?: string;
 }
 
 export interface TrustAttestation {
@@ -26,5 +24,4 @@ export interface TrustAttestation {
   score: number;
   reason: string;
   timestamp: string; // RFC3339
-  txHash: string;
 }

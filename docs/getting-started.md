@@ -32,19 +32,17 @@ pnpm dev
 memron-ai/
 ├── apps/
 │   ├── landing/          Next.js marketing site
-│   └── platform/         React dashboard (wallet + DID auth)
+│   └── platform/         React dashboard
 ├── packages/
 │   ├── shared-types/     Canonical TypeScript types
 │   ├── mcp-bridge/       Universal MCP Bridge + Pointer Engine
-│   ├── lit-encryption/   Lit Protocol threshold encryption
-│   ├── ipfs-persistence/ IPFS storage + CID anchoring
 │   ├── memory-core/      Orchestration (classify → encrypt → store → pointer)
-│   ├── trust-registry/   On-chain trust score client
+│   ├── trust-registry/   Trust score client
 │   └── ui/               Shared React design system
 ├── services/
 │   ├── memory-tunnel-api/ Hono API + MCP endpoint
 │   ├── gateway/           API gateway + WebSocket hub
-│   └── workers/           Background jobs (forensic, pinning, trust, rot)
+│   └── workers/           Background jobs (forensic, trust, rot)
 ├── contracts/             Solidity smart contracts (TrustRegistry)
 ├── tools/
 │   └── cli/               Memron CLI
@@ -59,7 +57,7 @@ memron-ai/
 
 ### Memory Tunnel
 Agents don't send raw context. They exchange **pointers** — tiny references
-to encrypted, IPFS-stored memory records. This achieves 89-95% token compression.
+to encrypted, stored memory records. This achieves 89-95% token compression.
 
 ### Bucketed Memory
 Memories are automatically classified into thematic buckets (conversation,
@@ -69,8 +67,8 @@ tool-results, preferences, knowledge) for organized retrieval.
 Instead of replaying entire histories, Memron injects only the exact
 relevant context slices into the active inference window.
 
-### Zero Trust Security
-- Lit Protocol for identity-based threshold decryption
+### Security
+- AES-256-GCM encryption for memory records
 - Time-bounded access grants with RFC3339 expiration
 - Forensic snapshots for poisoning detection and rollback
-- On-chain Trust Registry for agent reputation scoring
+- Trust Registry for agent reputation scoring

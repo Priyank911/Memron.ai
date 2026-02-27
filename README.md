@@ -46,8 +46,8 @@ The system implements a bucketed memory architecture that organizes context into
 
 **Core Capabilities**:
 - Cross-platform memory transfer via MCP protocol standard
-- Threshold encryption with Lit Protocol (only authorized DIDs can decrypt)
-- IPFS content-addressed storage with immutable CID verification
+- AES-256-GCM encryption with identity-based access control
+- Persistent storage with immutable verification
 - Forensic snapshots for poisoning detection and state rollback
 - 89-95% token compression through pointer-based retrieval
 - Identity-based access control with RFC3339 timestamp expiration
@@ -104,10 +104,10 @@ The system implements a layered architecture separating concerns across MCP clie
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │              PERSISTENCE LAYER (Observable)            │ │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐              │ │
-│  │  │  Local   │  │   IPFS   │  │    Lit   │              │ │
-│  │  │  SQLite  │  │  Pinning │  │ Protocol │              │ │
+│  │  │  Local   │  │  Object │  │  AES-256│              │ │
+│  │  │  SQLite  │  │  Storage│  │  -GCM   │              │ │
 │  │  └──────────┘  └──────────┘  └──────────┘              │ │
-│  │  Forensic Snapshots · Encryption · CID Verification    │ │
+│  │  Forensic Snapshots · Encryption · Integrity Checks     │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -130,11 +130,11 @@ Once perception validates the input, normalization transforms heterogeneous memo
 
 ### Stage 3: Memory Management
 
-The memory management stage handles intelligent retrieval and injection of relevant context based on agent queries. This stage employs semantic search across vector embeddings with cosine similarity scoring, temporal decay functions to prioritize recent memories while maintaining access to historical context, cross-bucket fusion to build comprehensive context from multiple memory categories, and relevance ranking with configurable thresholds. Retrieval queries return ranked memory pointers with relevance scores between 0-1, temporal decay factors, original content or summaries, metadata including tags and sources, and CID references for verification.
+The memory management stage handles intelligent retrieval and injection of relevant context based on agent queries. This stage employs semantic search across vector embeddings with cosine similarity scoring, temporal decay functions to prioritize recent memories while maintaining access to historical context, cross-bucket fusion to build comprehensive context from multiple memory categories, and relevance ranking with configurable thresholds. Retrieval queries return ranked memory pointers with relevance scores between 0-1, temporal decay factors, original content or summaries, metadata including tags and sources, and storage references for verification.
 
 ### Stage 4: Persistence
 
-The final persistence stage commits memories to distributed storage with cryptographic integrity guarantees. This stage executes forensic snapshots before mutations to enable rollback and poisoning detection, IPFS pinning with CID verification ensuring content addressing integrity, Lit Protocol encryption with threshold decryption requiring authorized DIDs, and local SQLite caching for rapid sub-millisecond access. Each memory write produces an immutable CID pointing to IPFS storage, encrypted payload reference with access control metadata, snapshot CID for pre-mutation state, and cache entry for performance optimization.
+The final persistence stage commits memories to storage with cryptographic integrity guarantees. This stage executes forensic snapshots before mutations to enable rollback and poisoning detection, AES-256-GCM encryption ensuring only authorized identities can decrypt memories, and local SQLite caching for rapid sub-millisecond access. Each memory write produces a unique storage identifier, encrypted payload reference with access control metadata, snapshot reference for pre-mutation state, and cache entry for performance optimization.
 
 Each pipeline stage exposes health check endpoints through the `/health` API and emits structured logs with execution metrics for monitoring dashboards. The sequential execution ensures data integrity while the observable design enables granular debugging and performance optimization in production environments.
 
@@ -142,7 +142,7 @@ Each pipeline stage exposes health check endpoints through the `/health` API and
 
 ## Technology Stack
 
-The system employs modern, production-grade technologies selected for performance, decentralization, security, and developer experience. The technology choices reflect requirements for distributed storage, cryptographic security, and standards-based integration.
+The system employs modern, production-grade technologies selected for performance, security, and developer experience. The technology choices reflect requirements for reliable storage, cryptographic security, and standards-based integration.
 
 ### MCP Server Technologies
 
@@ -150,7 +150,7 @@ The MCP server runs on Node.js 20+ providing access to the latest language featu
 
 ### Storage & Encryption
 
-IPFS through js-ipfs (Helia) provides content-addressed storage with immutable CIDs, supporting both embedded IPFS nodes and remote gateway access for flexible deployment. Lit Protocol implements threshold encryption with distributed key management across a decentralized network, ensuring only authorized DIDs with valid access grants can decrypt memories. Local SQLite instances serve as performance-optimized cache layers with LRU eviction policies and JSON support for flexible schema evolution. The storage architecture supports hybrid deployments combining local caching, IPFS distribution, and optional Arweave archival for permanence.
+Local SQLite instances serve as performance-optimized storage with LRU eviction policies and JSON support for flexible schema evolution. AES-256-GCM encryption ensures only authorized identities with valid access grants can decrypt memories. The storage architecture supports pluggable backends for flexible deployment options.
 
 ### Vector & Semantic Search
 
@@ -168,7 +168,7 @@ The installation process requires setting up the MCP server, configuring storage
 
 ### Prerequisites
 
-Before installation, ensure you have Node.js 20 or later installed along with pnpm 9.15+ for workspace management. Obtain API credentials from OpenAI for embedding generation (platform.openai.com), and optionally from Lit Protocol for hardware-backed encryption (developer.litprotocol.com). For IPFS storage, either run a local IPFS daemon or obtain access to a remote gateway.
+Before installation, ensure you have Node.js 20 or later installed along with pnpm 9.15+ for workspace management. Obtain API credentials from OpenAI for embedding generation (platform.openai.com).
 
 ### Monorepo Installation
 
@@ -201,19 +201,11 @@ Edit the `.env` file with your configuration:
 
 ```bash
 # Storage Configuration
-STORAGE_TYPE=local              # local | ipfs | hybrid
+STORAGE_TYPE=local              # local | postgres | hybrid
 SQLITE_PATH=./data/memron.db    # Local database path
 
 # OpenAI Configuration (Required)
 OPENAI_API_KEY=sk-...           # API key for embeddings
-
-# IPFS Configuration (Optional)
-IPFS_GATEWAY=https://ipfs.io
-IPFS_API_URL=http://localhost:5001
-
-# Lit Protocol Configuration (Optional)
-LIT_NETWORK=cayenne             # cayenne | manzano | habanero
-LIT_CHAIN=ethereum              # ethereum | polygon
 
 # Server Configuration
 MCP_LOG_LEVEL=info              # debug | info | warn | error
@@ -235,11 +227,11 @@ Configuration is managed through environment variables for security and deployme
 
 ### Storage Backend Configuration
 
-The `STORAGE_TYPE` variable determines the persistence strategy. Setting it to `local` uses SQLite only, providing rapid development iteration and single-user deployments with no external dependencies. Setting it to `ipfs` enables distributed storage with IPFS pinning, CID verification, and optional Filecoin or Arweave archival. Setting it to `hybrid` combines local SQLite caching with IPFS persistence, optimizing for both performance through local reads and decentralization through IPFS distribution.
+The `STORAGE_TYPE` variable determines the persistence strategy. Setting it to `local` uses SQLite only, providing rapid development iteration and single-user deployments with no external dependencies. Setting it to `postgres` enables PostgreSQL-backed storage for production multi-user deployments. Setting it to `hybrid` combines local SQLite caching with PostgreSQL persistence, optimizing for both performance through local reads and durability through database distribution.
 
 ### Encryption Configuration
 
-Lit Protocol encryption is enabled by providing `LIT_NETWORK` and `LIT_CHAIN` environment variables. When enabled, all memories undergo threshold encryption before storage, requiring authorized DIDs for decryption. The system supports granular access control with time-limited grants specified in RFC3339 format, allowing temporary access delegation that automatically expires. Access policies can be configured per memory bucket, enabling different security models for conversation history versus sensitive preferences.
+AES-256-GCM encryption is enabled by default for all memory records. The system supports granular access control with time-limited grants specified in RFC3339 format, allowing temporary access delegation that automatically expires. Access policies can be configured per memory bucket, enabling different security models for conversation history versus sensitive preferences.
 
 ### Embedding Model Configuration
 
@@ -315,7 +307,7 @@ The `memron_write` tool accepts a memory object with required content and bucket
 }
 ```
 
-Response includes the assigned memory ID (UUID v4), generated CID for IPFS storage verification, embedding vector summary with dimension and norm information, snapshot CID capturing pre-mutation state, and success boolean with optional error details.
+Response includes the assigned memory ID (UUID v4), storage identifier for verification, embedding vector summary with dimension and norm information, snapshot reference capturing pre-mutation state, and success boolean with optional error details.
 
 ### Memory Query API
 
@@ -331,7 +323,7 @@ The `memron_query` tool performs semantic search across specified memory buckets
 }
 ```
 
-Response returns an array of ranked memories sorted by combined relevance and temporal scores. Each result includes the relevance score (0-1) from cosine similarity, temporal decay factor based on memory age, original content string or summary for large memories, metadata object with tags and source information, CID reference for content verification, and creation timestamp in ISO 8601 format.
+Response returns an array of ranked memories sorted by combined relevance and temporal scores. Each result includes the relevance score (0-1) from cosine similarity, temporal decay factor based on memory age, original content string or summary for large memories, metadata object with tags and source information, storage reference for content verification, and creation timestamp in ISO 8601 format.
 
 ### Health Check Endpoints
 
@@ -341,7 +333,7 @@ The server exposes health monitoring endpoints for operational visibility:
 GET /health → Overall system health with status and component checks
 GET /health/storage → Storage backend connectivity and capacity
 GET /health/embeddings → Embedding service status and model info
-GET /health/encryption → Lit Protocol connectivity and key status
+GET /health/encryption → Encryption service status
 ```
 
 Health responses include status enum (operational | degraded | offline), component-specific metrics, recent error counts, and timestamp of last successful operation.
@@ -356,13 +348,13 @@ Memron provides flexible storage backends optimized for different deployment sce
 
 The local storage backend uses SQLite with Write-Ahead Logging (WAL) mode for concurrent access and improved write performance. Ideal for development environments, testing scenarios, and single-user deployments requiring rapid iteration. Memories persist in a single database file with automatic checkpointing, full-text search indexes, and JSON column support for flexible schema evolution. No external dependencies or network access required. Backup strategy involves simple file-level replication or continuous archival.
 
-### IPFS Storage
+### PostgreSQL Storage
 
-The IPFS backend provides content-addressed storage with immutable CID verification and distributed availability across the IPFS network. Memories are pinned to specified IPFS nodes or pinning services like Pinata, Web3.Storage, or NFT.Storage for persistence guarantees. CID verification ensures content integrity through cryptographic hashing. Supports both embedded IPFS nodes running in-process and remote IPFS gateways for reduced resource consumption. Optional Arweave integration enables permanent archival with endowment-based storage fees.
+The PostgreSQL backend provides production-grade relational storage with full ACID compliance, connection pooling, and horizontal read scaling. Memories are stored with structured indexes for efficient semantic and temporal queries. Supports pgvector extension for native vector similarity search at scale.
 
 ### Hybrid Storage
 
-The hybrid backend combines local SQLite caching with IPFS persistence, optimizing for both performance and decentralization. Frequently accessed memories populate the local cache for sub-millisecond retrieval while all memories persist to IPFS for distribution and availability. Cache eviction uses LRU (Least Recently Used) policy with configurable size limits from 100MB to 10GB. Cache misses trigger IPFS fetch with automatic cache population. Write operations commit to both local cache and IPFS concurrently with configurable consistency models (eventual | strong).
+The hybrid backend combines local SQLite caching with PostgreSQL persistence, optimizing for both performance and durability. Frequently accessed memories populate the local cache for sub-millisecond retrieval while all memories persist to PostgreSQL for reliability. Cache eviction uses LRU (Least Recently Used) policy with configurable size limits. Cache misses trigger database fetch with automatic cache population. Write operations commit to both local cache and database concurrently.
 
 ---
 
@@ -379,8 +371,7 @@ memron/
 │   ├── mcp-server/           # MCP server implementation
 │   ├── shared-types/         # TypeScript type definitions
 │   ├── memory-core/          # Core memory orchestration
-│   ├── lit-encryption/       # Lit Protocol integration
-│   └── ipfs-persistence/     # IPFS storage layer
+│   └── trust-registry/       # Trust scoring engine
 ├── docs/                     # Architecture documentation
 ├── package.json              # Root workspace configuration
 ├── pnpm-workspace.yaml       # Workspace package definitions

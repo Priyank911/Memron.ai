@@ -20,8 +20,6 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "@memron/mcp-bridge": ["./packages/mcp-bridge/src"],
-      "@memron/lit-encryption": ["./packages/lit-encryption/src"],
-      "@memron/ipfs-persistence": ["./packages/ipfs-persistence/src"],
       "@memron/memory-core": ["./packages/memory-core/src"],
       "@memron/trust-registry": ["./packages/trust-registry/src"],
       "@memron/shared-types": ["./packages/shared-types/src"],

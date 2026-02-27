@@ -28,10 +28,10 @@
 │         │    ┌────────────┼────────────────┐                        │
 │         │    │            │                │                        │
 │    ┌────┴───┴──┐  ┌──────┴──────┐  ┌──────┴──────┐                │
-│    │ Pointer   │  │    Lit      │  │    IPFS     │                │
-│    │ Engine    │  │ Encryption  │  │ Persistence │                │
-│    │ (89-95%   │  │ (Threshold  │  │ (CID        │                │
-│    │  compress)│  │  Decrypt)   │  │  Anchoring) │                │
+│    │ Pointer   │  │ Encryption  │  │ Persistence│                │
+│    │ Engine    │  │ Service     │  │ Service    │                │
+│    │ (89-95%   │  │ (AES-256   │  │ (Storage   │                │
+│    │  compress)│  │  -GCM)     │  │  Backend)  │                │
 │    └───────────┘  └─────────────┘  └─────────────┘                │
 │         │                 │                │                        │
 │    ┌────┴─────────────────┴────────────────┴───┐                   │
@@ -43,14 +43,14 @@
 │    └───────────────────────────────────────────┘                   │
 │         │                                                           │
 │    ┌────┴────────────────────┐                                     │
-│    │  Trust Registry         │ ◄── On-chain (Solidity)             │
+│    │  Trust Registry         │                                     │
 │    │  (Collaborative Scores) │                                     │
 │    └─────────────────────────┘                                     │
 │                                                                     │
-│  ┌─────────┐  ┌──────────┐  ┌─────────────┐  ┌──────────────────┐ │
-│  │  Redis  │  │ Postgres │  │  IPFS Node  │  │  Lit Protocol    │ │
-│  │ (Cache) │  │ (Index)  │  │  (Storage)  │  │  Network         │ │
-│  └─────────┘  └──────────┘  └─────────────┘  └──────────────────┘ │
+│  ┌─────────┐  ┌──────────┐                                       │
+│  │  Redis  │  │ Postgres │                                       │
+│  │ (Cache) │  │ (Index)  │                                       │
+│  └─────────┘  └──────────┘                                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,11 +63,11 @@ Raw Content (Agent Output)
   │
   ├─2─► ForensicEngine.createSnapshot() → Pre-mutation snapshot
   │
-  ├─3─► LitEncryptionService.encrypt() → Threshold-encrypted blob
-  │     └── AccessControlConditions = [owner DID]
+  ├─3─► EncryptionService.encrypt() → AES-256-GCM encrypted blob
+  │     └── AccessConditions = [owner DID]
   │
-  ├─4─► IPFSPersistenceService.store() → Returns CID
-  │     └── Content is immutable, addressable by hash
+  ├─4─► PersistenceService.store() → Returns storage ID
+  │     └── Content is immutable, addressable by ID
   │
   ├─5─► PointerEngine.createPointer() → Returns ptr_xxxxxxxx
   │     └── Compression: ~1000 tokens → ~3 tokens (99.7%)

@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════
 // @memron/memory-core — Orchestration layer that ties all packages together.
-// Memory lifecycle: Classify → Encrypt → Store (IPFS) → Pointer → Tunnel
+// Memory lifecycle: Classify → Encrypt → Store → Pointer → Tunnel
 // ═══════════════════════════════════════════════════════════════════
 
 export { MemoryOrchestrator } from './orchestrator';

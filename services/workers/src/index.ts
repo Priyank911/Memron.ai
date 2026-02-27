@@ -1,5 +1,4 @@
 import { forensicSnapshotWorker } from './forensic-snapshot-worker';
-import { ipfsPinningWorker } from './ipfs-pinning-worker';
 import { trustScoringWorker } from './trust-scoring-worker';
 import { contextRotWorker } from './context-rot-worker';
 
@@ -11,7 +10,6 @@ async function main() {
 
   await Promise.all([
     forensicSnapshotWorker.start(),
-    ipfsPinningWorker.start(),
     trustScoringWorker.start(),
     contextRotWorker.start(),
   ]);

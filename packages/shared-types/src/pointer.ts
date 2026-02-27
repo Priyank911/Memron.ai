@@ -6,8 +6,8 @@
 export interface Pointer {
   /** Short unique identifier (8-12 chars) */
   id: string;
-  /** CID of the underlying memory record */
-  targetCid: string;
+  /** Storage ID of the underlying memory record */
+  targetStorageId: string;
   /** DID of the pointer creator */
   creatorDid: string;
   /** Token count of the original content this pointer replaces */

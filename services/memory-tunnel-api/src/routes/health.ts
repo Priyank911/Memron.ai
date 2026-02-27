@@ -7,8 +7,8 @@ export const healthRoutes = new Hono().get('/', async (c) => {
     version: '0.1.0',
     timestamp: new Date().toISOString(),
     checks: {
-      ipfs: 'unknown',
-      lit: 'unknown',
+      storage: 'unknown',
+      encryption: 'unknown',
       redis: 'unknown',
       postgres: 'unknown',
     },

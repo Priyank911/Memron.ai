@@ -12,7 +12,6 @@
   "dependencies": {
     "@memron/shared-types": "workspace:*",
     "@memron/memory-core": "workspace:*",
-    "@memron/ipfs-persistence": "workspace:*",
     "bullmq": "^5.0.0",
     "pino": "^9.0.0"
   },

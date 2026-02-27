@@ -28,7 +28,7 @@ export class ContextInjector {
       if (usedTokens + sliceTokens > available) break;
 
       slices.push({
-        cid: result.record.cid,
+        storageId: result.record.storageId,
         bucket: result.record.bucket,
         relevance: result.relevanceScore,
         content: result.contextSlice,
@@ -51,7 +51,7 @@ export class ContextInjector {
 }
 
 export interface InjectedSlice {
-  cid: string;
+  storageId: string;
   bucket: string;
   relevance: number;
   content: string;

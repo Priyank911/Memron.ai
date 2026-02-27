@@ -5,8 +5,6 @@ export interface BridgeConfig {
   maxContextTokens: number;
   targetCompressionRate: number;
   enableForensicSnapshots: boolean;
-  ipfsGateway: string;
-  litNetwork: string;
 }
 
 export interface BridgeStatus {
