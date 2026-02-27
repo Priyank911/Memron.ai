@@ -5,13 +5,13 @@ import type { MemoryRecord, Pointer, MemoryBucket } from '@memron/shared-types';
  *
  *   Raw Content
  *     → BucketRouter.classify()
- *     → LitEncryptionService.encrypt()
- *     → IPFSPersistenceService.store()
+ *     → EncryptionService.encrypt()
+ *     → PersistenceService.store()
  *     → PointerEngine.createPointer()
  *     → Return Pointer (89-95% smaller than raw)
  */
 export class MemoryOrchestrator {
-  /** Store content as an encrypted, IPFS-anchored memory and return its pointer */
+  /** Store content as an encrypted memory and return its pointer */
   async ingest(
     content: string,
     ownerDid: string,
@@ -21,9 +21,9 @@ export class MemoryOrchestrator {
   ): Promise<Pointer> {
     // 1. Classify into bucket
     // 2. Create forensic pre-mutation snapshot (if enabled)
-    // 3. Encrypt with Lit (ACC = owner DID)
-    // 4. Store encrypted blob on IPFS → get CID
-    // 5. Create pointer referencing CID
+    // 3. Encrypt content
+    // 4. Store encrypted blob → get storage ID
+    // 5. Create pointer referencing storage ID
     // 6. Index for search
     throw new Error('TODO: Implement full ingestion pipeline');
   }
@@ -33,10 +33,10 @@ export class MemoryOrchestrator {
     pointerId: string,
     requesterDid: string,
   ): Promise<string> {
-    // 1. Resolve pointer → CID
+    // 1. Resolve pointer → storage ID
     // 2. Check access grants for requesterDid
-    // 3. Fetch encrypted content from IPFS
-    // 4. Decrypt with Lit (requester must satisfy ACC)
+    // 3. Fetch encrypted content from storage
+    // 4. Decrypt (requester must have valid access)
     // 5. Return context slice
     throw new Error('TODO: Implement recall pipeline');
   }

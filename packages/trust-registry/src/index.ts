@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════
-// @memron/trust-registry — On-chain collaborative memory trust scores
+// @memron/trust-registry — Collaborative memory trust scores
 // Agents build reputation through successful memory exchanges.
 // ═══════════════════════════════════════════════════════════════════
 

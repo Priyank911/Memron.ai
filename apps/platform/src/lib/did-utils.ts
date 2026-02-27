@@ -1,8 +1,4 @@
-// DID utilities — derive DID from wallet address
-export function addressToDid(address: string): string {
-  return `did:ethr:${address.toLowerCase()}`;
-}
-
+// DID utilities — identity helpers
 export function shortenDid(did: string, chars = 6): string {
   if (!did) return '';
   const parts = did.split(':');

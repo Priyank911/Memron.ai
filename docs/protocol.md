@@ -11,7 +11,7 @@ Protocol (MCP).
 ### Design Rationale
 Instead of transferring raw conversation context (thousands of tokens),
 agents exchange **pointers** — short identifiers (8-12 chars) that reference
-encrypted, IPFS-anchored memory records.
+encrypted, stored memory records.
 
 ### Compression Metrics
 | Metric                  | Target      |
@@ -44,20 +44,20 @@ Example: `ptr_kN7xQ2mP`
 - **Granter DID**: The entity issuing the permission
 - **Grantee DID**: The entity receiving the permission
 - **Permission**: `read` | `write` | `admin`
-- **Scope**: Global, per-bucket, or per-CID
+- **Scope**: Global, per-bucket, or per-storage-ID
 - **Expiration**: RFC3339 timestamp (mandatory)
 
 ### Security Layers
-1. **Lit Protocol Encryption**: Identity-based threshold decryption
+1. **AES-256-GCM Encryption**: Identity-based encryption
 2. **Access Grants**: Time-bounded, granular R/W control
 3. **Forensic Snapshots**: Pre-mutation snapshots for poisoning rollback
-4. **Trust Registry**: On-chain reputation for collaborative scoring
+4. **Trust Registry**: Reputation scoring for collaborative scoring
 
 ## MCP Tools
 
 | Tool               | Description                                    |
 |-------------------|------------------------------------------------|
-| `memron_store`    | Store content → encrypt → IPFS → return pointer |
+| `memron_store`    | Store content → encrypt → persist → return pointer |
 | `memron_recall`   | Resolve pointer → decrypt → return context      |
 | `memron_search`   | Semantic search across memory buckets           |
 | `memron_drop`     | P2P share a pointer with another agent          |

@@ -12,9 +12,7 @@
   },
   "dependencies": {
     "@memron/shared-types": "workspace:*",
-    "@memron/mcp-bridge": "workspace:*",
-    "@memron/lit-encryption": "workspace:*",
-    "@memron/ipfs-persistence": "workspace:*"
+    "@memron/mcp-bridge": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

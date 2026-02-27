@@ -25,7 +25,6 @@ export class AttestationManager {
       score,
       reason,
       timestamp: new Date().toISOString(),
-      txHash: '', // Set after on-chain submission
     };
   }
 

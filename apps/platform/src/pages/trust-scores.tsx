@@ -1,4 +1,4 @@
-// Trust Scores — on-chain Trust Registry view for collaborative memory scores
+// Trust Scores — Trust Registry view for collaborative memory scores
 export function TrustScores() {
   return (
     <div className="space-y-6">

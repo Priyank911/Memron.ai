@@ -1,7 +1,7 @@
-/** Immutable memory record anchored to IPFS via CID */
+/** Immutable memory record with a unique storage identifier */
 export interface MemoryRecord {
-  /** Content Identifier — IPFS hash of the immutable conversation state */
-  cid: string;
+  /** Unique storage identifier for the memory record */
+  storageId: string;
   /** DID of the memory owner */
   ownerDid: string;
   /** DID of the agent that created this memory */
@@ -25,10 +25,10 @@ export interface MemoryRecord {
 }
 
 export interface EncryptionMeta {
-  /** Lit Protocol Access Control Condition hash */
+  /** Access control condition hash */
   accHash: string;
   /** Encryption algorithm used */
-  algorithm: 'lit-threshold' | 'aes-256-gcm';
+  algorithm: 'aes-256-gcm';
   /** Encrypted symmetric key (base64) */
   encryptedSymmetricKey: string;
 }
@@ -50,9 +50,9 @@ export interface MemorySearchResult {
 /** Forensic snapshot for poisoning rollback */
 export interface ForensicSnapshot {
   id: string;
-  memoryCid: string;
+  memoryStorageId: string;
   ownerDid: string;
-  snapshotCid: string;
+  snapshotStorageId: string;
   reason: 'scheduled' | 'pre-mutation' | 'manual';
   createdAt: string; // RFC3339
   integrityHash: string;

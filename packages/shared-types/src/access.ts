@@ -24,8 +24,8 @@ export interface AccessGrant {
 }
 
 export interface AccessScope {
-  /** If set, grant applies only to these specific CIDs */
-  cids?: string[];
+  /** If set, grant applies only to these specific storage IDs */
+  storageIds?: string[];
   /** If set, grant applies only to these buckets */
   buckets?: string[];
   /** If true, grant covers all memories of the granter */

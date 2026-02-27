@@ -10,8 +10,6 @@ COPY apps/platform/package.json ./apps/platform/
 COPY packages/shared-types/package.json ./packages/shared-types/
 COPY packages/mcp-bridge/package.json ./packages/mcp-bridge/
 COPY packages/memory-core/package.json ./packages/memory-core/
-COPY packages/lit-encryption/package.json ./packages/lit-encryption/
-COPY packages/ipfs-persistence/package.json ./packages/ipfs-persistence/
 COPY packages/trust-registry/package.json ./packages/trust-registry/
 COPY packages/ui/package.json ./packages/ui/
 COPY services/memory-tunnel-api/package.json ./services/memory-tunnel-api/

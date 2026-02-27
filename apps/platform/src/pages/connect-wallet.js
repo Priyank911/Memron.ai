@@ -1,6 +1,0 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-// Connect Wallet — entry point for wallet-based DID authentication
-export function ConnectWallet() {
-    return (_jsx("div", { className: "flex min-h-screen items-center justify-center bg-black", children: _jsxs("div", { className: "w-full max-w-md space-y-6 rounded-2xl border border-zinc-800 bg-zinc-950 p-8 text-center", children: [_jsx("div", { className: "mx-auto h-16 w-16 rounded-2xl bg-indigo-600" }), _jsx("h1", { className: "text-2xl font-bold", children: "Connect to Memron" }), _jsx("p", { className: "text-sm text-zinc-400", children: "Connect your wallet to generate a Decentralized Identifier (DID) and access your sovereign memory." }), _jsx("button", { className: "w-full rounded-lg bg-indigo-600 py-3 font-semibold hover:bg-indigo-500 transition", children: "Connect Wallet" }), _jsx("p", { className: "text-xs text-zinc-600", children: "Your DID is derived from your wallet. No email or password required." })] }) }));
-}
-//# sourceMappingURL=connect-wallet.js.map

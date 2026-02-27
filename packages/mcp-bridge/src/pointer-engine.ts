@@ -20,7 +20,7 @@ export class PointerEngine {
   async createPointer(
     content: string,
     creatorDid: string,
-    targetCid: string,
+    targetStorageId: string,
     bucket: string,
   ): Promise<Pointer> {
     const originalTokens = this.estimateTokens(content);
@@ -29,7 +29,7 @@ export class PointerEngine {
 
     const pointer: Pointer = {
       id,
-      targetCid,
+      targetStorageId,
       creatorDid,
       originalTokens,
       pointerTokens,
@@ -44,7 +44,7 @@ export class PointerEngine {
     return pointer;
   }
 
-  /** Resolve a pointer ID to its metadata (actual content resolved via IPFS) */
+  /** Resolve a pointer ID to its metadata (actual content resolved via storage backend) */
   resolve(pointerId: string): Pointer | undefined {
     return this.pointers.get(pointerId);
   }
