@@ -94,20 +94,20 @@ The system implements a layered architecture separating concerns across MCP clie
 │  │          MEMORY MANAGEMENT LAYER - Four Buckets        │ │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────┐        │ │
 │  │  │Conversation│  │   Tools    │  │Preferences │        │ │
-│  │  └────────────┘  └──────────────┘  └────────────┘        │ │
-│  │                   ┌────────────┐                        │ │
-│  │                   │ Knowledge  │                        │ │
-│  │                   └────────────┘                        │ │
-│  │  Semantic Search · Vector Similarity · Temporal Decay   │ │
+│  │  └────────────┘  └────────────┘  └────────────┘        │ │
+│  │                   ┌────────────┐                       │ │
+│  │                   │ Knowledge  │                       │ │
+│  │                   └────────────┘                       │ │
+│  │  Semantic Search · Vector Similarity · Temporal Decay  │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                            ↓                                │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │              PERSISTENCE LAYER (Observable)            │ │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐              │ │
-│  │  │  Local   │  │  Object │  │  AES-256│              │ │
-│  │  │  SQLite  │  │  Storage│  │  -GCM   │              │ │
+│  │  │  Local   │  │  Object  │  │  AES-256 │              │ │
+│  │  │  SQLite  │  │  Storage │  │  -GCM    │              │ │
 │  │  └──────────┘  └──────────┘  └──────────┘              │ │
-│  │  Forensic Snapshots · Encryption · Integrity Checks     │ │
+│  │  Forensic Snapshots · Encryption · Integrity Checks    │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
