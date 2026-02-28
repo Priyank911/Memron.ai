@@ -14,6 +14,10 @@
  * - New McpServer per session (SDK requirement)
  * - 9 MCP tools: memory (4), profile (2), context (1), system (2)
  */
+
+// Load .env files before anything else (cross-platform, works on Windows + Linux)
+import 'dotenv/config';
+
 import express from 'express';
 import cors from 'cors';
 import { randomUUID } from 'node:crypto';
@@ -314,6 +318,17 @@ async function main() {
     console.log('                  profile_get, profile_update, context_build,');
     console.log('                  system_health, system_stats');
     console.log();
+  });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[FATAL] Port ${config.port} is already in use.`);
+      console.error(`        Run: lsof -ti:${config.port} | xargs kill -9`);
+      console.error(`        Or set a different PORT in .env`);
+    } else {
+      console.error('[FATAL] Server error:', err.message);
+    }
+    process.exit(1);
   });
 
   // Graceful shutdown
