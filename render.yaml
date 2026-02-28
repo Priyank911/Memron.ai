@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────
+# Render Deploy — Memron MCP Server
+# ─────────────────────────────────────────
+# Render auto-detects this file in the repo.
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: memron-mcp-server
+    runtime: docker
+    dockerfilePath: ./infra/docker/Dockerfile.mcp
+    dockerContext: .
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "4201"
+      - key: MCP_SERVER_URL
+        sync: false  # Set after deploy: https://memron-mcp-server.onrender.com
+      - key: PG_HOST
+        sync: false
+      - key: PG_PORT
+        value: "27847"
+      - key: PG_DATABASE
+        sync: false
+      - key: PG_USER
+        sync: false
+      - key: PG_PASSWORD
+        sync: false
+      - key: ENCRYPTION_SECRET
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ISSUER
+        value: https://memron-mcp-server.onrender.com
+      - key: LANDING_URL
+        sync: false  # Set to your Vercel landing app URL

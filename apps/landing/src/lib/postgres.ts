@@ -1,23 +1,25 @@
-// PostgreSQL Configuration - Primary Database (Aiven)
+// PostgreSQL Configuration - Primary Database (Supabase)
 // Used as the main source of truth for all structured data
 
 import { Pool, PoolClient } from 'pg';
 
-// Build SSL config for Aiven
-// - If PG_CA_CERT is set, use it as the trusted CA (production)
-// - Otherwise, accept Aiven's self-signed CA (development)
-const sslConfig: any = process.env.PG_CA_CERT
-    ? { rejectUnauthorized: true, ca: process.env.PG_CA_CERT }
-    : { rejectUnauthorized: false }; // Still encrypted, just doesn't verify CA
+// Build SSL config for Supabase
+// - If PG_SSL=false, disable SSL entirely (local docker-compose)
+// - If PG_CA_CERT is set, use it as the trusted CA
+// - Otherwise, use SSL with relaxed cert verification (Supabase default)
+const sslConfig: any = process.env.PG_SSL === 'false'
+    ? false
+    : process.env.PG_CA_CERT
+        ? { rejectUnauthorized: true, ca: process.env.PG_CA_CERT }
+        : { rejectUnauthorized: false };
 
 // Check if PostgreSQL is configured
 const isPgConfigured = !!(process.env.PG_HOST && process.env.PG_DATABASE && process.env.PG_USER && process.env.PG_PASSWORD);
 
-// Connection pool for PostgreSQL (Aiven)
-// SSL is required for Aiven connections
+// Connection pool for PostgreSQL (Supabase Session Pooler)
 const pool = isPgConfigured ? new Pool({
     host: process.env.PG_HOST,
-    port: parseInt(process.env.PG_PORT || '27847'),
+    port: parseInt(process.env.PG_PORT || '5432'),
     database: process.env.PG_DATABASE,
     user: process.env.PG_USER,
     password: process.env.PG_PASSWORD,
