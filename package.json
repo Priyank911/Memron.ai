@@ -12,12 +12,19 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev": "turbo dev",
+    "dev:landing": "turbo dev --filter=@memron/landing",
+    "dev:mcp": "turbo dev --filter=@memron/mcp-server",
+    "dev:all": "turbo dev --filter=@memron/landing --filter=@memron/mcp-server",
     "build": "turbo build",
+    "build:landing": "turbo build --filter=@memron/landing",
+    "build:mcp": "turbo build --filter=@memron/mcp-server",
     "test": "turbo test",
     "lint": "turbo lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "clean": "turbo clean && rm -rf node_modules",
     "typecheck": "turbo typecheck",
+    "docker:dev": "docker compose -f infra/docker/docker-compose.yml up -d postgres redis",
+    "docker:mcp": "docker compose -f infra/docker/docker-compose.yml --profile mcp up --build",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -40,8 +47,5 @@
       "prettier --write"
     ]
   },
-  "dependencies": {
-    "@prisma/client": "^7.4.0",
-    "prisma": "^7.4.0"
-  }
+  "dependencies": {}
 }

@@ -17,6 +17,41 @@ services:
       - "5432:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memron"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ────── MCP Server (local dev) ──────
+  # Use this profile for fully-containerized local testing:
+  #   docker compose --profile mcp up
+  mcp-server:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.mcp
+    ports:
+      - "4201:4201"
+    environment:
+      NODE_ENV: development
+      PORT: 4201
+      MCP_SERVER_URL: http://localhost:4201
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DATABASE: memron
+      PG_USER: memron
+      PG_PASSWORD: memron
+      PG_SSL: "false"
+      ENCRYPTION_SECRET: memron-dev-encryption-key-local
+      JWT_SECRET: memron-dev-jwt-secret-local
+      JWT_ISSUER: http://localhost:4201
+      LANDING_URL: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - mcp
+    restart: unless-stopped
 
   # ────── Observability ──────
   otel-collector:

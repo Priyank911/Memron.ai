@@ -1,0 +1,54 @@
+# ─────────────────────────────────────────
+# Memron MCP Server — Production Dockerfile
+# ─────────────────────────────────────────
+# Builds: services/mcp-server
+# Deploy: Railway, Render, Fly.io, or any Docker host
+#
+# Build:  docker build -f infra/docker/Dockerfile.mcp -t memron-mcp .
+# Run:    docker run -p 4201:4201 --env-file services/mcp-server/.env memron-mcp
+
+FROM node:20-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+
+# ── Install dependencies ──
+FROM base AS deps
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+
+# Copy workspace package.json files needed for resolution
+COPY packages/shared-types/package.json ./packages/shared-types/
+COPY services/mcp-server/package.json ./services/mcp-server/
+
+RUN pnpm install --frozen-lockfile --filter @memron/mcp-server...
+
+# ── Build ──
+FROM deps AS build
+COPY tsconfig.base.json ./
+COPY packages/shared-types/ ./packages/shared-types/
+COPY services/mcp-server/ ./services/mcp-server/
+
+RUN pnpm turbo build --filter=@memron/mcp-server
+
+# ── Production ──
+FROM node:20-alpine AS production
+RUN apk add --no-cache dumb-init
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=4201
+
+# Copy built output + production deps
+COPY --from=build /app/services/mcp-server/dist ./dist
+COPY --from=build /app/services/mcp-server/package.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/services/mcp-server/node_modules ./svc_modules
+
+EXPOSE 4201
+
+# Health check for Railway / Render / Docker
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:4201/health || exit 1
+
+# dumb-init handles PID 1 signals properly
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "dist/index.js"]
