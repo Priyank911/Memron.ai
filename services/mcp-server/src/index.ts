@@ -25,7 +25,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { config } from './config.js';
-import { testConnection, close as closeDb } from './db/client.js';
+import { testConnection, warmPool, close as closeDb } from './db/client.js';
 import { runMigrations } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
@@ -49,8 +49,14 @@ const sessions = new Map<string, {
 }>();
 
 // ─────────────────────────────────────────────────────────────
-// Middleware
+// Static Files + Middleware
 // ─────────────────────────────────────────────────────────────
+
+// Serve static assets (logos, etc.) from public/
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+app.use(express.static(join(__dirname, '..', 'public'), { maxAge: '7d' }));
 
 app.use(cors({
   origin: true,
@@ -114,18 +120,24 @@ app.post('/auth/complete', express.json(), async (req, res) => {
 
     // Validate API key format
     if (!tokens.isApiKey(api_key)) {
-      res.status(400).json({ error: 'Invalid API key format. Expected: mm_{env}_{key}' });
+      console.warn(`[Auth] API key format rejected: ${api_key.slice(0, 12)}...`);
+      res.status(400).json({ error: 'Invalid API key format. Keys look like: mm_live_xxxx...' });
       return;
     }
 
     // Look up API key in database
     const keyHash = tokens.hashApiKey(api_key);
+    console.log(`[Auth] Looking up key hash: ${keyHash.slice(0, 16)}... for prefix: ${api_key.slice(0, 12)}...`);
     const keyResult = await db.getUserByApiKeyHash(keyHash);
 
     if (!keyResult) {
-      res.status(401).json({ error: 'Invalid API key. Check your key and try again.' });
+      console.warn(`[Auth] API key not found in database. Hash prefix: ${keyHash.slice(0, 16)}...`);
+      console.warn('[Auth] Ensure you signed up through the landing app and generated an API key in the dashboard.');
+      res.status(401).json({ error: 'API key not found. Make sure you generated it from the Memron dashboard.' });
       return;
     }
+
+    console.log(`[Auth] API key verified for user ${keyResult.user.id} (${keyResult.user.email})`);
 
     // Look up the pending auth request
     const pending = await db.getPendingAuth(request_id);
@@ -298,6 +310,10 @@ async function main() {
 
   // Run migrations
   await runMigrations();
+
+  // Warm the connection pool so first real queries aren't slow
+  await warmPool();
+  console.log('[OK] Connection pool warmed');
 
   // Test encryption
   if (!testEncryption()) {
