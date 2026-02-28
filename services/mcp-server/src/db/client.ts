@@ -31,6 +31,19 @@ pool.on('error', (err) => {
 });
 
 /**
+ * Warm the pool with an initial connection so the first real query isn't slow.
+ */
+export async function warmPool(): Promise<void> {
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+  } catch {
+    // Non-fatal — pool will connect lazily on first query
+  }
+}
+
+/**
  * Execute a parameterized SQL query.
  */
 export async function query<T extends pg.QueryResultRow = any>(
@@ -41,7 +54,7 @@ export async function query<T extends pg.QueryResultRow = any>(
   try {
     const result = await pool.query<T>(text, params);
     const duration = Date.now() - start;
-    if (duration > 200) {
+    if (duration > 500) {
       console.warn(`[DB] Slow query (${duration}ms): ${text.slice(0, 100)}`);
     }
     return result;

@@ -327,11 +327,7 @@ export function renderLoginPage(requestId: string, error?: string): string {
 
         <!-- Logo -->
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:2rem">
-          <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-            </svg>
-          </div>
+          <img src="/logo_b.png" alt="Memron" width="40" height="40" style="object-fit:contain">
           <span style="font-family:'Space Grotesk',sans-serif;font-size:1.35rem;font-weight:700;color:#09090b;letter-spacing:-0.025em">Memron</span>
         </div>
 
@@ -424,11 +420,7 @@ export function renderLoginPage(requestId: string, error?: string): string {
       <div style="position:absolute;bottom:-20%;left:-10%;width:450px;height:450px;border-radius:50%;background:radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%);animation:floatOrb 12s ease-in-out infinite reverse;pointer-events:none"></div>
 
       <!-- Watermark logo -->
-      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);opacity:0.07;pointer-events:none;animation:pulse 8s ease-in-out infinite">
-        <svg width="320" height="320" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="0.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-        </svg>
-      </div>
+      <img src="/logo_w.png" alt="" width="320" height="320" aria-hidden="true" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);object-fit:contain;opacity:0.07;pointer-events:none;animation:pulse 8s ease-in-out infinite">
 
       <!-- Content -->
       <div class="fade-up-delay" style="position:relative;z-index:1;width:100%;max-width:520px">
