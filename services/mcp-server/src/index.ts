@@ -72,10 +72,13 @@ app.use(cors({
 
 const issuerUrl = new URL(config.serverUrl);
 
+const resourceServerUrl = new URL(`${config.serverUrl}/mcp`);
+
 app.use(mcpAuthRouter({
   provider: oauthProvider as any,
   issuerUrl,
   baseUrl: issuerUrl,
+  resourceServerUrl,
   serviceDocumentationUrl: new URL('https://docs.memron.ai'),
   scopesSupported: ['memory:read', 'memory:write', 'profile:read', 'profile:write'],
   resourceName: 'Memron MCP Server',
@@ -182,7 +185,7 @@ app.post('/auth/complete', express.json(), async (req, res) => {
 
 const bearerAuth = requireBearerAuth({
   verifier: tokenVerifier as any,
-  resourceMetadataUrl: `${config.serverUrl}/.well-known/oauth-protected-resource`,
+  resourceMetadataUrl: `${config.serverUrl}/.well-known/oauth-protected-resource/mcp`,
 });
 
 /**
@@ -196,33 +199,33 @@ app.post('/mcp', bearerAuth, async (req, res) => {
     // Reuse existing session
     if (sessionId && sessions.has(sessionId)) {
       const session = sessions.get(sessionId)!;
-      await session.transport.handleRequest(req, res);
+      await session.transport.handleRequest(req, res, req.body);
       return;
     }
 
-    // New session (initialization request)
+    // New session — use onsessioninitialized to store session AFTER
+    // the SDK assigns a session ID inside handleRequest
+    const mcpServer = createMcpServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (newSessionId) => {
+        sessions.set(newSessionId, { transport, server: mcpServer });
+        console.log(`[MCP] Session created: ${newSessionId.slice(0, 8)}...`);
+      },
     });
 
-    const mcpServer = createMcpServer();
     await mcpServer.connect(transport);
-
-    // Store session
-    const newSessionId = transport.sessionId;
-    if (newSessionId) {
-      sessions.set(newSessionId, { transport, server: mcpServer });
-    }
 
     // Cleanup on close
     transport.onclose = () => {
-      if (newSessionId) {
-        sessions.delete(newSessionId);
-        console.log(`[MCP] Session closed: ${newSessionId.slice(0, 8)}...`);
+      const sid = transport.sessionId;
+      if (sid) {
+        sessions.delete(sid);
+        console.log(`[MCP] Session closed: ${sid.slice(0, 8)}...`);
       }
     };
 
-    await transport.handleRequest(req, res);
+    await transport.handleRequest(req, res, req.body);
   } catch (error) {
     console.error('[MCP] Request error:', error);
     if (!res.headersSent) {
@@ -244,7 +247,7 @@ app.get('/mcp', bearerAuth, async (req, res) => {
 
   try {
     const session = sessions.get(sessionId)!;
-    await session.transport.handleRequest(req, res);
+    await session.transport.handleRequest(req, res, req.body);
   } catch (error) {
     console.error('[MCP] SSE error:', error);
     if (!res.headersSent) {
@@ -329,6 +332,7 @@ async function main() {
     console.log(`     MCP endpoint:  ${config.serverUrl}/mcp`);
     console.log(`     Health:        ${config.serverUrl}/health`);
     console.log(`     OAuth meta:    ${config.serverUrl}/.well-known/oauth-authorization-server`);
+    console.log(`     Resource PRM:  ${config.serverUrl}/.well-known/oauth-protected-resource/mcp`);
     console.log();
     console.log('Tools registered: memory_store, memory_search, memory_update, memory_delete,');
     console.log('                  profile_get, profile_update, context_build,');
