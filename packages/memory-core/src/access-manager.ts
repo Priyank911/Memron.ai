@@ -63,7 +63,7 @@ export class AccessManager {
 
   private scopeCovers(scope: AccessScope, cid: string): boolean {
     if (scope.global) return true;
-    if (scope.cids?.includes(cid)) return true;
+    if (scope.storageIds?.includes(cid)) return true;
     return false;
   }
 }

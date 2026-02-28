@@ -260,11 +260,15 @@ export class MemronOAuthProvider {
 
 /**
  * Generate the HTML login page for MCP OAuth authorization.
- * Users enter their API key here during the OAuth flow.
+ * Styled to match the Memron landing auth pages (Inter + Space Grotesk,
+ * white left panel + dark right panel, indigo accents).
  */
 export function renderLoginPage(requestId: string, error?: string): string {
   const errorHtml = error
-    ? `<div class="mb-4 p-3 bg-red-900/50 border border-red-800 rounded-lg text-red-300 text-sm">${escapeHtml(error)}</div>`
+    ? `<div id="server-error" style="padding:10px 14px;margin-bottom:1rem;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;color:#dc2626;font-size:0.85rem;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+        ${escapeHtml(error)}
+      </div>`
     : '';
 
   return `<!DOCTYPE html>
@@ -273,87 +277,245 @@ export function renderLoginPage(requestId: string, error?: string): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Authorize — Memron MCP</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
   <style>
-    @keyframes gradient { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
-    .gradient-bg { background: linear-gradient(-45deg, #0f172a, #1e1b4b, #0c1445, #1a0a2e); background-size: 400% 400%; animation: gradient 15s ease infinite; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-    .fade-in { animation: fadeIn 0.4s ease-out; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; overflow: hidden; }
+    input::placeholder { color: #a1a1aa !important; }
+    input:focus { outline: none !important; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes floatOrb { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(12px, -16px) scale(1.04); } }
+    @keyframes pulse { 0%, 100% { opacity: 0.07; } 50% { opacity: 0.11; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    .fade-up { animation: fadeUp 0.65s cubic-bezier(0.16,1,0.3,1) forwards; }
+    .fade-up-delay { animation: fadeUp 0.65s 0.15s cubic-bezier(0.16,1,0.3,1) both; }
+
+    /* Input focus ring */
+    .input-wrap { display: flex; align-items: center; gap: 10px; background: #fafafa; border: 1.5px solid #e4e4e7; border-radius: 10px; padding: 0 14px; height: 48px; transition: border-color 0.2s, box-shadow 0.2s; }
+    .input-wrap:focus-within { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+    .input-wrap input { flex: 1; border: none; background: transparent; font-size: 0.9rem; color: #09090b; font-family: 'Inter', sans-serif; width: 100%; height: 100%; }
+
+    /* Button */
+    .btn-primary { width: 100%; height: 48px; border: none; border-radius: 10px; background: #09090b; color: #fff; font-family: 'Inter', sans-serif; font-size: 0.92rem; font-weight: 600; cursor: pointer; letter-spacing: 0.01em; transition: background 0.25s, box-shadow 0.25s, transform 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn-primary:hover { background: #18181b; box-shadow: 0 4px 14px rgba(0,0,0,0.13); transform: translateY(-1px); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    /* Layout */
+    .auth-page { display: flex; min-height: 100vh; width: 100%; }
+    .left-panel { flex: 0 0 48%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: #ffffff; padding: 3rem 2.5rem; position: relative; z-index: 10; }
+    .right-panel { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; background: #09090b; position: relative; padding: 3rem; overflow: hidden; }
+
+    @media (max-width: 1024px) {
+      .right-panel { display: none !important; }
+      .left-panel { flex: none !important; min-height: 100vh !important; width: 100% !important; }
+    }
   </style>
 </head>
-<body class="gradient-bg min-h-screen flex items-center justify-center p-4">
-  <div class="max-w-md w-full fade-in">
-    <div class="bg-gray-900/80 backdrop-blur-xl border border-gray-800 rounded-2xl p-8 shadow-2xl">
-      <!-- Header -->
-      <div class="text-center mb-8">
-        <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-600/20 rounded-2xl mb-4">
-          <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-          </svg>
-        </div>
-        <h1 class="text-2xl font-bold text-white">Authorize Memron</h1>
-        <p class="text-gray-400 mt-2 text-sm">Enter your API key to connect your MCP client</p>
-      </div>
+<body>
+  <div class="auth-page">
 
-      ${errorHtml}
+    <!-- ═══════ LEFT PANEL — WHITE ═══════ -->
+    <div class="left-panel">
+      <!-- Subtle corner glow -->
+      <div style="position:absolute;top:-80px;right:-80px;width:280px;height:280px;border-radius:50%;background:radial-gradient(circle, rgba(99,102,241,0.04) 0%, transparent 70%);pointer-events:none"></div>
 
-      <!-- Form -->
-      <form id="auth-form" class="space-y-5">
-        <input type="hidden" name="request_id" value="${escapeHtml(requestId)}">
-        <div>
-          <label class="block text-sm font-medium text-gray-300 mb-2">API Key</label>
-          <input type="password" name="api_key" id="api-key-input" required
-                 placeholder="mm_live_..."
-                 autocomplete="off"
-                 class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none">
-          <p class="text-xs text-gray-500 mt-1.5">Your key is verified securely and never stored in the browser</p>
+      <div class="fade-up" style="width:100%;max-width:400px">
+
+        <!-- Logo -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:2rem">
+          <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <span style="font-family:'Space Grotesk',sans-serif;font-size:1.35rem;font-weight:700;color:#09090b;letter-spacing:-0.025em">Memron</span>
         </div>
 
-        <div class="flex items-start gap-3 p-3 bg-gray-800/30 rounded-lg border border-gray-800">
-          <svg class="w-5 h-5 text-blue-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          <p class="text-xs text-gray-400">This will grant your MCP client access to read and write memories in your Memron workspace.</p>
+        <!-- Heading -->
+        <h1 style="font-family:'Space Grotesk',sans-serif;font-size:1.85rem;font-weight:700;color:#09090b;letter-spacing:-0.03em;margin-bottom:0.4rem">
+          Authorize access
+        </h1>
+        <p style="font-size:0.92rem;color:#71717a;line-height:1.55;margin-bottom:1.75rem">
+          Enter your API key to connect your MCP client to Memron.
+        </p>
+
+        ${errorHtml}
+
+        <!-- Form -->
+        <form id="auth-form" style="display:flex;flex-direction:column;gap:1rem">
+          <input type="hidden" name="request_id" value="${escapeHtml(requestId)}">
+
+          <!-- API Key input -->
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <label style="font-size:0.78rem;font-weight:600;color:#3f3f46;letter-spacing:0.02em">API Key</label>
+            <div class="input-wrap">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+              </svg>
+              <input type="password" name="api_key" id="api-key-input" required
+                     placeholder="mm_live_..." autocomplete="off">
+              <button type="button" id="toggle-vis" tabindex="-1"
+                      style="background:none;border:none;cursor:pointer;color:#a1a1aa;padding:4px;display:flex">
+                <svg id="eye-open" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                </svg>
+                <svg id="eye-closed" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+                  <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+              </button>
+            </div>
+            <p style="font-size:0.75rem;color:#a1a1aa;margin-top:2px">Your key is verified securely and never stored in the browser</p>
+          </div>
+
+          <!-- Info box -->
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:#eef2ff;border:1px solid #e0e7ff;border-radius:10px">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px">
+              <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+            </svg>
+            <p style="font-size:0.8rem;color:#4338ca;line-height:1.5">This will grant your MCP client access to read and write memories in your Memron workspace.</p>
+          </div>
+
+          <!-- Submit -->
+          <button type="submit" id="submit-btn" class="btn-primary">
+            <span id="btn-text">Authorize Access</span>
+            <svg id="btn-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" style="display:none;animation:spin 0.7s linear infinite">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity=".2"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </form>
+
+        <!-- Divider -->
+        <div style="display:flex;align-items:center;gap:14px;margin-top:1.5rem">
+          <div style="flex:1;height:1px;background:#e4e4e7"></div>
+          <span style="font-size:0.75rem;color:#a1a1aa;font-weight:500;text-transform:uppercase;letter-spacing:0.06em">need a key?</span>
+          <div style="flex:1;height:1px;background:#e4e4e7"></div>
         </div>
 
-        <button type="submit" id="submit-btn"
-                class="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2">
-          <span id="btn-text">Authorize Access</span>
-          <svg id="btn-spinner" class="hidden animate-spin w-4 h-4" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/>
-          </svg>
-        </button>
-      </form>
-
-      <!-- Footer -->
-      <div class="mt-6 pt-6 border-t border-gray-800 text-center">
-        <p class="text-gray-500 text-sm">
-          Don't have an API key?
+        <!-- Footer -->
+        <div style="margin-top:1rem;text-align:center">
           <a href="${escapeHtml(config.landingUrl)}/dashboard" target="_blank" rel="noopener"
-             class="text-blue-400 hover:text-blue-300 transition-colors">
-            Get one from your dashboard &rarr;
+             style="display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;height:46px;border:1.5px solid #e4e4e7;border-radius:10px;background:#fff;font-size:0.84rem;font-weight:600;color:#09090b;text-decoration:none;transition:all 0.2s;cursor:pointer">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            Get one from your dashboard
           </a>
+        </div>
+
+        <p style="font-size:0.75rem;color:#a1a1aa;margin-top:1.25rem;text-align:center">
+          By continuing, you agree to our
+          <a href="${escapeHtml(config.landingUrl)}/terms" style="color:#6366f1;text-decoration:none;font-weight:500">Terms</a>
+          and
+          <a href="${escapeHtml(config.landingUrl)}/privacy" style="color:#6366f1;text-decoration:none;font-weight:500">Privacy Policy</a>.
         </p>
       </div>
     </div>
 
-    <p class="text-center text-gray-600 text-xs mt-4">Memron AI &mdash; Sovereign Memory for AI Agents</p>
+    <!-- ═══════ RIGHT PANEL — BLACK ═══════ -->
+    <div class="right-panel">
+      <!-- Gradient orbs -->
+      <div style="position:absolute;top:-25%;right:-15%;width:550px;height:550px;border-radius:50%;background:radial-gradient(circle, rgba(99,102,241,0.10) 0%, transparent 70%);animation:floatOrb 9s ease-in-out infinite;pointer-events:none"></div>
+      <div style="position:absolute;bottom:-20%;left:-10%;width:450px;height:450px;border-radius:50%;background:radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%);animation:floatOrb 12s ease-in-out infinite reverse;pointer-events:none"></div>
+
+      <!-- Watermark logo -->
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);opacity:0.07;pointer-events:none;animation:pulse 8s ease-in-out infinite">
+        <svg width="320" height="320" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="0.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+
+      <!-- Content -->
+      <div class="fade-up-delay" style="position:relative;z-index:1;width:100%;max-width:520px">
+        <div style="font-size:0.78rem;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:0.14em;margin-bottom:0.6rem">MCP Authorization</div>
+
+        <h2 style="font-family:'Space Grotesk',sans-serif;font-size:2.25rem;font-weight:700;color:#fafafa;letter-spacing:-0.03em;line-height:1.2;margin-bottom:0.75rem">
+          Connect your AI<br>to persistent memory.
+        </h2>
+
+        <p style="font-size:0.9rem;color:#a1a1aa;line-height:1.7;margin-bottom:2.25rem;max-width:440px">
+          Authorize your MCP client to access Memron's sovereign memory infrastructure.
+          Your context follows you across every tool and session.
+        </p>
+
+        <!-- Stats -->
+        <div style="display:flex;gap:2.5rem;margin-bottom:2.25rem">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:1.5rem;font-weight:700;color:#fafafa">9<span style="color:#6366f1">+</span></div>
+            <div style="font-size:0.72rem;color:#71717a;text-transform:uppercase;letter-spacing:0.06em">MCP Tools</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:1.5rem;font-weight:700;color:#fafafa">E2E<span style="color:#6366f1">*</span></div>
+            <div style="font-size:0.72rem;color:#71717a;text-transform:uppercase;letter-spacing:0.06em">Encrypted</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:1.5rem;font-weight:700;color:#fafafa">OAuth<span style="color:#6366f1">2.1</span></div>
+            <div style="font-size:0.72rem;color:#71717a;text-transform:uppercase;letter-spacing:0.06em">+ PKCE</div>
+          </div>
+        </div>
+
+        <!-- Feature card -->
+        <div style="background:rgba(255,255,255,0.035);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.06);border-radius:18px;padding:1.5rem 1.75rem;position:relative;overflow:hidden">
+          <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg, transparent, #6366f1, transparent);opacity:0.4"></div>
+          <h3 style="font-family:'Space Grotesk',sans-serif;font-size:1.1rem;font-weight:600;color:#fafafa;margin-bottom:0.4rem">
+            Works with every MCP client
+          </h3>
+          <p style="font-size:0.83rem;color:#71717a;line-height:1.6;margin-bottom:1.1rem">
+            Authorize once and your memory is available in Cursor, Claude Desktop, VS Code Copilot, Windsurf, and any other MCP-compatible client.
+          </p>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:100px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);font-size:0.74rem;font-weight:500;color:#d4d4d8">Cursor</span>
+            <span style="display:inline-block;width:3px;height:3px;border-radius:50%;background:#3f3f46"></span>
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:100px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);font-size:0.74rem;font-weight:500;color:#d4d4d8">Claude</span>
+            <span style="display:inline-block;width:3px;height:3px;border-radius:50%;background:#3f3f46"></span>
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:100px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);font-size:0.74rem;font-weight:500;color:#d4d4d8">Copilot</span>
+            <span style="display:inline-block;width:3px;height:3px;border-radius:50%;background:#3f3f46"></span>
+            <span style="display:inline-flex;align-items:center;padding:5px 12px;border-radius:100px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);font-size:0.74rem;font-weight:500;color:#d4d4d8">Windsurf</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script>
     const form = document.getElementById('auth-form');
-    const errorDiv = document.querySelector('[class*="bg-red-900"]');
     const submitBtn = document.getElementById('submit-btn');
     const btnText = document.getElementById('btn-text');
     const btnSpinner = document.getElementById('btn-spinner');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const toggleVis = document.getElementById('toggle-vis');
+    const eyeOpen = document.getElementById('eye-open');
+    const eyeClosed = document.getElementById('eye-closed');
+
+    // Toggle password visibility
+    toggleVis.addEventListener('click', () => {
+      const isPassword = apiKeyInput.type === 'password';
+      apiKeyInput.type = isPassword ? 'text' : 'password';
+      eyeOpen.style.display = isPassword ? 'none' : 'block';
+      eyeClosed.style.display = isPassword ? 'block' : 'none';
+    });
+
+    // Auto-focus the input
+    apiKeyInput.focus();
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (errorDiv) errorDiv.style.display = 'none';
+
+      // Remove any previous error
+      const prevErr = document.getElementById('client-error');
+      if (prevErr) prevErr.remove();
+      const serverErr = document.getElementById('server-error');
+      if (serverErr) serverErr.style.display = 'none';
+
       submitBtn.disabled = true;
       btnText.textContent = 'Verifying...';
-      btnSpinner.classList.remove('hidden');
+      btnSpinner.style.display = 'block';
 
       try {
         const res = await fetch('/auth/complete', {
@@ -367,20 +529,32 @@ export function renderLoginPage(requestId: string, error?: string): string {
 
         const data = await res.json();
         if (data.redirect) {
+          btnText.textContent = 'Redirecting...';
           window.location.href = data.redirect;
         } else {
           throw new Error(data.error || 'Authorization failed');
         }
       } catch (err) {
         const errEl = document.createElement('div');
-        errEl.className = 'mb-4 p-3 bg-red-900/50 border border-red-800 rounded-lg text-red-300 text-sm';
-        errEl.textContent = err.message;
+        errEl.id = 'client-error';
+        errEl.style.cssText = 'padding:10px 14px;margin-bottom:1rem;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;color:#dc2626;font-size:0.85rem;display:flex;align-items:center;gap:8px';
+        errEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>' + escapeForDisplay(err.message);
         form.parentNode.insertBefore(errEl, form);
         submitBtn.disabled = false;
         btnText.textContent = 'Authorize Access';
-        btnSpinner.classList.add('hidden');
+        btnSpinner.style.display = 'none';
+        // Shake the button
+        submitBtn.style.animation = 'none';
+        submitBtn.offsetHeight; // reflow
+        submitBtn.style.animation = '';
       }
     });
+
+    function escapeForDisplay(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
   </script>
 </body>
 </html>`;
