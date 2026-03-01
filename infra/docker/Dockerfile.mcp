@@ -37,11 +37,17 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=4201
 
-# Copy built output + production deps
-COPY --from=build /app/services/mcp-server/dist ./dist
-COPY --from=build /app/services/mcp-server/package.json ./
+# Copy the entire built monorepo structure so node_modules symlinks resolve
+COPY --from=build /app/packages/shared-types/dist ./packages/shared-types/dist
+COPY --from=build /app/packages/shared-types/package.json ./packages/shared-types/
+COPY --from=build /app/services/mcp-server/dist ./services/mcp-server/dist
+COPY --from=build /app/services/mcp-server/package.json ./services/mcp-server/
+COPY --from=build /app/services/mcp-server/public ./services/mcp-server/public
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/services/mcp-server/node_modules ./svc_modules
+COPY --from=build /app/services/mcp-server/node_modules ./services/mcp-server/node_modules
+COPY --from=build /app/packages/shared-types/node_modules ./packages/shared-types/node_modules
+
+WORKDIR /app/services/mcp-server
 
 EXPOSE 4201
 
