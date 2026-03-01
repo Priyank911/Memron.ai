@@ -407,6 +407,9 @@ async function main() {
   console.log('│      Memron MCP Server v1.0.0           │');
   console.log('└─────────────────────────────────────────┘');
   console.log();
+  console.log(`Environment: ${config.isRailway ? `Railway (${process.env.RAILWAY_ENVIRONMENT})` : config.nodeEnv}`);
+  console.log(`Server URL:  ${config.serverUrl}`);
+  console.log();
 
   const dbOk = await testConnection();
   if (!dbOk) {
@@ -425,9 +428,12 @@ async function main() {
 
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
 
-  const server = app.listen(config.port, () => {
+  // Railway assigns PORT dynamically — bind to 0.0.0.0 for external access
+  const host = config.isRailway ? '0.0.0.0' : '127.0.0.1';
+
+  const server = app.listen(config.port, host, () => {
     console.log();
-    console.log(`[OK] MCP Server listening on port ${config.port}`);
+    console.log(`[OK] MCP Server listening on ${host ?? 'localhost'}:${config.port}`);
     console.log(`     HTTP endpoint: ${config.serverUrl}/mcp`);
     console.log(`     Health:        ${config.serverUrl}/health`);
     console.log(`     OAuth:         ${config.serverUrl}/.well-known/oauth-authorization-server`);

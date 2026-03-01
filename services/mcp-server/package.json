@@ -12,7 +12,8 @@
     "start:stdio": "node dist/stdio.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "railway:logs": "echo 'Use: railway logs -s memron-mcp' && railway logs"
   },
   "dependencies": {
     "@memron/shared-types": "workspace:*",
