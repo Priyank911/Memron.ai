@@ -1,14 +1,14 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS",
-    "buildCommand": "corepack enable && pnpm install --frozen-lockfile && pnpm turbo build --filter=@memron/mcp-server"
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "infra/docker/Dockerfile.mcp"
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "node services/mcp-server/dist/index.js",
+    "startCommand": "node dist/index.js",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 10,
+    "healthcheckTimeout": 15,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
   }
