@@ -23,7 +23,7 @@ RUN pnpm install --frozen-lockfile --filter @memron/mcp-server...
 
 # ── Build ──
 FROM deps AS build
-COPY tsconfig.base.json ./
+COPY tsconfig.base.json turbo.json ./
 COPY packages/shared-types/ ./packages/shared-types/
 COPY services/mcp-server/ ./services/mcp-server/
 
