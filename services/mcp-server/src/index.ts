@@ -36,7 +36,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { config } from './config.js';
-import { testConnection, warmPool, close as closeDb } from './db/client.js';
+import { testConnection, warmPool, close as closeDb, query as dbQuery } from './db/client.js';
 import { runMigrations } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
@@ -588,6 +588,155 @@ app.delete('/mcp', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // Health Endpoint
 // ─────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────
+// Auth Test / Debug Endpoint
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /auth/test — Verify an API key without starting an MCP session.
+ * Useful for debugging. Accepts { api_key: "mm_live_xxx" }
+ */
+app.post('/auth/test', async (req, res) => {
+  try {
+    const { api_key } = req.body;
+
+    if (!api_key) {
+      res.status(400).json({ error: 'Missing api_key in request body' });
+      return;
+    }
+
+    if (!tokens.isApiKey(api_key)) {
+      res.status(400).json({
+        error: 'Invalid API key format',
+        expected: 'mm_live_xxxx... (56 characters total)',
+        received_length: api_key.length,
+        starts_with: api_key.slice(0, 8),
+      });
+      return;
+    }
+
+    const keyHash = tokens.hashApiKey(api_key);
+    const result = await db.getUserByApiKeyHash(keyHash);
+
+    if (!result) {
+      // Help debug: check if user/key tables exist and have data
+      let diagnostics: any = {};
+      try {
+        const userCount = await dbQuery('SELECT count(*) as c FROM users');
+        const keyCount = await dbQuery('SELECT count(*) as c FROM api_keys');
+        diagnostics = {
+          users_in_db: parseInt(userCount.rows[0]?.c || '0'),
+          keys_in_db: parseInt(keyCount.rows[0]?.c || '0'),
+          key_hash_prefix: keyHash.slice(0, 16) + '...',
+        };
+      } catch { /* silent */ }
+
+      res.status(401).json({
+        error: 'API key not found',
+        hint: 'The key hash does not match any active key in the database.',
+        diagnostics,
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        orgId: result.orgId,
+      },
+      scopes: result.keyScopes,
+      apiKeyId: result.apiKeyId,
+    });
+  } catch (error: any) {
+    console.error('[Auth Test] Error:', error.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /admin/seed-key — Seed a user + API key into the database.
+ * This is for bootstrapping when the landing app writes to a different DB.
+ *
+ * Body: { api_key, email, name?, org_name?, clerk_id? }
+ */
+app.post('/admin/seed-key', async (req, res) => {
+  try {
+    const { api_key, email, name, org_name, clerk_id } = req.body;
+
+    if (!api_key || !email) {
+      res.status(400).json({ error: 'Required: api_key, email' });
+      return;
+    }
+
+    if (!tokens.isApiKey(api_key)) {
+      res.status(400).json({ error: 'Invalid API key format. Expected: mm_live_xxxx...' });
+      return;
+    }
+
+    const keyHash = tokens.hashApiKey(api_key);
+    const keyPrefix = api_key.slice(0, 12);
+    const resolvedClerkId = clerk_id || `seeded_${createHash('sha256').update(email).digest('hex').slice(0, 16)}`;
+    const fullName = name || email.split('@')[0];
+
+    // 1. Upsert user
+    const userResult = await dbQuery(
+      `INSERT INTO users (clerk_id, email, first_name, full_name, provider, is_onboarded, onboarded_at, last_login_at)
+       VALUES ($1, $2, $3, $4, 'email', true, NOW(), NOW())
+       ON CONFLICT (clerk_id) DO UPDATE SET email = $2, full_name = $4, last_login_at = NOW()
+       RETURNING id, clerk_id, email`,
+      [resolvedClerkId, email, fullName, fullName],
+    );
+    const userId = userResult.rows[0].id;
+
+    // 2. Upsert organization
+    const orgSlug = (org_name || 'workspace').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50);
+    const orgResult = await dbQuery(
+      `INSERT INTO organizations (name, slug, owner_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (slug) DO UPDATE SET owner_id = $3, updated_at = NOW()
+       RETURNING id, slug`,
+      [org_name || `${fullName}'s Workspace`, orgSlug, userId],
+    );
+    const orgId = orgResult.rows[0].id;
+
+    // 3. Org membership
+    await dbQuery(
+      `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin') ON CONFLICT DO NOTHING`,
+      [orgId, userId],
+    );
+
+    // 4. Upsert API key
+    await dbQuery(
+      `INSERT INTO api_keys (key_prefix, key_hash, name, user_id, org_id, scopes)
+       VALUES ($1, $2, 'Default API Key', $3, $4, ARRAY['memory:read', 'memory:write', 'memory:delete'])
+       ON CONFLICT (key_hash) DO UPDATE SET is_active = true`,
+      [keyPrefix, keyHash, userId, orgId],
+    );
+
+    // 5. Default bucket
+    await dbQuery(
+      `INSERT INTO buckets (user_id, org_id, name, slug, description, is_default)
+       VALUES ($1, $2, 'Main', 'main', 'Default memory bucket', true)
+       ON CONFLICT (user_id, slug) DO NOTHING`,
+      [userId, orgId],
+    ).catch(() => { /* bucket table might not exist yet */ });
+
+    console.log(`[Admin] Seeded user ${email} (id=${userId}) + API key ${keyPrefix}...`);
+
+    res.json({
+      success: true,
+      user: { id: userId, email, clerkId: resolvedClerkId },
+      organization: { id: orgId, slug: orgResult.rows[0].slug },
+      apiKey: { prefix: keyPrefix, active: true },
+    });
+  } catch (error: any) {
+    console.error('[Admin] Seed error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ─────────────────────────────────────────────────────────────
 // Root Landing Page — shows server info when visiting base URL
