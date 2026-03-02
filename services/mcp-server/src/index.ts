@@ -357,6 +357,33 @@ app.delete('/mcp', async (req, res) => {
 // Health Endpoint
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// Root Landing Page — shows server info when visiting base URL
+// ─────────────────────────────────────────────────────────────
+
+app.get('/', (_req, res) => {
+  res.json({
+    name: 'Memron MCP Server',
+    version: '1.0.0',
+    description: 'Sovereign AI Memory via Model Context Protocol',
+    endpoints: {
+      mcp: `${config.serverUrl}/mcp`,
+      health: `${config.serverUrl}/health`,
+      oauth_discovery: `${config.serverUrl}/.well-known/oauth-authorization-server`,
+      protected_resource: `${config.serverUrl}/.well-known/oauth-protected-resource/mcp`,
+    },
+    auth: {
+      methods: [
+        'OAuth 2.1 + PKCE (browser-based, for VS Code / Cursor / Windsurf)',
+        'Bearer API key (direct, for all agents — mm_live_xxx)',
+        'stdio bridge (local, for Claude Desktop / Cline)',
+      ],
+    },
+    docs: 'https://docs.memron.ai',
+    dashboard: config.landingUrl,
+  });
+});
+
 app.get('/health', async (_req, res) => {
   const dbOk = await testConnection();
   const encOk = testEncryption();
