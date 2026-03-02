@@ -12,6 +12,11 @@ import {
 import { generateApiKey, generateOrgSlug, hashApiKey } from '@/lib/api-key';
 import { saveOnboardingProfile, saveOrganizationToFirebase, saveApiKeyToFirebase } from '@/lib/firebase';
 import { syncUser } from '@/lib/db';
+import {
+    syncOrgToSupabase,
+    syncApiKeyToSupabase,
+    fullOnboardingSyncToSupabase,
+} from '@/lib/supabase-sync';
 
 // POST /api/onboarding - Complete onboarding process
 export async function POST(request: NextRequest) {
@@ -107,6 +112,14 @@ export async function POST(request: NextRequest) {
                     createdAt: orgResult.organization!.created_at,
                 }).catch((e: any) => console.warn('[Onboarding API] Firebase org sync (non-fatal):', e.message));
 
+                // Mirror organization to Supabase (non-blocking)
+                syncOrgToSupabase({
+                    name: orgResult.organization!.name,
+                    slug: orgResult.organization!.slug,
+                    ownerClerkId: userId,
+                    description: orgDescription?.trim() || null,
+                }).catch((e: any) => console.warn('[Onboarding API] Supabase org sync (non-fatal):', e.message));
+
                 return NextResponse.json({
                     success: true,
                     organization: {
@@ -175,6 +188,15 @@ export async function POST(request: NextRequest) {
                     createdAt: saveResult.apiKey!.created_at,
                 }).catch((e: any) => console.warn('[Onboarding API] Firebase key sync (non-fatal):', e.message));
 
+                // Mirror API key to Supabase (non-blocking)
+                syncApiKeyToSupabase({
+                    keyPrefix: apiKey.prefix,
+                    keyHash: apiKey.hash,
+                    name: data.keyName || 'Default API Key',
+                    ownerClerkId: userId,
+                    scopes: ['memory:read', 'memory:write', 'memory:delete'],
+                }).catch((e: any) => console.warn('[Onboarding API] Supabase key sync (non-fatal):', e.message));
+
                 // Return the full key ONCE - user must save it
                 return NextResponse.json({
                     success: true,
@@ -222,6 +244,35 @@ export async function POST(request: NextRequest) {
                 } catch (fbErr: any) {
                     // Non-fatal — PostgreSQL is the source of truth
                     console.warn('[Onboarding API] Firebase profile sync failed (non-fatal):', fbErr.message);
+                }
+
+                // ── Full Supabase sync (user + org + key + bucket) ──
+                // Ensures the MCP server's database has the complete user graph.
+                try {
+                    const org = await getOrganizationByUserId(dbUser.id);
+                    const apiKeys = await getApiKeysByUserId(dbUser.id);
+                    const latestKey = apiKeys.length > 0 ? apiKeys[0] : null;
+
+                    if (org && latestKey) {
+                        fullOnboardingSyncToSupabase({
+                            clerkId: userId,
+                            email: dbUser.email,
+                            firstName: dbUser.first_name,
+                            lastName: dbUser.last_name,
+                            fullName: dbUser.full_name,
+                            imageUrl: dbUser.image_url,
+                            provider: dbUser.provider,
+                            orgName: org.name,
+                            orgSlug: org.slug,
+                            orgDescription: org.description,
+                            apiKeyPrefix: latestKey.key_prefix,
+                            apiKeyHash: latestKey.key_hash,
+                            apiKeyName: latestKey.name,
+                            apiKeyScopes: latestKey.scopes,
+                        }).catch((e: any) => console.warn('[Onboarding API] Supabase full sync (non-fatal):', e.message));
+                    }
+                } catch (supaErr: any) {
+                    console.warn('[Onboarding API] Supabase onboarding sync failed (non-fatal):', supaErr.message);
                 }
 
                 // Set onboarded cookie for middleware

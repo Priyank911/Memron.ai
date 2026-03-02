@@ -5,6 +5,7 @@
 
 import { saveUserToPostgres, getUserFromPostgres, getUserByEmailFromPostgres } from './postgres';
 import { saveUserToFirebase, getUserFromFirebase, getUserByEmailFromFirebase } from './firebase';
+import { syncUserToSupabase } from './supabase-sync';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -94,6 +95,23 @@ export async function syncUser(userData: UserData): Promise<SyncResult> {
         console.error(`[DualDB] ❌ User ${userData.clerkId} failed to sync to ANY database`);
         console.error(`[DualDB] PostgreSQL: ${postgres.error}`);
         console.error(`[DualDB] Firebase: ${firebase.error}`);
+    }
+
+    // ── Supabase mirror (non-blocking) ──────────────────────
+    // Fire-and-forget: ensures the MCP server's Supabase DB always has the
+    // latest user record, even when the primary PG is a different instance.
+    if (success) {
+        syncUserToSupabase({
+            clerkId: userData.clerkId,
+            email: userData.email,
+            firstName: userData.firstName,
+            lastName: userData.lastName,
+            fullName: userData.fullName,
+            imageUrl: userData.imageUrl,
+            provider: userData.provider,
+        }).catch((err: any) => {
+            console.warn(`[DualDB] Supabase sync (non-fatal): ${err.message}`);
+        });
     }
 
     return { success, postgres, firebase, source };

@@ -8,6 +8,7 @@ import {
   revokeApiKey,
 } from '@/lib/postgres';
 import { generateApiKey, hashApiKey } from '@/lib/api-key';
+import { syncApiKeyToSupabase, revokeApiKeyInSupabase } from '@/lib/supabase-sync';
 
 /**
  * GET /api/dashboard/keys — List all API keys for the current user
@@ -88,6 +89,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Mirror API key to Supabase (non-blocking)
+    syncApiKeyToSupabase({
+      keyPrefix: apiKey.prefix,
+      keyHash: apiKey.hash,
+      name: keyName,
+      ownerClerkId: userId,
+      scopes: body.scopes || ['memory:read', 'memory:write', 'memory:delete'],
+    }).catch((e: any) => console.warn('[Dashboard API] Supabase key sync (non-fatal):', e.message));
+
     return NextResponse.json({
       success: true,
       key: {
@@ -128,6 +138,10 @@ export async function DELETE(request: NextRequest) {
     if (!success) {
       return NextResponse.json({ error: 'Key not found or already revoked' }, { status: 404 });
     }
+
+    // Mirror revocation to Supabase (non-blocking)
+    revokeApiKeyInSupabase(keyId, userId)
+      .catch((e: any) => console.warn('[Dashboard API] Supabase key revoke (non-fatal):', e.message));
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
