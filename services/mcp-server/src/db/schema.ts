@@ -127,10 +127,18 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_snapshots_memory ON forensic_snapshots(memory_id)`,
   `CREATE INDEX IF NOT EXISTS idx_snapshots_pointer ON forensic_snapshots(pointer_id)`,
 
-  // ─── Indexes on landing-app tables (performance) ───────────
-  `CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
-  `CREATE INDEX IF NOT EXISTS idx_users_clerk ON users(clerk_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  // ─── Indexes on landing-app tables (skip if tables don't exist) ────
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='api_keys') THEN
+       CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+     END IF;
+   END $$`,
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='users') THEN
+       CREATE INDEX IF NOT EXISTS idx_users_clerk ON users(clerk_id);
+       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+     END IF;
+   END $$`,
 
   // ─── Updated-at trigger function ───────────────────────────
   `CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -208,15 +216,18 @@ const MIGRATIONS = [
 export async function runMigrations(): Promise<void> {
   console.log('[DB] Running schema migrations...');
 
+  let failures = 0;
   for (const sql of MIGRATIONS) {
     try {
       await query(sql);
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown';
-      // Don't fail on cleanup queries
-      if (sql.startsWith('DELETE FROM')) {
-        console.warn(`[DB] Cleanup query skipped: ${msg}`);
+      const isCleanup = sql.startsWith('DELETE FROM');
+      const isOptional = sql.includes('DO $$ BEGIN') || sql.includes('IF EXISTS');
+      if (isCleanup || isOptional) {
+        console.warn(`[DB] Skipped (non-critical): ${msg}`);
       } else {
+        failures++;
         console.error(`[DB] Migration failed: ${msg}`);
         console.error(`[DB] SQL: ${sql.slice(0, 120)}`);
         throw error;
