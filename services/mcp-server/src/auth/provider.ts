@@ -510,7 +510,8 @@ export function renderLoginPage(requestId: string, error?: string): string {
       btnSpinner.style.display = 'block';
 
       try {
-        const res = await fetch('/auth/complete', {
+        // Use current origin so it works on Railway and localhost
+        const res = await fetch(window.location.origin + '/auth/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

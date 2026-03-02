@@ -29,8 +29,15 @@ const isDev = !isRailway && (process.env.NODE_ENV || 'development') === 'develop
 
 /** Derive the public URL — Railway auto-provides RAILWAY_PUBLIC_DOMAIN */
 function resolveServerUrl(): string {
-  if (process.env.MCP_SERVER_URL) return process.env.MCP_SERVER_URL;
+  if (process.env.MCP_SERVER_URL) return process.env.MCP_SERVER_URL.replace(/\/$/, '');
+  if (process.env.RAILWAY_STATIC_URL) return process.env.RAILWAY_STATIC_URL.replace(/\/$/, '');
   if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  // Fallback for Railway when no public domain yet — check for common patterns
+  if (isRailway) {
+    console.warn('[WARN] No MCP_SERVER_URL, RAILWAY_STATIC_URL, or RAILWAY_PUBLIC_DOMAIN set.');
+    console.warn('       OAuth redirects will use localhost which will NOT work.');
+    console.warn('       Set MCP_SERVER_URL in Railway Variables to your public domain.');
+  }
   return `http://localhost:${process.env.PORT || '4201'}`;
 }
 
