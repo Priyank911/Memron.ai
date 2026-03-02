@@ -278,6 +278,29 @@ const MIGRATIONS = [
 
   // Index on importance for ranked queries
   `CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC)`,
+
+  // ─── Buckets (user-scoped memory namespaces) ───────────────
+  `CREATE TABLE IF NOT EXISTS buckets (
+    id              SERIAL PRIMARY KEY,
+    bucket_id       UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    org_id          INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+    name            VARCHAR(255) NOT NULL,
+    slug            VARCHAR(100) NOT NULL,
+    description     TEXT,
+    is_default      BOOLEAN DEFAULT false,
+    is_active       BOOLEAN DEFAULT true,
+    memory_count    INTEGER DEFAULT 0,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, slug)
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_buckets_user ON buckets(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_buckets_org ON buckets(org_id)`,
+
+  // Unique index on api_keys(key_hash) for upsert support
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash_unique ON api_keys(key_hash)`,
 ];
 
 /**
