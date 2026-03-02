@@ -47,6 +47,10 @@ import * as db from './db/queries.js';
 // ─────────────────────────────────────────────────────────────
 
 const app = express();
+
+// Trust Railway / Docker / nginx reverse proxy headers (X-Forwarded-Proto, X-Forwarded-Host)
+app.set('trust proxy', true);
+
 const oauthProvider = new MemronOAuthProvider();
 const tokenVerifier = new MemronTokenVerifier();
 
@@ -90,6 +94,54 @@ app.use(cors({
     'Mcp-Protocol-Version',
   ],
 }));
+
+// ─────────────────────────────────────────────────────────────
+// Dynamic Public URL Helper
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Derive the actual public URL from the incoming request.
+ * On Railway, the Host header = memron-mcp-beta.up.railway.app
+ * Locally, Host = localhost:4201
+ * This ensures OAuth metadata always returns the correct URL.
+ */
+function getPublicUrl(req: express.Request): string {
+  const proto = req.protocol; // 'https' on Railway (trust proxy), 'http' locally
+  const host = req.get('host'); // 'memron-mcp-beta.up.railway.app' or 'localhost:4201'
+  return `${proto}://${host}`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// OAuth Metadata URL Rewrite Middleware
+// ─────────────────────────────────────────────────────────────
+// The MCP SDK's mcpAuthRouter generates .well-known metadata using
+// the static issuerUrl we provide at startup. On Railway, that URL
+// may be wrong (localhost:PORT). This middleware intercepts the
+// responses and rewrites all URLs to match the actual request host.
+// ─────────────────────────────────────────────────────────────
+
+app.use((req, res, next) => {
+  // Only intercept .well-known and /authorize paths
+  if (!req.path.startsWith('/.well-known')) {
+    next();
+    return;
+  }
+
+  const publicUrl = getPublicUrl(req);
+  const originalJson = res.json.bind(res);
+
+  res.json = function (body: any) {
+    if (body && typeof body === 'object') {
+      // Replace any localhost:PORT URLs with the actual public URL
+      const serialized = JSON.stringify(body);
+      const fixed = serialized.replace(/http:\/\/localhost:\d+/g, publicUrl);
+      return originalJson(JSON.parse(fixed));
+    }
+    return originalJson(body);
+  };
+
+  next();
+});
 
 // ─────────────────────────────────────────────────────────────
 // OAuth 2.1 Auth Routes (mounted by MCP SDK)
@@ -184,10 +236,17 @@ app.post('/auth/complete', async (req, res) => {
 // Dual Auth Middleware — OAuth bearer OR direct API key
 // ─────────────────────────────────────────────────────────────
 
-const sdkBearerAuth = requireBearerAuth({
-  verifier: tokenVerifier as any,
-  resourceMetadataUrl: `${config.serverUrl}/.well-known/oauth-protected-resource/mcp`,
-});
+/**
+ * Create a bearer auth middleware using the actual request host.
+ * This ensures the resource metadata URL is correct on Railway.
+ */
+function createBearerAuth(req: express.Request) {
+  const publicUrl = getPublicUrl(req);
+  return requireBearerAuth({
+    verifier: tokenVerifier as any,
+    resourceMetadataUrl: `${publicUrl}/.well-known/oauth-protected-resource/mcp`,
+  });
+}
 
 /**
  * Universal auth middleware:
@@ -246,8 +305,9 @@ async function universalAuth(
     }
   }
 
-  // Fallback: OAuth JWT via SDK
-  sdkBearerAuth(req, res, next);
+  // Fallback: OAuth JWT via SDK (dynamic URL based on request host)
+  const bearerAuth = createBearerAuth(req);
+  bearerAuth(req, res, next);
 }
 
 // ─────────────────────────────────────────────────────────────
