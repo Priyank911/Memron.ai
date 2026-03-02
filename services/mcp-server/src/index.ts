@@ -5,8 +5,9 @@
  * 1. OAuth 2.1 + PKCE authentication (/.well-known, /authorize, /token, /register, /revoke)
  * 2. Direct API key auth (Bearer mm_live_xxx — no OAuth dance needed)
  * 3. Custom auth login page (/auth/login, /auth/complete)
- * 4. MCP Streamable HTTP endpoint (/mcp) — dual auth support
- * 5. Health endpoint (/health)
+ * 4. Session-cookie auto-auth (remember me — skips login page on repeat flows)
+ * 5. MCP Streamable HTTP endpoint (/mcp) — dual auth support
+ * 6. Health endpoint (/health)
  *
  * Cross-Agent Compatibility:
  * - Cursor, VS Code Copilot, Windsurf → Streamable HTTP + OAuth
@@ -16,7 +17,9 @@
  *
  * Architecture:
  * - One Express app
- * - MCP SDK mcpAuthRouter for OAuth (optional — API key works without it)
+ * - MCP SDK mcpAuthRouter for OAuth (token + register + revoke)
+ * - Custom .well-known metadata (dynamic URL from request Host header)
+ * - Custom /authorize with session cookie auto-approve
  * - StreamableHTTPServerTransport per session (stateful)
  * - Stateless fallback for simple request/response agents
  * - Session idle timeout with automatic cleanup
@@ -28,7 +31,7 @@ import 'dotenv/config';
 
 import express from 'express';
 import cors from 'cors';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
@@ -68,6 +71,45 @@ const sessions = new Map<string, ManagedSession>();
 
 const SESSION_IDLE_MS = parseInt(process.env.SESSION_IDLE_MS || '1800000', 10); // 30 min
 const IDLE_SWEEP_INTERVAL_MS = 60_000; // 1 min
+
+// ─── Auth Session Cookie ─────────────────────────────────────
+// After the first API key verification, we encrypt the user's ID + email
+// into a secure cookie. On subsequent OAuth flows, we auto-approve without
+// requiring the user to re-enter their API key ("remember me").
+
+const SESSION_COOKIE_NAME = 'memron_session';
+const SESSION_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function getSessionKey(): Buffer {
+  return createHash('sha256').update(config.encryption.secret).digest();
+}
+
+function encryptSession(data: { userId: number; email: string }): string {
+  const key = getSessionKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const plaintext = JSON.stringify(data);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // iv (12) + tag (16) + ciphertext → base64
+  return Buffer.concat([iv, tag, encrypted]).toString('base64url');
+}
+
+function decryptSession(token: string): { userId: number; email: string } | null {
+  try {
+    const key = getSessionKey();
+    const buf = Buffer.from(token, 'base64url');
+    const iv = buf.subarray(0, 12);
+    const tag = buf.subarray(12, 28);
+    const ciphertext = buf.subarray(28);
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+    return JSON.parse(plaintext);
+  } catch {
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // Static Files + Middleware
@@ -113,39 +155,154 @@ function getPublicUrl(req: express.Request): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// OAuth Metadata URL Rewrite Middleware
+// Custom .well-known + /authorize Endpoints
 // ─────────────────────────────────────────────────────────────
-// The MCP SDK's mcpAuthRouter generates .well-known metadata using
-// the static issuerUrl we provide at startup. On Railway, that URL
-// may be wrong (localhost:PORT). This middleware intercepts the
-// responses and rewrites all URLs to match the actual request host.
+// Mounted BEFORE mcpAuthRouter so they are matched first.
+// The MCP SDK bakes issuerUrl into metadata at startup, which is
+// wrong when Railway uses a different public domain. These handlers
+// generate correct URLs dynamically from the request's Host header.
 // ─────────────────────────────────────────────────────────────
 
-app.use((req, res, next) => {
-  // Only intercept .well-known and /authorize paths
-  if (!req.path.startsWith('/.well-known')) {
-    next();
-    return;
+// Parse cookies manually (no cookie-parser dependency needed)
+function parseCookies(req: express.Request): Record<string, string> {
+  const header = req.headers.cookie || '';
+  const cookies: Record<string, string> = {};
+  for (const pair of header.split(';')) {
+    const [k, ...vParts] = pair.trim().split('=');
+    if (k) cookies[k.trim()] = decodeURIComponent(vParts.join('='));
   }
+  return cookies;
+}
 
-  const publicUrl = getPublicUrl(req);
-  const originalJson = res.json.bind(res);
+/** OAuth Authorization Server Metadata (RFC 8414) */
+app.get('/.well-known/oauth-authorization-server', (req, res) => {
+  const baseUrl = getPublicUrl(req);
+  res.json({
+    issuer: baseUrl,
+    authorization_endpoint: `${baseUrl}/authorize`,
+    token_endpoint: `${baseUrl}/token`,
+    registration_endpoint: `${baseUrl}/register`,
+    revocation_endpoint: `${baseUrl}/revoke`,
+    response_types_supported: ['code'],
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
+    scopes_supported: ['memory:read', 'memory:write', 'profile:read', 'profile:write'],
+    service_documentation: 'https://docs.memron.ai',
+  });
+});
 
-  res.json = function (body: any) {
-    if (body && typeof body === 'object') {
-      // Replace any localhost:PORT URLs with the actual public URL
-      const serialized = JSON.stringify(body);
-      const fixed = serialized.replace(/http:\/\/localhost:\d+/g, publicUrl);
-      return originalJson(JSON.parse(fixed));
+/** OAuth Protected Resource Metadata (RFC 9728) */
+app.get('/.well-known/oauth-protected-resource/mcp', (req, res) => {
+  const baseUrl = getPublicUrl(req);
+  res.json({
+    resource: `${baseUrl}/mcp`,
+    authorization_servers: [baseUrl],
+    scopes_supported: ['memory:read', 'memory:write', 'profile:read', 'profile:write'],
+    resource_name: 'Memron MCP Server',
+    resource_documentation: 'https://docs.memron.ai',
+  });
+});
+
+/**
+ * Custom /authorize endpoint — replaces the SDK's handler.
+ *
+ * Flow:
+ * 1. If session cookie exists → auto-approve (skip login page)
+ * 2. If no cookie → redirect to /auth/login (enter API key)
+ *
+ * This makes repeat OAuth flows instant — the user only enters
+ * their API key once, then it's remembered via cookie.
+ */
+app.get('/authorize', async (req, res) => {
+  try {
+    const clientId = req.query.client_id as string;
+    const responseType = req.query.response_type as string;
+    const codeChallenge = req.query.code_challenge as string;
+    const codeChallengeMethod = req.query.code_challenge_method as string;
+    const redirectUri = req.query.redirect_uri as string;
+    const scope = req.query.scope as string | undefined;
+    const state = req.query.state as string | undefined;
+
+    // Validate required params
+    if (!clientId || responseType !== 'code' || !codeChallenge || !redirectUri) {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Missing required parameters' });
+      return;
     }
-    return originalJson(body);
-  };
+    if (codeChallengeMethod && codeChallengeMethod !== 'S256') {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Only S256 code_challenge_method is supported' });
+      return;
+    }
 
-  next();
+    // Verify client is registered
+    const client = await oauthProvider.clientsStore.getClient(clientId);
+    if (!client) {
+      res.status(400).json({ error: 'invalid_client', error_description: 'Unknown client_id. Did you register first via /register?' });
+      return;
+    }
+
+    const scopes = scope ? scope.split(/[ +]/) : ['memory:read', 'memory:write'];
+
+    // ─── Check session cookie for auto-approve ───
+    const cookies = parseCookies(req);
+    const sessionToken = cookies[SESSION_COOKIE_NAME];
+
+    if (sessionToken) {
+      const session = decryptSession(sessionToken);
+      if (session) {
+        // Verify user still exists and is active
+        const user = await db.getUserById(session.userId);
+        if (user) {
+          console.log(`[Auth] Auto-approving OAuth for user ${session.userId} (${session.email}) via session cookie`);
+
+          // Create auth code directly (skip login page)
+          const authCode = tokens.generateAuthCode();
+          await db.insertAuthCode({
+            code: authCode,
+            clientId,
+            userId: session.userId,
+            codeChallenge,
+            redirectUri,
+            scopes,
+          });
+
+          const callbackUrl = new URL(redirectUri);
+          callbackUrl.searchParams.set('code', authCode);
+          if (state) callbackUrl.searchParams.set('state', state);
+
+          res.redirect(callbackUrl.toString());
+          return;
+        }
+      }
+      // Invalid/expired cookie — clear it and fall through to login
+      res.clearCookie(SESSION_COOKIE_NAME);
+    }
+
+    // ─── No session cookie → redirect to login page ───
+    const { nanoid } = await import('nanoid');
+    const requestId = nanoid(32);
+
+    await db.insertPendingAuth({
+      requestId,
+      clientId,
+      codeChallenge,
+      redirectUri,
+      state,
+      scopes,
+    });
+
+    res.redirect(`/auth/login?request_id=${encodeURIComponent(requestId)}`);
+  } catch (error) {
+    console.error('[Auth] Authorize error:', error);
+    res.status(500).json({ error: 'server_error', error_description: 'Authorization failed' });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────
 // OAuth 2.1 Auth Routes (mounted by MCP SDK)
+// ─────────────────────────────────────────────────────────────
+// The SDK handles /token, /register, /revoke, and serves metadata.
+// Our custom handlers above take precedence for .well-known and /authorize.
 // ─────────────────────────────────────────────────────────────
 
 const issuerUrl = new URL(config.serverUrl);
@@ -225,6 +382,20 @@ app.post('/auth/complete', async (req, res) => {
     if (pending.state) {
       redirectUrl.searchParams.set('state', pending.state);
     }
+
+    // ─── Set session cookie for auto-approve on future flows ───
+    const sessionToken = encryptSession({
+      userId: keyResult.user.id,
+      email: keyResult.user.email,
+    });
+
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, {
+      httpOnly: true,
+      secure: !config.isDev, // HTTPS only in production
+      sameSite: 'lax',
+      maxAge: SESSION_COOKIE_MAX_AGE_MS,
+      path: '/',
+    });
 
     res.json({ redirect: redirectUrl.toString() });
   } catch (error) {
