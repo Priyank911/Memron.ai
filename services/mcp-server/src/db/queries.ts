@@ -32,6 +32,11 @@ export interface MemoryRow {
   original_tokens: number;
   metadata: Record<string, unknown>;
   is_active: boolean;
+  api_key_id: number | null;
+  sub_path: string;
+  importance: number;
+  access_count: number;
+  last_accessed_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -50,13 +55,17 @@ export async function insertMemory(params: {
   tokenCount: number;
   originalTokens: number;
   metadata?: Record<string, unknown>;
+  apiKeyId?: number;
+  subPath?: string;
+  importance?: number;
 }): Promise<MemoryRow> {
   const result = await query<MemoryRow>(
     `INSERT INTO memories (
       pointer_id, user_id, org_id, bucket, title,
       content_encrypted, content_iv, content_tag, content_hash,
-      tags, token_count, original_tokens, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      tags, token_count, original_tokens, metadata,
+      api_key_id, sub_path, importance
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     RETURNING *`,
     [
       params.pointerId,
@@ -72,6 +81,9 @@ export async function insertMemory(params: {
       params.tokenCount,
       params.originalTokens,
       JSON.stringify(params.metadata ?? {}),
+      params.apiKeyId ?? null,
+      params.subPath ?? '',
+      params.importance ?? 0.5,
     ],
   );
   return result.rows[0];
@@ -512,9 +524,10 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
   user: UserRow;
   keyScopes: string[];
   orgId: number | null;
+  apiKeyId: number;
 } | null> {
   const result = await query(
-    `SELECT u.*, ak.scopes as key_scopes, ak.org_id as key_org_id
+    `SELECT u.*, ak.id as api_key_id, ak.scopes as key_scopes, ak.org_id as key_org_id
      FROM api_keys ak
      JOIN users u ON ak.user_id = u.id
      WHERE ak.key_hash = $1 AND ak.is_active = true AND u.is_active = true`,
@@ -526,6 +539,7 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
     user: row as UserRow,
     keyScopes: row.key_scopes ?? ['memory:read', 'memory:write'],
     orgId: row.key_org_id ?? null,
+    apiKeyId: row.api_key_id,
   };
 }
 

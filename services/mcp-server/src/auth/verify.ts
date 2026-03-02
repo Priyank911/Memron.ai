@@ -57,6 +57,7 @@ export class MemronTokenVerifier {
             userId: result.user.id,
             email: result.user.email,
             orgId: result.orgId ?? undefined,
+            apiKeyId: result.apiKeyId,
           },
         };
       }

@@ -157,6 +157,49 @@ const MIGRATIONS = [
   // ─── Cleanup job: expired codes & pending auth ─────────────
   `DELETE FROM mcp_auth_codes WHERE expires_at < NOW() - INTERVAL '1 hour'`,
   `DELETE FROM mcp_pending_auth WHERE expires_at < NOW() - INTERVAL '1 hour'`,
+
+  // ─── Memory Model Improvements (v2) ────────────────────────
+  // Track which API key created each memory
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS api_key_id INTEGER;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  // Hierarchical bucket path (e.g. "knowledge/projects/memron")
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS sub_path VARCHAR(255) DEFAULT '';
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  // Importance score for relevance ranking (0.0 - 1.0)
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS importance REAL DEFAULT 0.5;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  // Access count for popularity-based ranking
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS access_count INTEGER DEFAULT 0;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  // Last accessed timestamp
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  // Index on api_key_id for linking memories to API keys
+  `CREATE INDEX IF NOT EXISTS idx_memories_api_key ON memories(api_key_id)`,
+
+  // Index on sub_path for hierarchical bucket queries
+  `CREATE INDEX IF NOT EXISTS idx_memories_sub_path ON memories(sub_path)`,
+
+  // Composite index for bucket + sub_path queries
+  `CREATE INDEX IF NOT EXISTS idx_memories_bucket_path ON memories(bucket, sub_path)`,
+
+  // Index on importance for ranked queries
+  `CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC)`,
 ];
 
 /**
