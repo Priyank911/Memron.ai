@@ -49,7 +49,8 @@ import * as db from './db/queries.js';
 const app = express();
 
 // Trust Railway / Docker / nginx reverse proxy headers (X-Forwarded-Proto, X-Forwarded-Host)
-app.set('trust proxy', true);
+// Use hop count (1) instead of `true` to avoid express-rate-limit ERR_ERL_PERMISSIVE_TRUST_PROXY
+app.set('trust proxy', 1);
 
 const oauthProvider = new MemronOAuthProvider();
 const tokenVerifier = new MemronTokenVerifier();
