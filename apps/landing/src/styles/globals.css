@@ -5652,6 +5652,9 @@ body {
   overflow: hidden;
 }
 .db-keys-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 14px 20px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
@@ -5789,6 +5792,89 @@ body {
   color: #888;
   font-size: 13px;
 }
+
+/* ── Error banner ── */
+.db-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+  border-radius: 8px;
+  color: #f87171;
+  font-size: 12.5px;
+  margin-bottom: 16px;
+}
+.db-error-banner span { flex: 1; }
+.db-error-banner .db-btn-ghost-sm { color: #f87171; border-color: rgba(239,68,68,0.2); }
+
+/* ── Spin animation ── */
+@keyframes db-spin-anim {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.db-spin { animation: db-spin-anim 1s linear infinite; }
+
+/* ── API keys extras ── */
+.db-keys-quick-config { margin-top: 12px; }
+.db-keys-quick-config-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #888;
+  margin-bottom: 8px;
+}
+.db-keys-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  color: #60a5fa;
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.db-keys-link:hover { color: #93bbfd; text-decoration: underline; }
+.db-keys-mcp-hint {
+  font-size: 11.5px;
+  color: #666;
+  margin-top: 10px;
+}
+.db-keys-mcp-hint code {
+  background: rgba(255,255,255,0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.db-keys-row-prefix-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.db-btn-icon-xs {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 3px;
+  transition: color 0.15s;
+}
+.db-btn-icon-xs:hover { color: #aaa; }
+.db-keys-row-used.active { color: #22c55e; }
+.db-keys-revoke-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #f87171;
+}
+.db-keys-empty-cta { margin-top: 16px; }
+.text-green { color: #22c55e; }
 
 /* ═══ RESPONSIVE: API Keys ═══ */
 @media (max-width: 768px) {
