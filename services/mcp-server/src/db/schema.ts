@@ -1,7 +1,15 @@
 /**
- * Database Schema — MCP Server Tables
+ * Database Schema — All Memron Tables
  *
- * Creates all tables required by the MCP server:
+ * Creates ALL tables required by the full Memron stack:
+ *
+ * Shared / landing-app tables:
+ * - users: User accounts (Clerk-backed)
+ * - organizations: Workspaces / teams
+ * - api_keys: API keys for MCP auth
+ * - org_members: Organization membership
+ *
+ * MCP server tables:
  * - memories: Encrypted memory storage with pointers
  * - mcp_oauth_clients: Dynamic OAuth client registration
  * - mcp_auth_codes: Temporary authorization codes
@@ -9,12 +17,87 @@
  * - mcp_pending_auth: Pending OAuth authorization requests
  * - forensic_snapshots: Pre-mutation memory snapshots
  *
- * This migration is idempotent (IF NOT EXISTS).
- * Existing landing-app tables (users, organizations, api_keys) are NOT touched.
+ * This migration is idempotent (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
+ * Safe to call on every startup from either the MCP server or the landing app.
  */
 import { query } from './client.js';
 
 const MIGRATIONS = [
+  // ═══════════════════════════════════════════════════════════
+  // SHARED TABLES (needed by both landing app and MCP server)
+  // Using IF NOT EXISTS — safe even if landing app already created them.
+  // ═══════════════════════════════════════════════════════════
+
+  `CREATE TABLE IF NOT EXISTS users (
+    id              SERIAL PRIMARY KEY,
+    universal_id    UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    clerk_id        VARCHAR(255) UNIQUE NOT NULL,
+    email           VARCHAR(255) UNIQUE NOT NULL,
+    first_name      VARCHAR(255),
+    last_name       VARCHAR(255),
+    full_name       VARCHAR(255),
+    image_url       TEXT,
+    provider        VARCHAR(50) DEFAULT 'email',
+    is_active       BOOLEAN DEFAULT true,
+    is_onboarded    BOOLEAN DEFAULT false,
+    onboarded_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+    last_login_at   TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS organizations (
+    id              SERIAL PRIMARY KEY,
+    org_id          UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    name            VARCHAR(255) NOT NULL,
+    slug            VARCHAR(255) UNIQUE NOT NULL,
+    owner_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    logo_url        TEXT,
+    description     TEXT,
+    is_active       BOOLEAN DEFAULT true,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS api_keys (
+    id              SERIAL PRIMARY KEY,
+    key_id          UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    key_prefix      VARCHAR(12) NOT NULL,
+    key_hash        VARCHAR(255) NOT NULL,
+    name            VARCHAR(255) DEFAULT 'Default API Key',
+    user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    org_id          INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+    scopes          TEXT[] DEFAULT ARRAY['memory:read', 'memory:write'],
+    is_active       BOOLEAN DEFAULT true,
+    last_used_at    TIMESTAMPTZ,
+    expires_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS org_members (
+    id              SERIAL PRIMARY KEY,
+    org_id          INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    role            VARCHAR(50) DEFAULT 'member',
+    joined_at       TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(org_id, user_id)
+  )`,
+
+  // Shared table indexes
+  `CREATE INDEX IF NOT EXISTS idx_users_clerk_id ON users(clerk_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
+  `CREATE INDEX IF NOT EXISTS idx_users_universal_id ON users(universal_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_orgs_slug ON organizations(slug)`,
+  `CREATE INDEX IF NOT EXISTS idx_orgs_owner ON organizations(owner_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_api_keys_org ON api_keys(org_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)`,
+  `CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
+
+  // ═══════════════════════════════════════════════════════════
+  // MCP SERVER TABLES
+  // ═══════════════════════════════════════════════════════════
+
   // ─── Memories ───────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS memories (
     id                SERIAL PRIMARY KEY,
@@ -126,19 +209,6 @@ const MIGRATIONS = [
 
   `CREATE INDEX IF NOT EXISTS idx_snapshots_memory ON forensic_snapshots(memory_id)`,
   `CREATE INDEX IF NOT EXISTS idx_snapshots_pointer ON forensic_snapshots(pointer_id)`,
-
-  // ─── Indexes on landing-app tables (skip if tables don't exist) ────
-  `DO $$ BEGIN
-     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='api_keys') THEN
-       CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
-     END IF;
-   END $$`,
-  `DO $$ BEGIN
-     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='users') THEN
-       CREATE INDEX IF NOT EXISTS idx_users_clerk ON users(clerk_id);
-       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-     END IF;
-   END $$`,
 
   // ─── Updated-at trigger function ───────────────────────────
   `CREATE OR REPLACE FUNCTION update_updated_at_column()

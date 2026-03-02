@@ -526,21 +526,31 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
   orgId: number | null;
   apiKeyId: number;
 } | null> {
-  const result = await query(
-    `SELECT u.*, ak.id as api_key_id, ak.scopes as key_scopes, ak.org_id as key_org_id
-     FROM api_keys ak
-     JOIN users u ON ak.user_id = u.id
-     WHERE ak.key_hash = $1 AND ak.is_active = true AND u.is_active = true`,
-    [keyHash],
-  );
-  if (!result.rows[0]) return null;
-  const row = result.rows[0];
-  return {
-    user: row as UserRow,
-    keyScopes: row.key_scopes ?? ['memory:read', 'memory:write'],
-    orgId: row.key_org_id ?? null,
-    apiKeyId: row.api_key_id,
-  };
+  try {
+    const result = await query(
+      `SELECT u.*, ak.id as api_key_id, ak.scopes as key_scopes, ak.org_id as key_org_id
+       FROM api_keys ak
+       JOIN users u ON ak.user_id = u.id
+       WHERE ak.key_hash = $1 AND ak.is_active = true AND u.is_active = true`,
+      [keyHash],
+    );
+    if (!result.rows[0]) return null;
+    const row = result.rows[0];
+    return {
+      user: row as UserRow,
+      keyScopes: row.key_scopes ?? ['memory:read', 'memory:write'],
+      orgId: row.key_org_id ?? null,
+      apiKeyId: row.api_key_id,
+    };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    // If tables don't exist yet, log a warning instead of crashing
+    if (msg.includes('does not exist')) {
+      console.warn(`[DB] getUserByApiKeyHash: table missing — ${msg}`);
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function getOrgForUser(userId: number): Promise<{
