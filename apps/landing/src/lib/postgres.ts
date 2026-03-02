@@ -268,6 +268,92 @@ export async function initializeSchema(): Promise<void> {
         await pool.query(createOrgMembersTable);
         await pool.query(createIndexes);
         await pool.query(createUpdatedAtTrigger);
+
+        // Create MCP-server tables so dashboard queries work even in local dev
+        // These are IF NOT EXISTS so they won't conflict with the MCP server.
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS memories (
+            id                SERIAL PRIMARY KEY,
+            pointer_id        VARCHAR(12) UNIQUE NOT NULL,
+            user_id           INTEGER NOT NULL,
+            org_id            INTEGER,
+            bucket            VARCHAR(50) NOT NULL DEFAULT 'conversation',
+            title             VARCHAR(500) NOT NULL DEFAULT '',
+            content_encrypted BYTEA NOT NULL,
+            content_iv        BYTEA NOT NULL,
+            content_tag       BYTEA NOT NULL,
+            content_hash      VARCHAR(64) NOT NULL,
+            tags              TEXT[] DEFAULT ARRAY[]::TEXT[],
+            token_count       INTEGER NOT NULL DEFAULT 0,
+            original_tokens   INTEGER NOT NULL DEFAULT 0,
+            metadata          JSONB DEFAULT '{}',
+            is_active         BOOLEAN DEFAULT true,
+            created_at        TIMESTAMPTZ DEFAULT NOW(),
+            updated_at        TIMESTAMPTZ DEFAULT NOW()
+          )
+        `);
+
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS mcp_refresh_tokens (
+            id              SERIAL PRIMARY KEY,
+            token_hash      VARCHAR(255) UNIQUE NOT NULL,
+            client_id       VARCHAR(255) NOT NULL,
+            user_id         INTEGER NOT NULL,
+            scopes          TEXT[] DEFAULT ARRAY['memory:read', 'memory:write'],
+            expires_at      TIMESTAMPTZ NOT NULL,
+            revoked         BOOLEAN DEFAULT false,
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+          )
+        `);
+
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS forensic_snapshots (
+            id                  SERIAL PRIMARY KEY,
+            memory_id           INTEGER NOT NULL,
+            pointer_id          VARCHAR(12) NOT NULL,
+            content_hash        VARCHAR(64) NOT NULL,
+            snapshot_encrypted  BYTEA NOT NULL,
+            snapshot_iv         BYTEA NOT NULL,
+            snapshot_tag        BYTEA NOT NULL,
+            reason              VARCHAR(50) NOT NULL DEFAULT 'pre-mutation',
+            created_by          INTEGER,
+            created_at          TIMESTAMPTZ DEFAULT NOW()
+          )
+        `);
+
+        // Memory model v2 columns (safe to run even if already present)
+        await pool.query(`
+          DO $$ BEGIN
+            ALTER TABLE memories ADD COLUMN IF NOT EXISTS api_key_id INTEGER;
+          EXCEPTION WHEN duplicate_column THEN NULL; END $$
+        `);
+        await pool.query(`
+          DO $$ BEGIN
+            ALTER TABLE memories ADD COLUMN IF NOT EXISTS sub_path VARCHAR(255) DEFAULT '';
+          EXCEPTION WHEN duplicate_column THEN NULL; END $$
+        `);
+        await pool.query(`
+          DO $$ BEGIN
+            ALTER TABLE memories ADD COLUMN IF NOT EXISTS importance REAL DEFAULT 0.5;
+          EXCEPTION WHEN duplicate_column THEN NULL; END $$
+        `);
+        await pool.query(`
+          DO $$ BEGIN
+            ALTER TABLE memories ADD COLUMN IF NOT EXISTS access_count INTEGER DEFAULT 0;
+          EXCEPTION WHEN duplicate_column THEN NULL; END $$
+        `);
+        await pool.query(`
+          DO $$ BEGIN
+            ALTER TABLE memories ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ;
+          EXCEPTION WHEN duplicate_column THEN NULL; END $$
+        `);
+
+        // Memory indexes
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_org ON memories(org_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_bucket ON memories(bucket)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_api_key ON memories(api_key_id)`);
         
         // Only log if table was newly created
         if (!tableExisted) {
