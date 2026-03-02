@@ -14,13 +14,10 @@ import {
   ActivityFeed,
   CommandPalette,
   RecentDocuments,
+  ApiKeysPage,
 } from './_components';
 import type { OrgInfo, UserInfo, ApiKeyInfo } from './_components';
-import {
-  SPARK_TOKENS, SPARK_QUERIES, SPARK_MEMORIES, SPARK_CONNECTIONS,
-  TOKEN_USAGE_DAYS, CONTAINER_TAGS, REQUEST_TYPES,
-  MEMORIES, ACTIVITY,
-} from './_components/data';
+import { useDashboardData } from './_hooks/use-dashboard-data';
 
 export default function DashboardPage() {
   const { user, isLoaded } = useUser();
@@ -35,6 +32,16 @@ export default function DashboardPage() {
   const [cmdOpen, setCmdOpen] = useState(false);
   const [dateRange] = useState('All Time');
   const [activeCategory, setActiveCategory] = useState('Overview');
+
+  /* ── Real dashboard data ── */
+  const {
+    stats,
+    memoryRows,
+    activityItems,
+    sparkTokens,
+    sparkMemories,
+    loading: dataLoading,
+  } = useDashboardData();
 
   /* ── Prevent back navigation ── */
   useEffect(() => {
@@ -90,6 +97,124 @@ export default function DashboardPage() {
     );
   }
 
+  /* ── Derived values from real data ── */
+  const tokenQuota = `${stats.totalTokens.toLocaleString()} / 1.0M`;
+  const bucketTags = stats.buckets.length > 0
+    ? stats.buckets.map((b, i) => ({
+        value: b.count,
+        color: ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'][i % 6],
+        label: b.name,
+      }))
+    : [{ value: 0, color: '#3b82f6', label: 'No data' }];
+
+  const tokenUsageDays = stats.dailyChart.length > 0
+    ? stats.dailyChart.slice(-7)
+    : [
+        { label: 'Mon', value: 0 }, { label: 'Tue', value: 0 },
+        { label: 'Wed', value: 0 }, { label: 'Thu', value: 0 },
+        { label: 'Fri', value: 0 }, { label: 'Sat', value: 0 },
+        { label: 'Sun', value: 0 },
+      ];
+
+  const requestTypes = bucketTags;
+
+  const uniqueCategories = Array.from(new Set(memoryRows.flatMap((m) => m.categories)));
+
+  /* ── Render page content based on active nav ── */
+  const renderContent = () => {
+    switch (active) {
+      case 'api-keys':
+        return <ApiKeysPage />;
+
+      case 'memories':
+        return (
+          <div className="db-content">
+            <div className="db-section-header">
+              <h1 className="db-page-title">Memories</h1>
+            </div>
+            <MemoriesTable
+              memories={memoryRows}
+              dateRange={dateRange}
+              categoryFilters={uniqueCategories}
+              activeCategory={activeCategory}
+              onCategoryChange={setActiveCategory}
+            />
+          </div>
+        );
+
+      case 'dashboard':
+      default:
+        return (
+          <div className="db-content">
+            {/* Overview tabs */}
+            <div className="db-overview-tabs">
+              {['Overview', 'Requests', 'Memory Graph', 'Connectors'].map((tab) => (
+                <button
+                  key={tab}
+                  className={`db-overview-tab${tab === 'Overview' ? ' active' : ''}`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {/* Section title */}
+            <div className="db-section-header">
+              <h1 className="db-page-title">Overview</h1>
+              <div className="db-date-filter">
+                <span>Last 30 days</span>
+                <span className="db-date-chevron">▾</span>
+              </div>
+            </div>
+
+            {dataLoading ? (
+              <div className="db-loading-inline">
+                <Loader2 size={20} className="db-spinner" />
+                <span>Loading stats…</span>
+              </div>
+            ) : (
+              <>
+                {/* KPI Stats */}
+                <StatsRow
+                  stats={[
+                    { label: 'Tokens Processed', value: stats.totalTokens.toLocaleString(), delta: stats.totalTokens > 0 ? 100 : 0, deltaSuffix: '%', sparkData: sparkTokens, sparkColor: '#3b82f6', quota: tokenQuota },
+                    { label: 'Search Queries', value: '0', delta: 0, deltaSuffix: '%', sparkData: [0,0,0,0,0,0,0,0,0,0], sparkColor: '#3b82f6' },
+                    { label: 'Memories Created', value: String(stats.totalMemories), delta: stats.totalMemories > 0 ? 100 : 0, deltaSuffix: '%', sparkData: sparkMemories, sparkColor: '#3b82f6' },
+                    { label: 'Active Sessions', value: String(stats.activeSessions), delta: 0, deltaSuffix: '%', sparkData: [0,0,0,0,0,0,0,0,0,stats.activeSessions], sparkColor: '#3b82f6' },
+                  ]}
+                />
+
+                {/* Charts row */}
+                <OverviewCharts
+                  containerTags={bucketTags}
+                  tokenUsage={tokenUsageDays}
+                  requestTypes={requestTypes}
+                  totalTags={stats.buckets.length}
+                  totalDocs={stats.totalMemories}
+                  dateRange="Last 7 days"
+                />
+
+                {/* Recent Documents */}
+                <RecentDocuments documents={memoryRows} />
+
+                {/* Memories Table */}
+                <MemoriesTable
+                  memories={memoryRows}
+                  dateRange={dateRange}
+                  categoryFilters={uniqueCategories.length > 0 ? uniqueCategories : ['All']}
+                  activeCategory={activeCategory}
+                  onCategoryChange={setActiveCategory}
+                />
+
+                {/* Activity */}
+                <ActivityFeed items={activityItems} />
+              </>
+            )}
+          </div>
+        );
+    }
+  };
+
   /* ═════════════ RENDER ═════════════ */
   return (
     <div className="db-root">
@@ -101,7 +226,7 @@ export default function DashboardPage() {
         onSignOut={doSignOut}
         user={user as any}
         usage={{
-          tokens: 127,
+          tokens: stats.totalTokens,
           tokenLimit: 1_000_000,
           searches: 0,
           searchLimit: 10_000,
@@ -119,63 +244,7 @@ export default function DashboardPage() {
         />
 
         {/* Page content */}
-        <div className="db-content">
-          {/* Overview tabs */}
-          <div className="db-overview-tabs">
-            {['Overview', 'Requests', 'Memory Graph', 'Connectors'].map((tab) => (
-              <button
-                key={tab}
-                className={`db-overview-tab${tab === 'Overview' ? ' active' : ''}`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-
-          {/* Section title */}
-          <div className="db-section-header">
-            <h1 className="db-page-title">Overview</h1>
-            <div className="db-date-filter">
-              <span>Last 30 days</span>
-              <span className="db-date-chevron">▾</span>
-            </div>
-          </div>
-
-          {/* KPI Stats */}
-          <StatsRow
-            stats={[
-              { label: 'Tokens Processed', value: '236', delta: 100, deltaSuffix: '%', sparkData: SPARK_TOKENS, sparkColor: '#3b82f6', quota: '127 / 1.0M' },
-              { label: 'Search Queries', value: '0', delta: 0, deltaSuffix: '%', sparkData: SPARK_QUERIES, sparkColor: '#3b82f6' },
-              { label: 'Memories Created', value: '4', delta: 100, deltaSuffix: '%', sparkData: SPARK_MEMORIES, sparkColor: '#3b82f6' },
-              { label: 'Connections Active', value: '0', delta: 0, deltaSuffix: '%', sparkData: SPARK_CONNECTIONS, sparkColor: '#3b82f6' },
-            ]}
-          />
-
-          {/* Charts row */}
-          <OverviewCharts
-            containerTags={CONTAINER_TAGS}
-            tokenUsage={TOKEN_USAGE_DAYS}
-            requestTypes={REQUEST_TYPES}
-            totalTags={1}
-            totalDocs={2}
-            dateRange="Last 7 days"
-          />
-
-          {/* Recent Documents */}
-          <RecentDocuments documents={MEMORIES} />
-
-          {/* Memories Table */}
-          <MemoriesTable
-            memories={MEMORIES}
-            dateRange={dateRange}
-            categoryFilters={['Professional Details', 'Technology', 'User Preferences']}
-            activeCategory={activeCategory}
-            onCategoryChange={setActiveCategory}
-          />
-
-          {/* Activity */}
-          <ActivityFeed items={ACTIVITY} />
-        </div>
+        {renderContent()}
       </div>
 
       {/* Command Palette */}

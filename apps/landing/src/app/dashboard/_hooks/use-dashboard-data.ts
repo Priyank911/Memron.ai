@@ -1,0 +1,121 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import type { MemoryRow, ActivityItem } from '../_components/types';
+
+/* ── Types ── */
+export interface DashboardStats {
+  totalMemories: number;
+  totalTokens: number;
+  originalTokens: number;
+  activeSessions: number;
+  buckets: { name: string; count: number }[];
+  sparkMemories: number[];
+  dailyChart: { label: string; value: number }[];
+}
+
+export interface DashboardMemory {
+  id: string;
+  bucket: string;
+  title: string;
+  tags: string[];
+  tokenCount: number;
+  metadata: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const EMPTY_STATS: DashboardStats = {
+  totalMemories: 0,
+  totalTokens: 0,
+  originalTokens: 0,
+  activeSessions: 0,
+  buckets: [],
+  sparkMemories: [],
+  dailyChart: [],
+};
+
+export function useDashboardData() {
+  const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
+  const [memories, setMemories] = useState<DashboardMemory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [statsRes, memoriesRes] = await Promise.all([
+        fetch('/api/dashboard/stats', { credentials: 'include' }),
+        fetch('/api/dashboard/memories', { credentials: 'include' }),
+      ]);
+
+      if (statsRes.ok) {
+        const data = await statsRes.json();
+        setStats(data);
+      }
+
+      if (memoriesRes.ok) {
+        const data = await memoriesRes.json();
+        setMemories(data.memories || []);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  /* ── Transform for components ── */
+  const memoryRows: MemoryRow[] = memories.map((m) => ({
+    id: m.id,
+    time: relativeTime(m.createdAt),
+    entity: m.bucket,
+    content: m.title || '(untitled)',
+    categories: m.tags.length > 0 ? m.tags : [m.bucket],
+  }));
+
+  const activityItems: ActivityItem[] = memories.slice(0, 8).map((m, i) => ({
+    id: String(i),
+    type: 'memory' as const,
+    title: i === 0 ? 'Latest memory' : 'Memory stored',
+    desc: m.title || m.bucket,
+    time: relativeTime(m.createdAt),
+    status: 'success' as const,
+  }));
+
+  // Fill sparklines with at least 10 data points
+  const sparkTokens = padArray(stats.sparkMemories.map((v) => v * 50), 10);
+  const sparkMemories = padArray(stats.sparkMemories, 10);
+
+  return {
+    stats,
+    memories,
+    memoryRows,
+    activityItems,
+    sparkTokens,
+    sparkMemories,
+    loading,
+    error,
+    refresh,
+  };
+}
+
+/* ── Helpers ── */
+function relativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `about ${hrs} hour${hrs > 1 ? 's' : ''} ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+function padArray(arr: number[], length: number): number[] {
+  if (arr.length >= length) return arr.slice(-length);
+  return [...Array(length - arr.length).fill(0), ...arr];
+}

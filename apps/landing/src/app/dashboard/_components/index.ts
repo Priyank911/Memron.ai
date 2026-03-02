@@ -6,4 +6,5 @@ export { MemoriesTable } from './memories-table';
 export { ActivityFeed } from './activity-feed';
 export { CommandPalette } from './command-palette';
 export { RecentDocuments } from './recent-documents';
+export { ApiKeysPage } from './api-keys-page';
 export type { OrgInfo, UserInfo, ApiKeyInfo, MemoryRow, ActivityItem } from './types';
