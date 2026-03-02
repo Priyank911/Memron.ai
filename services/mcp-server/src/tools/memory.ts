@@ -26,6 +26,11 @@ function getOrgId(authInfo?: AuthInfo): number | undefined {
   return typeof oid === 'number' ? oid : undefined;
 }
 
+function getApiKeyId(authInfo?: AuthInfo): number | undefined {
+  const akId = authInfo?.extra?.apiKeyId;
+  return typeof akId === 'number' ? akId : undefined;
+}
+
 /**
  * Register all memory tools on the MCP server.
  */
@@ -45,6 +50,7 @@ export function registerMemoryTools(server: McpServer): void {
       try {
         const userId = getUserId(extra.authInfo);
         const orgId = getOrgId(extra.authInfo);
+        const apiKeyId = getApiKeyId(extra.authInfo);
         const content = args.content;
 
         // Auto-classify bucket if not provided
@@ -82,6 +88,7 @@ export function registerMemoryTools(server: McpServer): void {
           tokenCount: pointerTokens,
           originalTokens,
           metadata: { compressionRate: compression.rate },
+          apiKeyId,
         });
 
         return {
