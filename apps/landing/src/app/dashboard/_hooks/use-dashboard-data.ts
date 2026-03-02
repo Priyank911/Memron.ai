@@ -43,21 +43,35 @@ export function useDashboardData() {
 
   const refresh = useCallback(async () => {
     try {
+      setLoading(true);
+      setError(null);
+
       const [statsRes, memoriesRes] = await Promise.all([
         fetch('/api/dashboard/stats', { credentials: 'include' }),
         fetch('/api/dashboard/memories', { credentials: 'include' }),
       ]);
 
+      // Stats
       if (statsRes.ok) {
         const data = await statsRes.json();
         setStats(data);
+      } else {
+        const errBody = await statsRes.json().catch(() => ({}));
+        const msg = `Stats API ${statsRes.status}: ${errBody.details || errBody.error || 'unknown'}`;
+        console.error('[useDashboardData]', msg);
+        setError(msg);
       }
 
+      // Memories
       if (memoriesRes.ok) {
         const data = await memoriesRes.json();
         setMemories(data.memories || []);
+      } else {
+        const errBody = await memoriesRes.json().catch(() => ({}));
+        console.error('[useDashboardData] Memories API error:', errBody);
       }
     } catch (err: any) {
+      console.error('[useDashboardData] Fetch error:', err);
       setError(err.message);
     } finally {
       setLoading(false);

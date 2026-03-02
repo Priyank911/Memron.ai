@@ -4,7 +4,7 @@ import { useUser, useClerk } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useUserSync } from '@/lib/hooks/use-user-sync';
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import {
   Sidebar,
   Topbar,
@@ -41,6 +41,8 @@ export default function DashboardPage() {
     sparkTokens,
     sparkMemories,
     loading: dataLoading,
+    error: dataError,
+    refresh: refreshData,
   } = useDashboardData();
 
   /* ── Prevent back navigation ── */
@@ -174,6 +176,16 @@ export default function DashboardPage() {
               </div>
             ) : (
               <>
+                {/* Error banner with retry */}
+                {dataError && (
+                  <div className="db-error-banner">
+                    <AlertTriangle size={14} />
+                    <span>Failed to load dashboard data: {dataError}</span>
+                    <button className="db-btn-ghost-sm" onClick={refreshData}>
+                      <RefreshCw size={12} /> Retry
+                    </button>
+                  </div>
+                )}
                 {/* KPI Stats */}
                 <StatsRow
                   stats={[
