@@ -20,6 +20,19 @@ const app = new Hono()
   });
 
 const port = parseInt(process.env.PLATFORM_API_PORT ?? '4000', 10);
-serve({ fetch: app.fetch, port }, () => {
+const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`🌐 Gateway running on http://localhost:${port}`);
 });
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Gateway: port ${port} already in use. Kill the old process or change PLATFORM_API_PORT.`);
+    process.exit(1);
+  }
+  throw err;
+});
+
+// Graceful shutdown so turbo can restart cleanly
+const shutdown = () => { server.close(); process.exit(0); };
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

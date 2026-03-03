@@ -6,7 +6,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="hero-section">
+      <section id="about" className="hero-section">
         <div className="hero-container">
           {/* Left Content */}
           <div className="hero-content">
@@ -21,12 +21,12 @@ export default function HomePage() {
               maintains user preferences, and delivers personalized experiences. Transform your AI from
               stateless to context-aware with seamless memory integration.
             </p>
-            <button className="hero-cta">
-              Install Now
+            <a href="/login" className="hero-cta">
+              Get Early Access
               <svg className="hero-cta-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M5 12h14M12 5l7 7-7 7" />
               </svg>
-            </button>
+            </a>
           </div>
 
           {/* Right Content - Video Carousel */}
@@ -37,7 +37,7 @@ export default function HomePage() {
       </section>
 
       {/* Features Section */}
-      <section className="features-section">
+      <section id="pricing" className="features-section">
         <div className="features-header">
           <span className="features-badge">For AI Builders</span>
           <h2 className="features-title">
@@ -62,88 +62,6 @@ export default function HomePage() {
               </ul>
             </div>
             <div className="feature-box-visual">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="100%" height="100%" style={{ maxWidth: '360px', margin: '0 auto' }}>
-                <defs>
-                  <style>{`
-                    .chat-svg {
-                      --bg-container: transparent;
-                      --border-color: #2a2a35;
-                      --user-bg: #1f2937;
-                      --user-txt: #e5e7eb;
-                      --agent-bg: #1e1e40;
-                      --agent-txt: #a78bfa;
-                      --time-txt: #6b7280;
-                      --shadow-color: rgba(0, 0, 0, 0.2);
-                    }
-                    [data-theme="light"] .chat-svg {
-                      --border-color: #e5e7eb;
-                      --user-bg: #f3f4f6;
-                      --user-txt: #374151;
-                      --agent-bg: #eff6ff;
-                      --agent-txt: #4f46e5;
-                      --time-txt: #9ca3af;
-                      --shadow-color: rgba(0, 0, 0, 0.03);
-                    }
-                    .chat-svg text {
-                      font-family: system-ui, -apple-system, sans-serif;
-                      font-size: 14px;
-                      font-weight: 500;
-                      text-anchor: middle;
-                      dominant-baseline: middle;
-                    }
-                    .chat-svg .time-text { font-size: 12px; font-weight: 400; fill: var(--time-txt); }
-                    .chat-svg .anim-bubble {
-                      animation-duration: 8s;
-                      animation-iteration-count: infinite;
-                      animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
-                      opacity: 0;
-                    }
-                    @keyframes chatUserMsg {
-                      0%, 4% { opacity: 0; transform: translateY(12px); }
-                      8%, 85% { opacity: 1; transform: translateY(0); }
-                      90%, 100% { opacity: 0; transform: translateY(-12px); }
-                    }
-                    .chat-svg .user-msg { animation-name: chatUserMsg; }
-                    @keyframes chatAgentMsg1 {
-                      0%, 28% { opacity: 0; transform: translateY(12px); }
-                      32%, 85% { opacity: 1; transform: translateY(0); }
-                      90%, 100% { opacity: 0; transform: translateY(-12px); }
-                    }
-                    .chat-svg .agent-msg-1 { animation-name: chatAgentMsg1; }
-                    @keyframes chatTimeFade {
-                      0%, 40% { opacity: 0; }
-                      44%, 85% { opacity: 1; }
-                      90%, 100% { opacity: 0; }
-                    }
-                    .chat-svg .timestamp { animation-name: chatTimeFade; animation-timing-function: linear; }
-                    @keyframes chatAgentMsg2 {
-                      0%, 53% { opacity: 0; transform: translateY(12px); }
-                      57%, 85% { opacity: 1; transform: translateY(0); }
-                      90%, 100% { opacity: 0; transform: translateY(-12px); }
-                    }
-                    .chat-svg .agent-msg-2 { animation-name: chatAgentMsg2; }
-                    .chat-svg .box-shadow { filter: drop-shadow(0px 2px 4px var(--shadow-color)); }
-                  `}</style>
-                </defs>
-                <rect x="10" y="10" width="380" height="220" rx="16" fill="var(--bg-container)" stroke="var(--border-color)" strokeWidth="1.5" className="chat-svg" />
-                <g className="chat-svg">
-                  <g className="anim-bubble user-msg box-shadow" style={{ transformOrigin: '250px 30px' }}>
-                    <rect x="250" y="30" width="120" height="40" rx="12" fill="var(--user-bg)" />
-                    <text x="310" y="51" fill="var(--user-txt)">Sync context</text>
-                  </g>
-                  <g className="anim-bubble agent-msg-1 box-shadow" style={{ transformOrigin: '30px 85px' }}>
-                    <rect x="30" y="85" width="150" height="40" rx="12" fill="var(--agent-bg)" />
-                    <text x="105" y="106" fill="var(--agent-txt)">Synced to Agent B</text>
-                  </g>
-                  <g className="anim-bubble timestamp" style={{ transformOrigin: '200px 144px' }}>
-                    <text x="200" y="144" className="time-text">Now</text>
-                  </g>
-                  <g className="anim-bubble agent-msg-2 box-shadow" style={{ transformOrigin: '30px 160px' }}>
-                    <rect x="30" y="160" width="190" height="40" rx="12" fill="var(--agent-bg)" />
-                    <text x="125" y="181" fill="var(--agent-txt)">Remembers preferences</text>
-                  </g>
-                </g>
-              </svg>
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="100%" height="100%" style={{ maxWidth: '360px', margin: '0 auto' }}>
                 <defs>
                   <style>{`
@@ -432,7 +350,7 @@ export default function HomePage() {
       </section >
 
       {/* Research Section - Compact: text left, SVG right */}
-      < section className="research-section-compact" >
+      < section id="blog" className="research-section-compact" >
         <div className="research-compact-inner">
           <div className="research-compact-text">
             <h3 className="research-title">Memory Compression Engine</h3>
@@ -646,7 +564,7 @@ export default function HomePage() {
       </section >
 
       {/* Showcase Section - How It Works */}
-      < section className="showcase-section" >
+      < section id="team" className="showcase-section" >
         <FlowchartCard />
       </section >
 
@@ -661,9 +579,9 @@ export default function HomePage() {
             <p className="footer-tagline">Persistent memory for AI systems</p>
           </div>
           <div className="footer-links">
-            <a href="#" className="footer-link">Docs</a>
-            <a href="#" className="footer-link">GitHub</a>
-            <a href="#" className="footer-link">Twitter</a>
+            <a href="https://github.com/memron-ai" target="_blank" rel="noopener noreferrer" className="footer-link">Docs</a>
+            <a href="https://github.com/memron-ai" target="_blank" rel="noopener noreferrer" className="footer-link">GitHub</a>
+            <a href="https://x.com/memron_ai" target="_blank" rel="noopener noreferrer" className="footer-link">Twitter</a>
             <a href="#" className="footer-link">Discord</a>
           </div>
           <div className="footer-right">

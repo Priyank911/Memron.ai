@@ -202,6 +202,20 @@ export async function initializeSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
   `;
 
+    // key_hash MUST be unique — safely upgrade existing non-unique index
+    const upgradeKeyHashIndex = `
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE indexname = 'idx_api_keys_hash'
+        AND indexdef NOT LIKE '%UNIQUE%'
+      ) THEN
+        DROP INDEX idx_api_keys_hash;
+      END IF;
+    END $$;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+  `;
+
     const createUpdatedAtTrigger = `
     CREATE OR REPLACE FUNCTION update_updated_at_column()
     RETURNS TRIGGER AS $$
@@ -267,6 +281,7 @@ export async function initializeSchema(): Promise<void> {
         await pool.query(createApiKeysTable);
         await pool.query(createOrgMembersTable);
         await pool.query(createIndexes);
+        await pool.query(upgradeKeyHashIndex);
         await pool.query(createUpdatedAtTrigger);
 
         // Create MCP-server tables so dashboard queries work even in local dev
@@ -354,6 +369,28 @@ export async function initializeSchema(): Promise<void> {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_bucket ON memories(bucket)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_memories_api_key ON memories(api_key_id)`);
+
+        // ─── Buckets (user-scoped memory namespaces) ─────────────
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS buckets (
+            id              SERIAL PRIMARY KEY,
+            bucket_id       UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+            user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            org_id          INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+            name            VARCHAR(255) NOT NULL,
+            slug            VARCHAR(100) NOT NULL,
+            description     TEXT,
+            is_default      BOOLEAN DEFAULT false,
+            is_active       BOOLEAN DEFAULT true,
+            memory_count    INTEGER DEFAULT 0,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(user_id, slug)
+          )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_buckets_user ON buckets(user_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_buckets_org ON buckets(org_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_buckets_slug ON buckets(user_id, slug)`);
         
         // Only log if table was newly created
         if (!tableExisted) {
@@ -732,6 +769,129 @@ export async function isUserOnboarded(clerkId: string): Promise<boolean> {
         return result.rows.length > 0 && result.rows[0].is_onboarded === true;
     } catch (error: any) {
         console.error('[PostgreSQL] Failed to check onboarding status:', error.message);
+        return false;
+    }
+}
+
+// ─── Bucket Operations ──────────────────────────────────────
+
+export interface PgBucket {
+    id: number;
+    bucket_id: string;
+    user_id: number;
+    org_id: number | null;
+    name: string;
+    slug: string;
+    description: string | null;
+    is_default: boolean;
+    is_active: boolean;
+    memory_count: number;
+    created_at: Date;
+    updated_at: Date;
+}
+
+/**
+ * Create the user's default "main" bucket.
+ * Called once during onboarding — every user gets a root namespace.
+ */
+export async function createMainBucket(userId: number, orgId: number | null): Promise<PgBucket | null> {
+    if (!pool) return null;
+
+    try {
+        await ensureSchema();
+        const result = await pool.query(
+            `INSERT INTO buckets (user_id, org_id, name, slug, description, is_default)
+             VALUES ($1, $2, 'Main', 'main', 'Default memory bucket', true)
+             ON CONFLICT (user_id, slug) DO UPDATE SET
+               is_active = true, updated_at = NOW()
+             RETURNING *`,
+            [userId, orgId]
+        );
+        return result.rows[0] ?? null;
+    } catch (error: any) {
+        console.error('[PostgreSQL] Failed to create main bucket:', error.message);
+        return null;
+    }
+}
+
+/**
+ * Create a custom bucket for the user (e.g. dedicated chat conversation).
+ */
+export async function createBucket(data: {
+    userId: number;
+    orgId: number | null;
+    name: string;
+    slug: string;
+    description?: string;
+}): Promise<{ success: boolean; bucket?: PgBucket; error?: string }> {
+    if (!pool) return { success: false, error: 'Database not initialized' };
+
+    try {
+        await ensureSchema();
+
+        // Limit to 50 buckets per user
+        const countResult = await pool.query(
+            'SELECT count(*) as c FROM buckets WHERE user_id = $1 AND is_active = true',
+            [data.userId]
+        );
+        if (parseInt(countResult.rows[0].c) >= 50) {
+            return { success: false, error: 'Maximum 50 buckets allowed per user' };
+        }
+
+        const result = await pool.query(
+            `INSERT INTO buckets (user_id, org_id, name, slug, description)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *`,
+            [data.userId, data.orgId, data.name, data.slug, data.description ?? null]
+        );
+        return { success: true, bucket: result.rows[0] };
+    } catch (error: any) {
+        if (error.message.includes('duplicate') || error.message.includes('unique')) {
+            return { success: false, error: 'A bucket with this name already exists' };
+        }
+        console.error('[PostgreSQL] Failed to create bucket:', error.message);
+        return { success: false, error: 'Failed to create bucket' };
+    }
+}
+
+/**
+ * Get all active buckets for a user.
+ */
+export async function getBucketsByUserId(userId: number): Promise<PgBucket[]> {
+    if (!pool) return [];
+
+    try {
+        await ensureSchema();
+        const result = await pool.query(
+            `SELECT b.*, 
+                    (SELECT count(*) FROM memories m WHERE m.bucket = b.slug AND m.user_id = b.user_id AND m.is_active = true) as memory_count
+             FROM buckets b
+             WHERE b.user_id = $1 AND b.is_active = true
+             ORDER BY b.is_default DESC, b.created_at ASC`,
+            [userId]
+        );
+        return result.rows;
+    } catch (error: any) {
+        console.error('[PostgreSQL] Failed to get buckets:', error.message);
+        return [];
+    }
+}
+
+/**
+ * Delete (soft) a bucket. Cannot delete the default bucket.
+ */
+export async function deleteBucket(bucketId: string, userId: number): Promise<boolean> {
+    if (!pool) return false;
+
+    try {
+        const result = await pool.query(
+            `UPDATE buckets SET is_active = false, updated_at = NOW()
+             WHERE bucket_id = $1 AND user_id = $2 AND is_default = false`,
+            [bucketId, userId]
+        );
+        return (result.rowCount ?? 0) > 0;
+    } catch (error: any) {
+        console.error('[PostgreSQL] Failed to delete bucket:', error.message);
         return false;
     }
 }

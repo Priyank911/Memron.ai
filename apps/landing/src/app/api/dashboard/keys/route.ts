@@ -89,14 +89,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Mirror API key to Supabase (non-blocking)
-    syncApiKeyToSupabase({
+    // Mirror API key to Supabase (awaited — MCP auth depends on this)
+    const syncResult = await syncApiKeyToSupabase({
       keyPrefix: apiKey.prefix,
       keyHash: apiKey.hash,
       name: keyName,
       ownerClerkId: userId,
       scopes: body.scopes || ['memory:read', 'memory:write', 'memory:delete'],
-    }).catch((e: any) => console.warn('[Dashboard API] Supabase key sync (non-fatal):', e.message));
+    }).catch((e: any) => {
+      console.error('[Dashboard API] Supabase key sync FAILED:', e.message);
+      return { success: false, error: e.message } as { success: boolean; error?: string };
+    });
+
+    if (!syncResult.success) {
+      console.warn('[Dashboard API] Supabase sync error (key saved to primary):', syncResult.error);
+    }
 
     return NextResponse.json({
       success: true,

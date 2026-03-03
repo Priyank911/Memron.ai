@@ -6,7 +6,7 @@ import {
   Shield, Clock, Terminal, RefreshCw, Zap, ExternalLink,
 } from 'lucide-react';
 
-const MCP_URL = process.env.NEXT_PUBLIC_MCP_URL || 'https://memron-mcp-production-d85b.up.railway.app/mcp';
+const MCP_URL = process.env.NEXT_PUBLIC_MCP_URL ?? '';
 
 interface ApiKey {
   id: string;

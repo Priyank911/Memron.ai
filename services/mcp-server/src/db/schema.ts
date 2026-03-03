@@ -92,7 +92,18 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_api_keys_org ON api_keys(org_id)`,
   `CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)`,
-  `CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
+
+  // key_hash MUST be unique — drop pre-existing non-unique index first
+  `DO $$ BEGIN
+     IF EXISTS (
+       SELECT 1 FROM pg_indexes
+       WHERE indexname = 'idx_api_keys_hash'
+       AND indexdef NOT LIKE '%UNIQUE%'
+     ) THEN
+       DROP INDEX idx_api_keys_hash;
+     END IF;
+   END $$`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
 
   // ═══════════════════════════════════════════════════════════
   // MCP SERVER TABLES
@@ -299,8 +310,8 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_buckets_user ON buckets(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_buckets_org ON buckets(org_id)`,
 
-  // Unique index on api_keys(key_hash) for upsert support
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash_unique ON api_keys(key_hash)`,
+  // Clean up stale duplicate unique index (if exists from earlier migration)
+  `DROP INDEX IF EXISTS idx_api_keys_hash_unique`,
 ];
 
 /**

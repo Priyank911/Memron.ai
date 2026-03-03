@@ -12,11 +12,11 @@ export function RecentDocuments({ documents }: RecentDocumentsProps) {
     <div className="db-recent-docs">
       <div className="db-recent-docs-header">
         <div className="db-recent-docs-title">
-          <h3>Recent Documents</h3>
+          <h3>Recent Memories</h3>
           <span className="db-card-badge">{documents.length} total</span>
         </div>
         <button className="db-btn-ghost">
-          <Filter size={13} /> Filter by container tags
+          <Filter size={13} /> Filter by bucket
         </button>
       </div>
 
@@ -34,7 +34,7 @@ export function RecentDocuments({ documents }: RecentDocumentsProps) {
           </thead>
           <tbody>
             {documents.length === 0 ? (
-              <tr><td colSpan={6} className="db-table-empty">No documents found.</td></tr>
+              <tr><td colSpan={6} className="db-table-empty">No memories found.</td></tr>
             ) : (
               documents.map((doc) => (
                 <tr key={doc.id}>

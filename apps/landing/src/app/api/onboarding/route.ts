@@ -8,6 +8,7 @@ import {
     saveApiKey,
     getOrganizationByUserId,
     getApiKeysByUserId,
+    createMainBucket,
 } from '@/lib/postgres';
 import { generateApiKey, generateOrgSlug, hashApiKey } from '@/lib/api-key';
 import { saveOnboardingProfile, saveOrganizationToFirebase, saveApiKeyToFirebase } from '@/lib/firebase';
@@ -188,14 +189,17 @@ export async function POST(request: NextRequest) {
                     createdAt: saveResult.apiKey!.created_at,
                 }).catch((e: any) => console.warn('[Onboarding API] Firebase key sync (non-fatal):', e.message));
 
-                // Mirror API key to Supabase (non-blocking)
-                syncApiKeyToSupabase({
+                // Mirror API key to Supabase (awaited — MCP auth depends on this)
+                await syncApiKeyToSupabase({
                     keyPrefix: apiKey.prefix,
                     keyHash: apiKey.hash,
                     name: data.keyName || 'Default API Key',
                     ownerClerkId: userId,
                     scopes: ['memory:read', 'memory:write', 'memory:delete'],
-                }).catch((e: any) => console.warn('[Onboarding API] Supabase key sync (non-fatal):', e.message));
+                }).catch((e: any) => console.error('[Onboarding API] Supabase key sync FAILED:', e.message));
+
+                // Create main bucket in primary DB
+                await createMainBucket(dbUser.id, org.id);
 
                 // Return the full key ONCE - user must save it
                 return NextResponse.json({

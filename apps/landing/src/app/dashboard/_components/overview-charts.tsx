@@ -21,11 +21,11 @@ export function OverviewCharts({
 }: OverviewChartsProps) {
   return (
     <div className="db-charts-grid">
-      {/* Container Tags Distribution */}
+      {/* Bucket Distribution */}
       <div className="db-card">
         <div className="db-card-header">
-          <h3 className="db-card-title">Container Tags Distribution</h3>
-          <p className="db-card-subtitle">Distribution of documents across different container tags</p>
+          <h3 className="db-card-title">Bucket Distribution</h3>
+          <p className="db-card-subtitle">Distribution of memories across different buckets</p>
         </div>
         <div className="db-card-body" style={{ display: 'flex', justifyContent: 'center', padding: '20px 0' }}>
           <DonutChart
@@ -33,12 +33,12 @@ export function OverviewCharts({
             size={140}
             thickness={18}
             centerValue={totalDocs}
-            centerLabel="Documents"
+            centerLabel="Memories"
           />
         </div>
         <div className="db-card-footer">
-          <span>Total Tags: <strong>{totalTags}</strong></span>
-          <span>Total Documents: <strong>{totalDocs}</strong></span>
+          <span>Total Buckets: <strong>{totalTags}</strong></span>
+          <span>Total Memories: <strong>{totalDocs}</strong></span>
         </div>
       </div>
 
@@ -46,18 +46,18 @@ export function OverviewCharts({
       <div className="db-card">
         <div className="db-card-header">
           <h3 className="db-card-title">Token Usage</h3>
-          <p className="db-card-subtitle">0 tokens processed over the last 7 days</p>
+          <p className="db-card-subtitle">{tokenUsage.reduce((s, d) => s + d.value, 0).toLocaleString()} tokens processed over the last 7 days</p>
         </div>
         <div className="db-card-body" style={{ padding: '16px 0' }}>
           <BarChart data={tokenUsage} height={130} barWidth={28} gap={8} color="#3b82f6" />
         </div>
       </div>
 
-      {/* Request Types */}
+      {/* Memory Types */}
       <div className="db-card">
         <div className="db-card-header">
-          <h3 className="db-card-title">Request Types</h3>
-          <p className="db-card-subtitle">Distribution of API request types</p>
+          <h3 className="db-card-title">Memory Types</h3>
+          <p className="db-card-subtitle">Distribution of memory categories</p>
         </div>
         <div className="db-card-body" style={{ display: 'flex', justifyContent: 'center', padding: '20px 0' }}>
           <DonutChart

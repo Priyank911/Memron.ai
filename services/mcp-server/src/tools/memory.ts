@@ -289,4 +289,29 @@ export function registerMemoryTools(server: McpServer): void {
       }
     },
   );
+
+  // ─── memory.list_buckets ───────────────────────────────────
+  server.tool(
+    'memory_list_buckets',
+    'List all memory buckets for the authenticated user. Returns bucket names, slugs, descriptions, and memory counts.',
+    {},
+    async (_args, extra) => {
+      try {
+        const userId = getUserId(extra.authInfo);
+        const buckets = await db.listBuckets(userId);
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ buckets }, null, 2),
+          }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: formatToolError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
 }

@@ -18,7 +18,7 @@ const isAuthRoute = createRouteMatcher([
   '/forgot-password',
 ])
 
-const isDashboardRoute = createRouteMatcher(['/dashboard(.*)'])
+const isDashboardRoute = createRouteMatcher(['/dashboard(.*)', '/api/dashboard(.*)'])
 const isOnboardingRoute = createRouteMatcher(['/onboarding(.*)'])
 
 export default clerkMiddleware(async (auth, request) => {
@@ -32,19 +32,26 @@ export default clerkMiddleware(async (auth, request) => {
     return NextResponse.redirect(new URL(isOnboarded ? '/dashboard' : '/onboarding', request.url))
   }
 
-  // Protect dashboard routes.
-  // Cookie is always set by the server (GET /api/onboarding heals it on every check),
-  // so cookie-absent + signed-in means: new user or cleared cookie.
-  // Redirect both cases to /onboarding — the page itself distinguishes:
-  //   already-onboarded → DB check heals cookie + sends back to /dashboard
-  //   new user          → shows onboarding flow
+  // Protect dashboard routes (pages AND /api/dashboard/* endpoints).
+  // For API routes, return JSON errors instead of redirects.
   if (isDashboardRoute(request)) {
+    const isApiRoute = request.nextUrl.pathname.startsWith('/api/')
+
     if (!userId) {
+      if (isApiRoute) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
       return NextResponse.redirect(new URL('/login', request.url))
     }
+
     const onboardedCookie = request.cookies.get('memron_onboarded')?.value
     if (onboardedCookie !== 'true') {
-      return NextResponse.redirect(new URL('/onboarding', request.url))
+      if (isApiRoute) {
+        // Let API calls through — route handlers check auth independently
+        // This avoids redirecting fetch() calls to /onboarding
+      } else {
+        return NextResponse.redirect(new URL('/onboarding', request.url))
+      }
     }
   }
 

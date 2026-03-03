@@ -201,10 +201,24 @@ async function _bootstrap(): Promise<void> {
     await exec(`CREATE INDEX IF NOT EXISTS idx_orgs_owner ON organizations(owner_id)`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_org ON api_keys(org_id)`);
-    await exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_buckets_user ON buckets(user_id)`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_buckets_org ON buckets(org_id)`);
+
+    // key_hash MUST be unique (ON CONFLICT depends on it).
+    // Drop any pre-existing non-unique index before creating the unique one.
+    await exec(`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE indexname = 'idx_api_keys_hash'
+          AND indexdef NOT LIKE '%UNIQUE%'
+        ) THEN
+          DROP INDEX idx_api_keys_hash;
+        END IF;
+      END $$
+    `);
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`);
 
     schemaReady = true;
   } catch (err) {
@@ -451,6 +465,56 @@ export async function createUserMainBucket(data: {
     return { success: true };
   } catch (err: any) {
     logFail('main bucket', err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Sync an arbitrary bucket to Supabase (called when users create custom buckets).
+ */
+export async function syncBucketToSupabase(data: {
+  bucketId: string;
+  ownerClerkId: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  isDefault?: boolean;
+}): Promise<{ success: boolean; error?: string }> {
+  if (!supaPool || isSameDatabase) return { success: true };
+
+  try {
+    await ensureSupabaseSchema();
+
+    const userRes = await exec(
+      'SELECT id FROM users WHERE clerk_id = $1',
+      [data.ownerClerkId],
+    );
+    const userId = userRes?.rows[0]?.id;
+    if (!userId) {
+      return { success: false, error: 'User not found in Supabase' };
+    }
+
+    const orgRes = await exec(
+      'SELECT id FROM organizations WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [userId],
+    );
+    const orgId = orgRes?.rows[0]?.id ?? null;
+
+    await exec(
+      `INSERT INTO buckets (bucket_id, user_id, org_id, name, slug, description, is_default)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, slug) DO UPDATE SET
+         name = EXCLUDED.name,
+         description = EXCLUDED.description,
+         is_active = true,
+         updated_at = NOW()`,
+      [data.bucketId, userId, orgId, data.name, data.slug, data.description ?? null, data.isDefault ?? false],
+    );
+
+    logOk('bucket', data.slug);
+    return { success: true };
+  } catch (err: any) {
+    logFail('bucket', err);
     return { success: false, error: err.message };
   }
 }

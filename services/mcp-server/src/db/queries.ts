@@ -86,6 +86,14 @@ export async function insertMemory(params: {
       params.importance ?? 0.5,
     ],
   );
+
+  // Increment bucket memory_count (non-blocking, best-effort)
+  query(
+    `UPDATE buckets SET memory_count = memory_count + 1, updated_at = NOW()
+     WHERE user_id = $1 AND slug = $2`,
+    [params.userId, params.bucket],
+  ).catch(() => { /* bucket table may not exist yet */ });
+
   return result.rows[0];
 }
 
@@ -251,6 +259,56 @@ export async function getMemoryStats(userId: number): Promise<{
     totalPointerTokens: parseInt(stats.total_pointer, 10),
     bucketCounts,
   };
+}
+
+/**
+ * List all buckets for a user (from the buckets table).
+ * Falls back to deriving buckets from the memories table if the buckets table
+ * doesn't exist yet.
+ */
+export async function listBuckets(userId: number): Promise<{
+  slug: string;
+  name: string;
+  description: string | null;
+  isDefault: boolean;
+  memoryCount: number;
+}[]> {
+  try {
+    const result = await query(
+      `SELECT b.slug, b.name, b.description, b.is_default,
+              (SELECT count(*) FROM memories m WHERE m.bucket = b.slug AND m.user_id = b.user_id AND m.is_active = true) as memory_count
+       FROM buckets b
+       WHERE b.user_id = $1 AND b.is_active = true
+       ORDER BY b.is_default DESC, b.created_at ASC`,
+      [userId],
+    );
+    return result.rows.map((r: any) => ({
+      slug: r.slug,
+      name: r.name,
+      description: r.description,
+      isDefault: r.is_default,
+      memoryCount: parseInt(r.memory_count, 10),
+    }));
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('does not exist')) {
+      // Fallback: derive buckets from memory table
+      const fallback = await query(
+        `SELECT bucket as slug, COUNT(*) as count FROM memories
+         WHERE user_id = $1 AND is_active = true
+         GROUP BY bucket ORDER BY count DESC`,
+        [userId],
+      );
+      return fallback.rows.map((r: any) => ({
+        slug: r.slug,
+        name: r.slug.charAt(0).toUpperCase() + r.slug.slice(1),
+        description: null,
+        isDefault: r.slug === 'main' || r.slug === 'conversation',
+        memoryCount: parseInt(r.count, 10),
+      }));
+    }
+    throw error;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

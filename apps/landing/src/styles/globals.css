@@ -32,6 +32,7 @@
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: 100px;
 }
 
 body {
@@ -1383,6 +1384,7 @@ body {
   cursor: pointer;
   transition: all 0.25s ease;
   align-self: flex-start;
+  text-decoration: none;
 }
 
 .hero-cta:hover {
