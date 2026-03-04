@@ -39,10 +39,10 @@ export function registerMemoryTools(server: McpServer): void {
   // ─── memory.store ──────────────────────────────────────────
   server.tool(
     'memory_store',
-    'Store content as an encrypted memory and receive a compressed pointer. Use this to save context, conversation snippets, tool outputs, or any data for later retrieval.',
+    'Store content as an encrypted memory and receive a compressed pointer. Use this to save context, conversation snippets, tool outputs, or any data for later retrieval. You can store into predefined buckets (conversation, tool-results, preferences, knowledge, system, custom) or any user-created sub-bucket slug.',
     {
       content: z.string().min(1).max(config.memory.maxContentLength).describe('The content to store'),
-      bucket: z.enum(VALID_BUCKETS as unknown as [string, ...string[]]).optional().describe('Memory bucket category'),
+      bucket: z.string().max(100).optional().describe('Bucket slug — predefined (conversation, tool-results, preferences, knowledge, system, custom) or a custom sub-bucket slug you created'),
       tags: z.array(z.string().max(50)).max(20).optional().describe('Tags for search and organization'),
       title: z.string().max(500).optional().describe('Title or summary (auto-generated from first 100 chars if omitted)'),
     },
@@ -53,8 +53,18 @@ export function registerMemoryTools(server: McpServer): void {
         const apiKeyId = getApiKeyId(extra.authInfo);
         const content = args.content;
 
-        // Auto-classify bucket if not provided
-        const bucket = args.bucket || classifyBucket(content);
+        // Resolve bucket: use provided slug, validate it, or auto-classify
+        let bucket: string;
+        if (args.bucket) {
+          // Validate the bucket exists (predefined or user-created)
+          const isValid = await db.isValidUserBucket(userId, args.bucket);
+          if (!isValid) {
+            throw new ValidationError(`Bucket "${args.bucket}" does not exist. Create it first with memory_create_bucket, or use a predefined bucket: ${VALID_BUCKETS.join(', ')}`);
+          }
+          bucket = args.bucket;
+        } else {
+          bucket = classifyBucket(content);
+        }
 
         // Generate title from content if not provided
         const title = args.title || content.slice(0, 100).replace(/\n/g, ' ').trim();
@@ -293,7 +303,7 @@ export function registerMemoryTools(server: McpServer): void {
   // ─── memory.list_buckets ───────────────────────────────────
   server.tool(
     'memory_list_buckets',
-    'List all memory buckets for the authenticated user. Returns bucket names, slugs, descriptions, and memory counts.',
+    'List all memory buckets for the authenticated user. Returns bucket names, slugs, descriptions, and memory counts. Includes both predefined and user-created sub-buckets.',
     {},
     async (_args, extra) => {
       try {
@@ -304,6 +314,75 @@ export function registerMemoryTools(server: McpServer): void {
           content: [{
             type: 'text',
             text: JSON.stringify({ buckets }, null, 2),
+          }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: formatToolError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // ─── memory.create_bucket ──────────────────────────────────
+  server.tool(
+    'memory_create_bucket',
+    'Create a new sub-bucket inside the main bucket to organize memories. Sub-buckets let you group related data — e.g. "project-notes", "meeting-logs", "research". Use memory_list_buckets to see existing buckets. Max 50 buckets per user.',
+    {
+      name: z.string().min(1).max(255).describe('Human-readable name for the bucket (e.g. "Project Notes")'),
+      slug: z.string().min(1).max(100)
+        .regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/, 'Slug must be lowercase alphanumeric with hyphens, no leading/trailing hyphens')
+        .describe('URL-safe slug identifier (e.g. "project-notes"). Lowercase, hyphens allowed, no spaces.'),
+      description: z.string().max(500).optional().describe('Optional description of what this bucket is for'),
+    },
+    async (args, extra) => {
+      try {
+        const userId = getUserId(extra.authInfo);
+        const orgId = getOrgId(extra.authInfo);
+
+        // Don't allow overwriting predefined bucket slugs
+        const reserved = ['conversation', 'tool-results', 'preferences', 'knowledge', 'system', 'custom', 'main'];
+        if (reserved.includes(args.slug)) {
+          throw new ValidationError(`"${args.slug}" is a reserved bucket name. Choose a different slug.`);
+        }
+
+        // Check if bucket already exists
+        const existing = await db.getBucketBySlug(userId, args.slug);
+        if (existing) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                bucketId: existing.bucketId,
+                slug: existing.slug,
+                name: existing.name,
+                description: existing.description,
+                memoryCount: existing.memoryCount,
+                note: 'Bucket already exists — returning existing bucket info.',
+              }, null, 2),
+            }],
+          };
+        }
+
+        const bucket = await db.createBucket({
+          userId,
+          orgId,
+          name: args.name,
+          slug: args.slug,
+          description: args.description,
+        });
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              bucketId: bucket.bucketId,
+              slug: bucket.slug,
+              name: bucket.name,
+              description: bucket.description,
+              note: `Sub-bucket "${bucket.name}" created. Use bucket: "${bucket.slug}" when storing memories.`,
+            }, null, 2),
           }],
         };
       } catch (error) {

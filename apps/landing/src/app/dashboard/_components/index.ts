@@ -7,4 +7,7 @@ export { ActivityFeed } from './activity-feed';
 export { CommandPalette } from './command-palette';
 export { RecentDocuments } from './recent-documents';
 export { ApiKeysPage } from './api-keys-page';
+export { ShareBucketModal } from './share-bucket-modal';
+export { NotificationBell } from './notification-bell';
+export { CreateBucketModal } from './create-bucket-modal';
 export type { OrgInfo, UserInfo, ApiKeyInfo, MemoryRow, ActivityItem } from './types';

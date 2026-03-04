@@ -391,7 +391,46 @@ export async function initializeSchema(): Promise<void> {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_buckets_user ON buckets(user_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_buckets_org ON buckets(org_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_buckets_slug ON buckets(user_id, slug)`);
-        
+
+        // ─── Bucket Shares (share sub-buckets between users) ─────
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS bucket_shares (
+            id              SERIAL PRIMARY KEY,
+            share_id        UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+            source_bucket_id UUID NOT NULL,
+            source_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            target_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            target_email    VARCHAR(255) NOT NULL,
+            copied_bucket_id UUID,
+            status          VARCHAR(20) DEFAULT 'pending',
+            message         TEXT,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            accepted_at     TIMESTAMPTZ,
+            UNIQUE(source_bucket_id, target_email)
+          )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_bucket_shares_source ON bucket_shares(source_user_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_bucket_shares_target ON bucket_shares(target_user_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_bucket_shares_email ON bucket_shares(target_email)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_bucket_shares_status ON bucket_shares(status)`);
+
+        // ─── Notifications (in-app) ─────────────────────────────
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS notifications (
+            id              SERIAL PRIMARY KEY,
+            notif_id        UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+            user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            type            VARCHAR(50) NOT NULL DEFAULT 'bucket_share',
+            title           VARCHAR(255) NOT NULL,
+            body            TEXT,
+            metadata        JSONB DEFAULT '{}',
+            is_read         BOOLEAN DEFAULT false,
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+          )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC)`);
+
         // Only log if table was newly created
         if (!tableExisted) {
             console.log('[PostgreSQL] Schema initialized successfully');
@@ -892,6 +931,305 @@ export async function deleteBucket(bucketId: string, userId: number): Promise<bo
         return (result.rowCount ?? 0) > 0;
     } catch (error: any) {
         console.error('[PostgreSQL] Failed to delete bucket:', error.message);
+        return false;
+    }
+}
+
+// ─── Bucket Sharing Operations ──────────────────────────────
+
+export interface PgBucketShare {
+    id: number;
+    share_id: string;
+    source_bucket_id: string;
+    source_user_id: number;
+    target_user_id: number | null;
+    target_email: string;
+    copied_bucket_id: string | null;
+    status: 'pending' | 'accepted' | 'declined';
+    message: string | null;
+    created_at: Date;
+    accepted_at: Date | null;
+}
+
+/**
+ * Create a bucket share invitation.
+ * Copies the bucket + its memories to the target user.
+ */
+export async function createBucketShare(data: {
+    sourceBucketId: string;
+    sourceBucketSlug?: string;
+    sourceUserId: number;
+    targetUserId: number;
+    targetEmail: string;
+    message?: string;
+}): Promise<{ success: boolean; share?: PgBucketShare; error?: string }> {
+    if (!pool) return { success: false, error: 'Database not initialized' };
+
+    try {
+        await ensureSchema();
+
+        // Get source bucket — try slug first (consistent across DBs), then bucket_id
+        let bucketRes;
+        if (data.sourceBucketSlug) {
+            bucketRes = await pool.query(
+                `SELECT * FROM buckets WHERE slug = $1 AND user_id = $2 AND is_active = true`,
+                [data.sourceBucketSlug, data.sourceUserId]
+            );
+        }
+        if (!bucketRes?.rows[0]) {
+            bucketRes = await pool.query(
+                `SELECT * FROM buckets WHERE bucket_id = $1 AND user_id = $2 AND is_active = true`,
+                [data.sourceBucketId, data.sourceUserId]
+            );
+        }
+        if (!bucketRes.rows[0]) {
+            return { success: false, error: 'Bucket not found or not owned by you' };
+        }
+
+        const srcBucket = bucketRes.rows[0];
+
+        // Check target user's bucket limit
+        const cntRes = await pool.query(
+            'SELECT count(*) as c FROM buckets WHERE user_id = $1 AND is_active = true',
+            [data.targetUserId]
+        );
+        if (parseInt(cntRes.rows[0].c) >= 50) {
+            return { success: false, error: 'Recipient has reached their bucket limit (50)' };
+        }
+
+        // Create a unique slug for the copied bucket
+        const baseSlug = `shared-${srcBucket.slug}`;
+        let copySlug = baseSlug;
+        let attempt = 0;
+        while (true) {
+            const existsRes = await pool.query(
+                'SELECT 1 FROM buckets WHERE user_id = $1 AND slug = $2',
+                [data.targetUserId, copySlug]
+            );
+            if (!existsRes.rows[0]) break;
+            attempt++;
+            copySlug = `${baseSlug}-${attempt}`;
+            if (attempt > 20) {
+                return { success: false, error: 'Could not generate unique slug for copied bucket' };
+            }
+        }
+
+        // Start transaction — copy bucket + memories atomically
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // 1. Create copied bucket for target user
+            const copyRes = await client.query(
+                `INSERT INTO buckets (user_id, org_id, name, slug, description, is_default)
+                 VALUES ($1, NULL, $2, $3, $4, false)
+                 RETURNING *`,
+                [
+                    data.targetUserId,
+                    `${srcBucket.name} (shared)`,
+                    copySlug,
+                    `Shared by ${data.targetEmail ? 'another user' : 'a teammate'}. ${srcBucket.description || ''}`.trim(),
+                ]
+            );
+            const copiedBucket = copyRes.rows[0];
+
+            // 2. Copy memories from source bucket to target user's new bucket
+            // Uses the bucket slug to find memories, copies encrypted data as-is
+            await client.query(
+                `INSERT INTO memories (pointer_id, user_id, org_id, bucket, title, content_encrypted,
+                   content_iv, content_tag, content_hash, tags, token_count, original_tokens, metadata,
+                   sub_path, importance)
+                 SELECT
+                   'cp' || substring(md5(random()::text) from 1 for 10),
+                   $1, NULL, $2, title, content_encrypted,
+                   content_iv, content_tag, content_hash, tags, token_count, original_tokens,
+                   jsonb_set(COALESCE(metadata, '{}'), '{shared_from}', to_jsonb($3::text)),
+                   sub_path, importance
+                 FROM memories
+                 WHERE bucket = $4 AND user_id = $5 AND is_active = true`,
+                [data.targetUserId, copySlug, data.sourceBucketId, srcBucket.slug, data.sourceUserId]
+            );
+
+            // 3. Update memory_count on copied bucket
+            const memCntRes = await client.query(
+                'SELECT COUNT(*) as c FROM memories WHERE bucket = $1 AND user_id = $2 AND is_active = true',
+                [copySlug, data.targetUserId]
+            );
+            await client.query(
+                'UPDATE buckets SET memory_count = $1 WHERE id = $2',
+                [parseInt(memCntRes.rows[0].c), copiedBucket.id]
+            );
+
+            // 4. Record the share (use actual Aiven bucket_id from resolved bucket)
+            const shareRes = await client.query(
+                `INSERT INTO bucket_shares (source_bucket_id, source_user_id, target_user_id, target_email, copied_bucket_id, status, message)
+                 VALUES ($1, $2, $3, $4, $5, 'accepted', $6)
+                 ON CONFLICT (source_bucket_id, target_email) DO UPDATE SET
+                   copied_bucket_id = EXCLUDED.copied_bucket_id,
+                   status = 'accepted',
+                   accepted_at = NOW()
+                 RETURNING *`,
+                [srcBucket.bucket_id, data.sourceUserId, data.targetUserId, data.targetEmail,
+                 copiedBucket.bucket_id, data.message ?? null]
+            );
+
+            await client.query('COMMIT');
+            return { success: true, share: shareRes.rows[0] };
+        } catch (txErr: any) {
+            await client.query('ROLLBACK');
+            throw txErr;
+        } finally {
+            client.release();
+        }
+    } catch (error: any) {
+        if (error.message?.includes('duplicate') || error.message?.includes('unique')) {
+            return { success: false, error: 'This bucket has already been shared with this user' };
+        }
+        console.error('[PostgreSQL] Failed to create bucket share:', error.message);
+        return { success: false, error: 'Failed to share bucket' };
+    }
+}
+
+/**
+ * Get shares sent by a user
+ */
+export async function getSharesSentByUser(userId: number): Promise<any[]> {
+    if (!pool) return [];
+    try {
+        const res = await pool.query(
+            `SELECT bs.*, b.name as bucket_name, b.slug as bucket_slug,
+                    u.email as target_user_email, u.full_name as target_user_name
+             FROM bucket_shares bs
+             JOIN buckets b ON b.bucket_id = bs.source_bucket_id
+             LEFT JOIN users u ON u.id = bs.target_user_id
+             WHERE bs.source_user_id = $1
+             ORDER BY bs.created_at DESC`,
+            [userId]
+        );
+        return res.rows;
+    } catch (e: any) {
+        console.error('[PostgreSQL] getSharesSentByUser error:', e.message);
+        return [];
+    }
+}
+
+/**
+ * Get shares received by a user
+ */
+export async function getSharesReceivedByUser(userId: number): Promise<any[]> {
+    if (!pool) return [];
+    try {
+        const res = await pool.query(
+            `SELECT bs.*, b.name as bucket_name, b.slug as bucket_slug,
+                    u.email as source_user_email, u.full_name as source_user_name
+             FROM bucket_shares bs
+             JOIN buckets b ON b.bucket_id = bs.source_bucket_id
+             LEFT JOIN users u ON u.id = bs.source_user_id
+             WHERE bs.target_user_id = $1
+             ORDER BY bs.created_at DESC`,
+            [userId]
+        );
+        return res.rows;
+    } catch (e: any) {
+        console.error('[PostgreSQL] getSharesReceivedByUser error:', e.message);
+        return [];
+    }
+}
+
+// ─── Notification Operations ────────────────────────────────
+
+export interface PgNotification {
+    id: number;
+    notif_id: string;
+    user_id: number;
+    type: string;
+    title: string;
+    body: string | null;
+    metadata: Record<string, any>;
+    is_read: boolean;
+    created_at: Date;
+}
+
+/**
+ * Create a notification for a user
+ */
+export async function createNotification(data: {
+    userId: number;
+    type: string;
+    title: string;
+    body?: string;
+    metadata?: Record<string, any>;
+}): Promise<PgNotification | null> {
+    if (!pool) return null;
+    try {
+        await ensureSchema();
+        const res = await pool.query(
+            `INSERT INTO notifications (user_id, type, title, body, metadata)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *`,
+            [data.userId, data.type, data.title, data.body ?? null, JSON.stringify(data.metadata ?? {})]
+        );
+        return res.rows[0] ?? null;
+    } catch (e: any) {
+        console.error('[PostgreSQL] createNotification error:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Get notifications for a user (most recent first, max 50)
+ */
+export async function getNotifications(userId: number): Promise<PgNotification[]> {
+    if (!pool) return [];
+    try {
+        await ensureSchema();
+        const res = await pool.query(
+            `SELECT * FROM notifications WHERE user_id = $1
+             ORDER BY created_at DESC LIMIT 50`,
+            [userId]
+        );
+        return res.rows;
+    } catch (e: any) {
+        console.error('[PostgreSQL] getNotifications error:', e.message);
+        return [];
+    }
+}
+
+/**
+ * Get unread notification count for a user
+ */
+export async function getUnreadNotificationCount(userId: number): Promise<number> {
+    if (!pool) return 0;
+    try {
+        const res = await pool.query(
+            'SELECT COUNT(*) as c FROM notifications WHERE user_id = $1 AND is_read = false',
+            [userId]
+        );
+        return parseInt(res.rows[0]?.c || '0', 10);
+    } catch { return 0; }
+}
+
+/**
+ * Mark notifications as read
+ */
+export async function markNotificationsRead(userId: number, notifIds?: string[]): Promise<boolean> {
+    if (!pool) return false;
+    try {
+        if (notifIds && notifIds.length > 0) {
+            await pool.query(
+                `UPDATE notifications SET is_read = true WHERE user_id = $1 AND notif_id = ANY($2)`,
+                [userId, notifIds]
+            );
+        } else {
+            // Mark all as read
+            await pool.query(
+                'UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false',
+                [userId]
+            );
+        }
+        return true;
+    } catch (e: any) {
+        console.error('[PostgreSQL] markNotificationsRead error:', e.message);
         return false;
     }
 }

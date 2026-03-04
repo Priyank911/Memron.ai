@@ -312,6 +312,116 @@ export async function listBuckets(userId: number): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────
+// Bucket Operations
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Get a single bucket by slug for a given user.
+ */
+export async function getBucketBySlug(userId: number, slug: string): Promise<{
+  id: number;
+  bucketId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  isDefault: boolean;
+  memoryCount: number;
+} | null> {
+  try {
+    const result = await query(
+      `SELECT id, bucket_id, slug, name, description, is_default, memory_count
+       FROM buckets
+       WHERE user_id = $1 AND slug = $2 AND is_active = true`,
+      [userId, slug],
+    );
+    if (!result.rows[0]) return null;
+    const r = result.rows[0] as any;
+    return {
+      id: r.id,
+      bucketId: r.bucket_id,
+      slug: r.slug,
+      name: r.name,
+      description: r.description,
+      isDefault: r.is_default,
+      memoryCount: parseInt(r.memory_count, 10),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create a new sub-bucket for a user.
+ * Enforces a maximum of 50 buckets per user.
+ */
+export async function createBucket(params: {
+  userId: number;
+  orgId?: number;
+  name: string;
+  slug: string;
+  description?: string;
+  parentBucket?: string;
+}): Promise<{
+  id: number;
+  bucketId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  isDefault: boolean;
+}> {
+  // Check bucket limit
+  const countResult = await query(
+    `SELECT COUNT(*) as cnt FROM buckets WHERE user_id = $1 AND is_active = true`,
+    [params.userId],
+  );
+  const count = parseInt((countResult.rows[0] as any).cnt, 10);
+  if (count >= 50) {
+    throw new Error('Bucket limit reached (max 50). Delete unused buckets first.');
+  }
+
+  const result = await query(
+    `INSERT INTO buckets (user_id, org_id, name, slug, description, is_default)
+     VALUES ($1, $2, $3, $4, $5, false)
+     ON CONFLICT (user_id, slug) DO UPDATE SET
+       name = EXCLUDED.name,
+       description = EXCLUDED.description,
+       is_active = true,
+       updated_at = NOW()
+     RETURNING id, bucket_id, slug, name, description, is_default`,
+    [
+      params.userId,
+      params.orgId ?? null,
+      params.name,
+      params.slug,
+      params.description ?? null,
+    ],
+  );
+
+  const r = result.rows[0] as any;
+  return {
+    id: r.id,
+    bucketId: r.bucket_id,
+    slug: r.slug,
+    name: r.name,
+    description: r.description,
+    isDefault: r.is_default,
+  };
+}
+
+/**
+ * Check if a bucket slug is valid for a user (either a predefined bucket or user-created).
+ */
+export async function isValidUserBucket(userId: number, slug: string): Promise<boolean> {
+  // Predefined buckets are always valid
+  const predefined = ['conversation', 'tool-results', 'preferences', 'knowledge', 'system', 'custom', 'main'];
+  if (predefined.includes(slug)) return true;
+
+  // Check user-created buckets
+  const bucket = await getBucketBySlug(userId, slug);
+  return bucket !== null;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Forensic Snapshots
 // ─────────────────────────────────────────────────────────────
 

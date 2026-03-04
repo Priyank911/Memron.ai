@@ -25,6 +25,16 @@ export interface DashboardMemory {
   updatedAt: string;
 }
 
+export interface DashboardBucket {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  isDefault: boolean;
+  memoryCount: number;
+  createdAt: string;
+}
+
 const EMPTY_STATS: DashboardStats = {
   totalMemories: 0,
   totalTokens: 0,
@@ -35,9 +45,10 @@ const EMPTY_STATS: DashboardStats = {
   dailyChart: [],
 };
 
-export function useDashboardData() {
+export function useDashboardData(enabled = true) {
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [memories, setMemories] = useState<DashboardMemory[]>([]);
+  const [buckets, setBuckets] = useState<DashboardBucket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,9 +57,10 @@ export function useDashboardData() {
       setLoading(true);
       setError(null);
 
-      const [statsRes, memoriesRes] = await Promise.all([
+      const [statsRes, memoriesRes, bucketsRes] = await Promise.all([
         fetch('/api/dashboard/stats', { credentials: 'include' }),
         fetch('/api/dashboard/memories', { credentials: 'include' }),
+        fetch('/api/dashboard/buckets', { credentials: 'include' }),
       ]);
 
       // Stats
@@ -70,6 +82,14 @@ export function useDashboardData() {
         const errBody = await memoriesRes.json().catch(() => ({}));
         console.error('[useDashboardData] Memories API error:', errBody);
       }
+
+      // Buckets
+      if (bucketsRes.ok) {
+        const data = await bucketsRes.json();
+        setBuckets(data.buckets || []);
+      } else {
+        console.warn('[useDashboardData] Buckets API error:', bucketsRes.status);
+      }
     } catch (err: any) {
       console.error('[useDashboardData] Fetch error:', err);
       setError(err.message);
@@ -78,7 +98,7 @@ export function useDashboardData() {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { if (enabled) refresh(); }, [enabled, refresh]);
 
   /* ── Transform for components ── */
   const memoryRows: MemoryRow[] = memories.map((m) => ({
@@ -105,6 +125,7 @@ export function useDashboardData() {
   return {
     stats,
     memories,
+    buckets,
     memoryRows,
     activityItems,
     sparkTokens,

@@ -1,14 +1,16 @@
 'use client';
 
-import { Search, Bell } from 'lucide-react';
+import { Search } from 'lucide-react';
+import { NotificationBell } from './notification-bell';
 
 interface TopbarProps {
   orgName: string;
   projectName: string;
   onCommandPalette: () => void;
+  authReady?: boolean;
 }
 
-export function Topbar({ orgName, projectName, onCommandPalette }: TopbarProps) {
+export function Topbar({ orgName, projectName, onCommandPalette, authReady = true }: TopbarProps) {
   return (
     <header className="db-topbar">
       {/* Left — org / project selectors */}
@@ -27,7 +29,7 @@ export function Topbar({ orgName, projectName, onCommandPalette }: TopbarProps) 
         </div>
       </div>
 
-      {/* Right — promo + nav + avatar */}
+      {/* Right — promo + nav + notifications + avatar */}
       <div className="db-topbar-right">
         <button className="db-topbar-promo" onClick={onCommandPalette}>
           <Search size={13} />
@@ -40,6 +42,8 @@ export function Topbar({ orgName, projectName, onCommandPalette }: TopbarProps) 
           <button className="db-topbar-nav-link">Playground</button>
           <button className="db-topbar-nav-link">Docs</button>
         </nav>
+
+        <NotificationBell enabled={authReady} />
       </div>
     </header>
   );

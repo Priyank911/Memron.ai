@@ -4,7 +4,7 @@ import { useUser, useClerk } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useUserSync } from '@/lib/hooks/use-user-sync';
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Loader2, AlertTriangle, RefreshCw, Share2, FolderPlus } from 'lucide-react';
 import {
   Sidebar,
   Topbar,
@@ -15,6 +15,8 @@ import {
   CommandPalette,
   RecentDocuments,
   ApiKeysPage,
+  ShareBucketModal,
+  CreateBucketModal,
 } from './_components';
 import type { OrgInfo, UserInfo, ApiKeyInfo } from './_components';
 import { useDashboardData } from './_hooks/use-dashboard-data';
@@ -30,12 +32,15 @@ export default function DashboardPage() {
   const [apiKeyInfo, setApiKeyInfo] = useState<ApiKeyInfo | null>(null);
   const [active, setActive] = useState('dashboard');
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [createBucketOpen, setCreateBucketOpen] = useState(false);
   const [dateRange] = useState('All Time');
   const [activeCategory, setActiveCategory] = useState('Overview');
 
-  /* ── Real dashboard data ── */
+  /* ── Real dashboard data (wait for Clerk auth before fetching) ── */
   const {
     stats,
+    buckets,
     memoryRows,
     activityItems,
     sparkTokens,
@@ -43,7 +48,7 @@ export default function DashboardPage() {
     loading: dataLoading,
     error: dataError,
     refresh: refreshData,
-  } = useDashboardData();
+  } = useDashboardData(isLoaded && !!user);
 
   /* ── Prevent back navigation ── */
   useEffect(() => {
@@ -163,9 +168,19 @@ export default function DashboardPage() {
             {/* Section title */}
             <div className="db-section-header">
               <h1 className="db-page-title">Overview</h1>
-              <div className="db-date-filter">
-                <span>Last 30 days</span>
-                <span className="db-date-chevron">▾</span>
+              <div className="db-section-header-right">
+                <button className="db-create-bucket-trigger" onClick={() => setCreateBucketOpen(true)}>
+                  <FolderPlus size={14} />
+                  Create Sub-Bucket
+                </button>
+                <button className="db-share-trigger" onClick={() => setShareOpen(true)}>
+                  <Share2 size={14} />
+                  Share Bucket
+                </button>
+                <div className="db-date-filter">
+                  <span>Last 30 days</span>
+                  <span className="db-date-chevron">▾</span>
+                </div>
               </div>
             </div>
 
@@ -253,6 +268,7 @@ export default function DashboardPage() {
           orgName={organization?.name || 'default-org'}
           projectName="default-project"
           onCommandPalette={() => setCmdOpen(true)}
+          authReady={isLoaded && !!user}
         />
 
         {/* Page content */}
@@ -261,6 +277,21 @@ export default function DashboardPage() {
 
       {/* Command Palette */}
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+
+      {/* Share Bucket Modal */}
+      <ShareBucketModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        buckets={buckets}
+        onShareComplete={refreshData}
+      />
+
+      {/* Create Sub-Bucket Modal */}
+      <CreateBucketModal
+        open={createBucketOpen}
+        onClose={() => setCreateBucketOpen(false)}
+        onCreated={refreshData}
+      />
     </div>
   );
 }
