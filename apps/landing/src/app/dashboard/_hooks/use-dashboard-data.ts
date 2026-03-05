@@ -12,6 +12,12 @@ export interface DashboardStats {
   buckets: { name: string; count: number }[];
   sparkMemories: number[];
   dailyChart: { label: string; value: number }[];
+  hourlyChart: { label: string; value: number }[];
+  heatmapData: { month: string; weeks: number[][] }[];
+  peakHour: string;
+  memoryDelta: number;
+  previousMemories: number;
+  range: string;
 }
 
 export interface DashboardMemory {
@@ -43,9 +49,15 @@ const EMPTY_STATS: DashboardStats = {
   buckets: [],
   sparkMemories: [],
   dailyChart: [],
+  hourlyChart: [],
+  heatmapData: [],
+  peakHour: '—',
+  memoryDelta: 0,
+  previousMemories: 0,
+  range: '30d',
 };
 
-export function useDashboardData(enabled = true) {
+export function useDashboardData(enabled = true, timeRange = '30d') {
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [memories, setMemories] = useState<DashboardMemory[]>([]);
   const [buckets, setBuckets] = useState<DashboardBucket[]>([]);
@@ -58,7 +70,7 @@ export function useDashboardData(enabled = true) {
       setError(null);
 
       const [statsRes, memoriesRes, bucketsRes] = await Promise.all([
-        fetch('/api/dashboard/stats', { credentials: 'include' }),
+        fetch(`/api/dashboard/stats?range=${timeRange}`, { credentials: 'include' }),
         fetch('/api/dashboard/memories', { credentials: 'include' }),
         fetch('/api/dashboard/buckets', { credentials: 'include' }),
       ]);
@@ -96,9 +108,9 @@ export function useDashboardData(enabled = true) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [timeRange]);
 
-  useEffect(() => { if (enabled) refresh(); }, [enabled, refresh]);
+  useEffect(() => { if (enabled) refresh(); }, [enabled, refresh, timeRange]);
 
   /* ── Transform for components ── */
   const memoryRows: MemoryRow[] = memories.map((m) => ({

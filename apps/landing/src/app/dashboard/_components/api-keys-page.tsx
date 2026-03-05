@@ -318,8 +318,8 @@ export function ApiKeysPage() {
                       <code className="db-keys-row-prefix">{key.prefix}••••••••</code>
                       <button
                         className="db-btn-icon-xs"
-                        onClick={() => handleCopy(key.prefix + '...', `prefix-${key.id}`)}
-                        title="Copy prefix"
+                        onClick={() => handleCopy(key.prefix, `prefix-${key.id}`)}
+                        title="Copy key prefix"
                       >
                         {copied === `prefix-${key.id}` ? <Check size={10} /> : <Copy size={10} />}
                       </button>

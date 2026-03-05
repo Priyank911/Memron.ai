@@ -1,173 +1,219 @@
 'use client';
 
 import Image from 'next/image';
+import { useState, useEffect, useRef } from 'react';
 import {
-  LayoutDashboard, Key, Puzzle, BarChart3, Settings, CreditCard,
-  Database, GitBranch, Webhook, Download,
-  ChevronDown, ChevronUp, LogOut, HelpCircle, MessageSquare, Activity,
+  LayoutDashboard, MessageSquare, Key, Settings, Database,
+  ChevronDown, ChevronRight, FolderPlus, Share2,
+  GitBranch, Bell, Webhook, CreditCard, HelpCircle,
+  LogOut, Sun, Moon, Monitor, Laptop,
 } from 'lucide-react';
 import type { OrgInfo } from './types';
 
-/* ── Navigation sections ── */
-const SETUP_NAV = [
-  { id: 'install', icon: Download, label: 'Install Memron' },
-  { id: 'playground', icon: MessageSquare, label: 'Playground' },
-  { id: 'api-keys', icon: Key, label: 'API Keys' },
+/* ── Navigation definitions ── */
+const NAV_SECTIONS = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    defaultOpen: true,
+    items: [
+      { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { id: 'playground', icon: MessageSquare, label: 'Playground' },
+      { id: 'memories', icon: Database, label: 'Memories' },
+    ],
+  },
+  {
+    id: 'develop',
+    label: 'Develop',
+    defaultOpen: true,
+    items: [
+      { id: 'api-keys', icon: Key, label: 'API Keys' },
+      { id: 'graph-memory', icon: GitBranch, label: 'Graph Memory' },
+      { id: 'webhooks', icon: Webhook, label: 'Webhooks' },
+    ],
+  },
+  {
+    id: 'settings',
+    label: 'Settings',
+    defaultOpen: false,
+    items: [
+      { id: 'config', icon: Settings, label: 'Settings' },
+      { id: 'usage', icon: CreditCard, label: 'Usage & Billing' },
+      { id: 'notifications', icon: Bell, label: 'Notifications' },
+    ],
+  },
 ];
 
-const ACTIVITY_NAV = [
-  { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { id: 'request', icon: Activity, label: 'Request' },
-  { id: 'entities', icon: Database, label: 'Entities' },
-  { id: 'memories', icon: Database, label: 'Memories' },
-  { id: 'graph-memory', icon: GitBranch, label: 'Graph Memory' },
-  { id: 'webhooks', icon: Webhook, label: 'Webhooks' },
-  { id: 'memory-exports', icon: Download, label: 'Memory Exports' },
-];
-
-const ACCOUNT_NAV = [
-  { id: 'settings', icon: Settings, label: 'Settings' },
-  { id: 'usage', icon: CreditCard, label: 'Usage & Billing' },
-];
-
-const BOTTOM_NAV = [
-  { id: 'feedback', icon: MessageSquare, label: 'Feedback' },
-  { id: 'status', icon: Activity, label: 'Status' },
-  { id: 'help', icon: HelpCircle, label: 'Help / Support' },
-];
+export type ThemeMode = 'light' | 'dark' | 'system';
 
 interface SidebarProps {
   org: OrgInfo | null;
   active: string;
   onNav: (id: string) => void;
   onSignOut: () => void;
+  onShareBucket?: () => void;
+  onCreateBucket?: () => void;
+  theme: ThemeMode;
+  onThemeChange: (t: ThemeMode) => void;
   user: {
     fullName?: string | null;
     firstName?: string | null;
+    username?: string | null;
     imageUrl?: string;
     emailAddresses?: { emailAddress: string }[];
   } | null;
-  usage?: { tokens: number; tokenLimit: number; searches: number; searchLimit: number; resetDate: string };
 }
 
-export function Sidebar({ org, active, onNav, onSignOut, user, usage }: SidebarProps) {
+export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreateBucket, user, theme, onThemeChange }: SidebarProps) {
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {};
+    NAV_SECTIONS.forEach(s => { map[s.id] = s.defaultOpen; });
+    return map;
+  });
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const toggleSection = (id: string) => {
+    setOpenSections(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    if (userMenuOpen) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [userMenuOpen]);
+
+  const displayName = user?.fullName || user?.username || user?.firstName || 'User';
+  const email = user?.emailAddresses?.[0]?.emailAddress || '';
+
   return (
-    <aside className="db-sidebar">
-      {/* Org header */}
-      <div className="db-sidebar-org">
-        <div className="db-sidebar-org-icon">
-          <Image src="/logo_w.png" alt="Memron" width={20} height={20} />
+    <aside className="mm-sidebar">
+      {/* Brand header */}
+      <div className="mm-sb-header">
+        <div className="mm-sb-brand">
+          <div className="mm-sb-logo-box">
+            <Image src="/logo_w.png" alt="Memron" width={20} height={20} style={{ objectFit: 'contain' }} />
+          </div>
+          <span className="mm-sb-brand-text">{org?.name || 'Memron'}</span>
         </div>
-        <div className="db-sidebar-org-info">
-          <span className="db-sidebar-org-name">{org?.name || 'Organization'}</span>
-          <span className="db-sidebar-org-plan">Free Plan</span>
-        </div>
-        <ChevronDown size={14} className="db-sidebar-org-chevron" />
       </div>
 
-      {/* Upgrade */}
-      <div className="db-sidebar-upgrade">
-        <button className="db-sidebar-upgrade-btn">
-          <span>✦</span> Upgrade
-        </button>
-      </div>
-
-      <div className="db-sidebar-nav-scroll">
-        {/* SETUP */}
-        <NavSection label="SETUP" items={SETUP_NAV} active={active} onNav={onNav} />
-
-        {/* ACTIVITY */}
-        <NavSection label="ACTIVITY" items={ACTIVITY_NAV} active={active} onNav={onNav} />
-
-        {/* ACCOUNT */}
-        <NavSection label="ACCOUNT" items={ACCOUNT_NAV} active={active} onNav={onNav} />
-      </div>
-
-      {/* Usage summary */}
-      {usage && (
-        <div className="db-sidebar-usage">
-          <div className="db-sidebar-usage-row">
-            <BarChart3 size={13} />
-            <span>Tokens</span>
-            <span className="db-sidebar-usage-val">{usage.tokens.toLocaleString()} of {formatLimit(usage.tokenLimit)}</span>
+      {/* Scrollable nav */}
+      <div className="mm-sb-scroll">
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.id} className="mm-sb-section">
+            <button
+              className="mm-sb-section-title"
+              onClick={() => toggleSection(section.id)}
+            >
+              <span>{section.label}</span>
+              {openSections[section.id]
+                ? <ChevronDown size={12} />
+                : <ChevronRight size={12} />
+              }
+            </button>
+            {openSections[section.id] && (
+              <div className="mm-sb-section-items">
+                {section.items.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`mm-sb-item${active === item.id ? ' active' : ''}`}
+                    onClick={() => onNav(item.id)}
+                  >
+                    <item.icon size={15} strokeWidth={1.7} />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="db-sidebar-usage-bar">
-            <div style={{ width: `${Math.min((usage.tokens / usage.tokenLimit) * 100, 100)}%` }} />
-          </div>
-
-          <div className="db-sidebar-usage-row">
-            <BarChart3 size={13} />
-            <span>Searches</span>
-            <span className="db-sidebar-usage-val">{usage.searches.toLocaleString()} of {formatLimit(usage.searchLimit)}</span>
-          </div>
-          <div className="db-sidebar-usage-bar">
-            <div style={{ width: `${Math.min((usage.searches / usage.searchLimit) * 100, 100)}%` }} />
-          </div>
-
-          <div className="db-sidebar-usage-reset">Usage will reset {usage.resetDate}</div>
-        </div>
-      )}
-
-      {/* Bottom links */}
-      <div className="db-sidebar-bottom">
-        {BOTTOM_NAV.map((it) => (
-          <button
-            key={it.id}
-            className={`db-sidebar-link${active === it.id ? ' active' : ''}`}
-            onClick={() => onNav(it.id)}
-          >
-            <it.icon size={15} />
-            <span>{it.label}</span>
-          </button>
         ))}
+
+        {/* Quick actions */}
+        <div className="mm-sb-actions">
+          <button className="mm-sb-action-btn" onClick={onCreateBucket}>
+            <FolderPlus size={14} strokeWidth={1.7} />
+            <span>Create Bucket</span>
+          </button>
+          <button className="mm-sb-action-btn" onClick={onShareBucket}>
+            <Share2 size={14} strokeWidth={1.7} />
+            <span>Share Bucket</span>
+          </button>
+        </div>
       </div>
 
-      {/* User footer */}
-      <div className="db-sidebar-user">
-        <div className="db-sidebar-user-avatar">
-          {user?.imageUrl
-            ? <Image src={user.imageUrl} alt="" width={28} height={28} style={{ borderRadius: 6 }} />
-            : <div className="db-sidebar-user-avatar-fallback">{(user?.firstName || 'U')[0]}</div>
-          }
-        </div>
-        <div className="db-sidebar-user-info">
-          <span className="db-sidebar-user-name">{user?.fullName || user?.firstName || 'User'}</span>
-          <span className="db-sidebar-user-email">{user?.emailAddresses?.[0]?.emailAddress || ''}</span>
-        </div>
-        <button className="db-sidebar-user-menu" onClick={onSignOut} title="Sign out">
-          <ChevronUp size={14} />
+      {/* Bottom — User section with dropdown */}
+      <div className="mm-sb-footer" ref={menuRef}>
+        <button className="mm-sb-help" onClick={() => onNav('help')}>
+          <HelpCircle size={14} strokeWidth={1.7} />
+          <span>Help & Support</span>
         </button>
+
+        {/* User trigger */}
+        <button className="mm-sb-user-trigger" onClick={() => setUserMenuOpen(p => !p)}>
+          <div className="mm-sb-user-avatar">
+            {user?.imageUrl ? (
+              <Image src={user.imageUrl} alt="" width={32} height={32} style={{ borderRadius: '50%', objectFit: 'cover' }} />
+            ) : (
+              <div className="mm-sb-avatar-fallback">{displayName[0]}</div>
+            )}
+            <span className="mm-sb-online-dot" />
+          </div>
+          <div className="mm-sb-user-info">
+            <span className="mm-sb-user-name">{displayName}</span>
+            <span className="mm-sb-user-role">Manager</span>
+          </div>
+        </button>
+
+        {/* User dropdown menu */}
+        {userMenuOpen && (
+          <div className="mm-user-menu">
+            <div className="mm-user-menu-header">
+              <span className="mm-user-menu-greeting">Hi {displayName}!</span>
+              <span className="mm-user-menu-email">{email}</span>
+            </div>
+
+            {/* Theme row */}
+            <div className="mm-user-menu-theme">
+              <span className="mm-user-menu-theme-label">Theme</span>
+              <div className="mm-theme-toggles">
+                <button
+                  className={`mm-theme-btn${theme === 'light' ? ' active' : ''}`}
+                  onClick={() => onThemeChange('light')}
+                  title="Light"
+                >
+                  <Sun size={14} />
+                </button>
+                <button
+                  className={`mm-theme-btn${theme === 'dark' ? ' active' : ''}`}
+                  onClick={() => onThemeChange('dark')}
+                  title="Dark"
+                >
+                  <Moon size={14} />
+                </button>
+                <button
+                  className={`mm-theme-btn${theme === 'system' ? ' active' : ''}`}
+                  onClick={() => onThemeChange('system')}
+                  title="System"
+                >
+                  <Monitor size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* Logout */}
+            <button className="mm-user-menu-logout" onClick={onSignOut}>
+              <LogOut size={14} strokeWidth={1.7} />
+              <span>Logout</span>
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );
-}
-
-/* ── Nav section ── */
-function NavSection({ label, items, active, onNav }: {
-  label: string;
-  items: typeof SETUP_NAV;
-  active: string;
-  onNav: (id: string) => void;
-}) {
-  return (
-    <div className="db-sidebar-section">
-      <div className="db-sidebar-section-label">{label}</div>
-      {items.map((it) => (
-        <button
-          key={it.id}
-          className={`db-sidebar-link${active === it.id ? ' active' : ''}`}
-          onClick={() => onNav(it.id)}
-        >
-          <it.icon size={15} />
-          <span>{it.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function formatLimit(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
