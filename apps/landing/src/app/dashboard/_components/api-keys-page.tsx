@@ -39,6 +39,25 @@ export function ApiKeysPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
 
+  /* ── Full-key cache in localStorage (only keys created in this browser) ── */
+  const getKeyCache = useCallback((): Record<string, string> => {
+    try {
+      return JSON.parse(localStorage.getItem('mm-key-cache') || '{}');
+    } catch { return {}; }
+  }, []);
+
+  const cacheFullKey = useCallback((id: string, fullKey: string) => {
+    const cache = getKeyCache();
+    cache[id] = fullKey;
+    localStorage.setItem('mm-key-cache', JSON.stringify(cache));
+  }, [getKeyCache]);
+
+  const removeCachedKey = useCallback((id: string) => {
+    const cache = getKeyCache();
+    delete cache[id];
+    localStorage.setItem('mm-key-cache', JSON.stringify(cache));
+  }, [getKeyCache]);
+
   const fetchKeys = useCallback(async () => {
     try {
       const res = await fetch('/api/dashboard/keys', { credentials: 'include' });
@@ -68,6 +87,7 @@ export function ApiKeysPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to generate key');
 
       setNewKey(data.key);
+      cacheFullKey(data.key.id, data.key.fullKey);
       setShowCreateForm(false);
       setKeyName('');
       fetchKeys();
@@ -92,6 +112,7 @@ export function ApiKeysPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to revoke key');
 
       setKeys((prev) => prev.filter((k) => k.id !== keyId));
+      removeCachedKey(keyId);
       setConfirmRevoke(null);
     } catch (err: any) {
       setError(err.message);
@@ -315,14 +336,26 @@ export function ApiKeysPage() {
                   <div className="db-keys-row-info">
                     <span className="db-keys-row-name">{key.name}</span>
                     <div className="db-keys-row-prefix-wrap">
-                      <code className="db-keys-row-prefix">{key.prefix}••••••••</code>
-                      <button
-                        className="db-btn-icon-xs"
-                        onClick={() => handleCopy(key.prefix, `prefix-${key.id}`)}
-                        title="Copy key prefix"
-                      >
-                        {copied === `prefix-${key.id}` ? <Check size={10} /> : <Copy size={10} />}
-                      </button>
+                      {(() => {
+                        const cached = getKeyCache()[key.id];
+                        return cached ? (
+                          <>
+                            <code className="db-keys-row-prefix">{key.prefix}••••••••</code>
+                            <button
+                              className="db-btn-icon-xs"
+                              onClick={() => handleCopy(cached, `full-${key.id}`)}
+                              title="Copy full API key"
+                            >
+                              {copied === `full-${key.id}` ? <Check size={10} className="text-green" /> : <Copy size={10} />}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <code className="db-keys-row-prefix">{key.prefix}••••••••</code>
+                            <span className="db-keys-row-hint">Full key only available at creation</span>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>

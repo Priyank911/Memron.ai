@@ -100,8 +100,6 @@ export function FlowchartCard() {
         transform: 'scale(0.88)',
         borderRadius: '28px',
         margin: '0 40px',
-        transformStyle: 'preserve-3d',
-        backfaceVisibility: 'hidden',
         WebkitFontSmoothing: 'antialiased',
       }}
     >

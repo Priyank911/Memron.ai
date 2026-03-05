@@ -2855,16 +2855,11 @@ body {
   margin: 0 auto;
   transform-origin: center center;
   will-change: transform, border-radius, margin, box-shadow;
-  contain: layout style paint;
+  contain: layout style;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid rgba(0, 0, 0, 0.1);
-  transform-style: preserve-3d;
-  backface-visibility: hidden;
   -webkit-font-smoothing: antialiased;
-  -webkit-backface-visibility: hidden;
-  -moz-backface-visibility: hidden;
-  perspective: 1000px;
 }
 
 [data-theme="light"] .flowchart-card-wrapper {
@@ -2875,8 +2870,6 @@ body {
 .flowchart-card-inner {
   position: relative;
   padding: 50px 60px;
-  transform: translateZ(0);
-  will-change: transform;
 }
 
 .screen-frame {
@@ -4015,9 +4008,11 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 28px;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, rgba(0, 0, 0, 0.04) 100%);
   border-radius: 24px;
+  position: relative;
 }
 
 [data-theme="light"] .card-quote-section {

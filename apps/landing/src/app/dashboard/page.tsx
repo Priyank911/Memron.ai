@@ -3,15 +3,19 @@
 import { useUser, useClerk } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useUserSync } from '@/lib/hooks/use-user-sync';
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import type { ThemeMode } from './_components/sidebar';
 import {
   Loader2, AlertTriangle,
-  Brain, Zap, Gauge, Users, TrendingUp, Clock, BarChart3,
-  Activity, FolderPlus, Share2, MessageSquare, Webhook,
+  Brain, Zap, Gauge, Users, Clock, BarChart3,
+  FolderPlus, Share2, MessageSquare, Webhook,
   Settings, CreditCard, Bell, CheckCheck, Archive, X,
   Info, Lock, Globe, Palette, Shield, Eye, EyeOff,
   Mail, Sparkles, Rocket,
+  Pencil, Copy, Plus, Trash2, Send, Play, ExternalLink,
+  Terminal, Activity, Circle, ChevronRight, Check,
+  ToggleLeft, ToggleRight, Search, GitBranch,
+  Sun, Moon, Monitor, User, Hash, Calendar,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -51,9 +55,39 @@ export default function DashboardPage() {
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
   const [usageDismissed, setUsageDismissed] = useState(false);
+  const [chartHover, setChartHover] = useState<{ idx: number; x: number; y: number } | null>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [trendHover, setTrendHover] = useState<{ idx: number; x: number; y: number } | null>(null);
+  const trendRef = useRef<HTMLDivElement>(null);
   const [notifTab, setNotifTab] = useState<'all' | 'unread' | 'archived'>('all');
   const [notifData, setNotifData] = useState<{ id: string; type: string; title: string; body: string | null; isRead: boolean; createdAt: string; archived?: boolean }[]>([]);
   const [notifLoading, setNotifLoading] = useState(true);
+
+  /* ── Settings page state ── */
+  const [settingsTab, setSettingsTab] = useState<'general' | 'appearance' | 'security' | 'integrations'>('general');
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+
+  /* ── Playground state ── */
+  const [pgMessages, setPgMessages] = useState<{ role: 'user' | 'system'; content: string; ts: number }[]>([]);
+  const [pgInput, setPgInput] = useState('');
+  const [pgLoading, setPgLoading] = useState(false);
+
+  /* ── Webhooks state ── */
+  const [webhooksData, setWebhooksData] = useState<{ id: string; url: string; events: string[]; isActive: boolean; secret?: string; createdAt: string; lastTriggeredAt?: string }[]>([]);
+  const [whLoading, setWhLoading] = useState(false);
+  const [whAddOpen, setWhAddOpen] = useState(false);
+  const [whUrl, setWhUrl] = useState('');
+  const [whEvents, setWhEvents] = useState<string[]>([]);
+  const [whCreating, setWhCreating] = useState(false);
+  const [whNewSecret, setWhNewSecret] = useState<string | null>(null);
+
+  /* ── Graph Memory state ── */
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphSelectedNode, setGraphSelectedNode] = useState<string | null>(null);
+
+  /* ── Playground ref ── */
+  const pgRef = useRef<HTMLDivElement>(null);
 
   /* ── Theme management ── */
   useEffect(() => {
@@ -133,6 +167,96 @@ export default function DashboardPage() {
     })();
   }, [active]);
 
+  /* ── Webhooks fetch ── */
+  const fetchWebhooks = useCallback(async () => {
+    setWhLoading(true);
+    try {
+      const res = await fetch('/api/dashboard/webhooks', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setWebhooksData(data.webhooks || []);
+      }
+    } catch { /* ignore */ } finally { setWhLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (active === 'webhooks') fetchWebhooks();
+  }, [active, fetchWebhooks]);
+
+  const createWebhook = async () => {
+    if (!whUrl || whEvents.length === 0) return;
+    setWhCreating(true);
+    try {
+      const res = await fetch('/api/dashboard/webhooks', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: whUrl, events: whEvents }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWhNewSecret(data.webhook.secret);
+        setWebhooksData(prev => [data.webhook, ...prev]);
+        setWhUrl('');
+        setWhEvents([]);
+      }
+    } catch { /* ignore */ } finally { setWhCreating(false); }
+  };
+
+  const deleteWebhook = async (id: string) => {
+    setWebhooksData(prev => prev.filter(w => w.id !== id));
+    try {
+      await fetch('/api/dashboard/webhooks', {
+        method: 'DELETE', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhookId: id }),
+      });
+    } catch { /* ignore */ }
+  };
+
+  const toggleWebhook = async (id: string, isActive: boolean) => {
+    setWebhooksData(prev => prev.map(w => w.id === id ? { ...w, isActive } : w));
+    try {
+      await fetch('/api/dashboard/webhooks', {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhookId: id, isActive }),
+      });
+    } catch { /* ignore */ }
+  };
+
+  /* ── Playground send ── */
+  const pgSend = async () => {
+    const msg = pgInput.trim();
+    if (!msg || pgLoading) return;
+    setPgMessages(prev => [...prev, { role: 'user', content: msg, ts: Date.now() }]);
+    setPgInput('');
+    setPgLoading(true);
+    try {
+      const res = await fetch('/api/dashboard/memories', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        const memories = data.memories || [];
+        const q = msg.toLowerCase();
+        const matched = memories.filter((m: any) =>
+          (m.content || '').toLowerCase().includes(q) ||
+          (m.bucket_name || '').toLowerCase().includes(q)
+        ).slice(0, 5);
+        if (matched.length > 0) {
+          const lines = matched.map((m: any, i: number) =>
+            `${i + 1}. [${m.bucket_name || 'default'}] ${(m.content || '').slice(0, 120)}${(m.content || '').length > 120 ? '...' : ''}`
+          ).join('\n');
+          setPgMessages(prev => [...prev, { role: 'system', content: `Found ${matched.length} matching memories:\n${lines}`, ts: Date.now() }]);
+        } else {
+          setPgMessages(prev => [...prev, { role: 'system', content: `No memories found matching "${msg}". Try a different query or check your buckets.`, ts: Date.now() }]);
+        }
+      } else {
+        setPgMessages(prev => [...prev, { role: 'system', content: 'Failed to query memories. Please try again.', ts: Date.now() }]);
+      }
+    } catch {
+      setPgMessages(prev => [...prev, { role: 'system', content: 'Connection error. Check your network.', ts: Date.now() }]);
+    } finally { setPgLoading(false); }
+  };
+
   const doSignOut = useCallback(async () => {
     document.cookie = 'memron_onboarded=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
     await signOut();
@@ -146,7 +270,7 @@ export default function DashboardPage() {
     }
     // Fallback: evenly spread dailyChart values across 24 hours
     const hours = [];
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 24; i++)  {
       const val = stats.dailyChart[i % stats.dailyChart.length]?.value ?? 0;
       hours.push({ label: `${String(i).padStart(2, '0')}:00`, value: val });
     }
@@ -236,6 +360,68 @@ export default function DashboardPage() {
     return [];
   }, [stats.dailyChart, stats.hourlyChart, timeRange]);
 
+  /* ── Chart hover handler ── */
+  const handleChartMouse = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const wrap = chartRef.current;
+    if (!wrap || areaChartData.length === 0) return;
+    const rect = wrap.getBoundingClientRect();
+    const xRatio = (e.clientX - rect.left) / rect.width;
+    const idx = Math.round(xRatio * (areaChartData.length - 1));
+    const clampedIdx = Math.max(0, Math.min(idx, areaChartData.length - 1));
+    setChartHover({ idx: clampedIdx, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }, [areaChartData]);
+
+  /* ── Trend hover handler ── */
+  const handleTrendMouse = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const wrap = trendRef.current;
+    if (!wrap || trendData.length === 0) return;
+    const rect = wrap.getBoundingClientRect();
+    const padLeft = 50;
+    const padRight = 20;
+    const chartWidth = rect.width - padLeft - padRight;
+    const xPos = e.clientX - rect.left - padLeft;
+    const xRatio = xPos / chartWidth;
+    const idx = Math.round(xRatio * (trendData.length - 1));
+    const clampedIdx = Math.max(0, Math.min(idx, trendData.length - 1));
+    setTrendHover({ idx: clampedIdx, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }, [trendData]);
+
+  /* ── Trend stats ── */
+  const trendStats = useMemo(() => {
+    if (trendData.length === 0) return { peak: 0, peakLabel: '—', avg: 0, total: 0, growth: '0%' };
+    const values = trendData.map(d => d.value);
+    const peak = Math.max(...values);
+    const peakIdx = values.indexOf(peak);
+    const avg = Math.round(values.reduce((s, v) => s + v, 0) / values.length);
+    const total = values.reduce((s, v) => s + v, 0);
+    const first = values[0] || 1;
+    const last = values[values.length - 1] || 0;
+    const growth = first > 0 ? `${last >= first ? '+' : ''}${(((last - first) / first) * 100).toFixed(0)}%` : '0%';
+    return { peak, peakLabel: trendData[peakIdx]?.label || '—', avg, total, growth };
+  }, [trendData]);
+
+  /* ── Playground scroll-to-bottom ── */
+  useEffect(() => { pgRef.current?.scrollTo(0, pgRef.current.scrollHeight); }, [pgMessages]);
+
+  /* ── Graph memory nodes ── */
+  const graphNodes = useMemo(() => {
+    if (!buckets.length) return [];
+    const nodes: { id: string; label: string; type: 'bucket' | 'memory'; count?: number; bucket?: string; content?: string }[] = [];
+    buckets.forEach(b => {
+      nodes.push({ id: `b-${b.id}`, label: b.name, type: 'bucket', count: b.memoryCount });
+    });
+    memoryRows.slice(0, 30).forEach((m: any) => {
+      nodes.push({
+        id: `m-${m.id}`,
+        label: (m.content || '').slice(0, 40) + ((m.content || '').length > 40 ? '...' : ''),
+        type: 'memory',
+        bucket: m.bucket_name || 'default',
+        content: m.content,
+      });
+    });
+    return nodes;
+  }, [buckets, memoryRows]);
+
   const compressionRatio = stats.originalTokens > 0
     ? `${((1 - stats.totalTokens / stats.originalTokens) * 100).toFixed(0)}%`
     : stats.totalMemories > 0 ? '99%' : '0%';
@@ -310,14 +496,21 @@ export default function DashboardPage() {
         {/* ── Large Area Chart + Insights ── */}
         <div className="mm-chart-panel">
           <div className="mm-chart-main">
-            <h2 className="mm-chart-title">Memory performance</h2>
-            <div className="mm-chart-svg-wrap">
+            <div className="mm-chart-header">
+              <h2 className="mm-chart-title">Memory Activity</h2>
+            </div>
+            <div
+              ref={chartRef}
+              className="mm-chart-svg-wrap"
+              onMouseMove={handleChartMouse}
+              onMouseLeave={() => setChartHover(null)}
+            >
               <svg viewBox="0 0 800 200" preserveAspectRatio="none" className="mm-area-chart">
                 <defs>
                   <linearGradient id="mmAreaGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.4" />
-                    <stop offset="50%" stopColor="#7c3aed" stopOpacity="0.12" />
-                    <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
+                    <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.55" />
+                    <stop offset="50%" stopColor="#6d28d9" stopOpacity="0.2" />
+                    <stop offset="100%" stopColor="#6d28d9" stopOpacity="0" />
                   </linearGradient>
                   <linearGradient id="mmLineGrad" x1="0" y1="0" x2="1" y2="0">
                     <stop offset="0%" stopColor="#6d28d9" />
@@ -325,53 +518,103 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#a78bfa" />
                   </linearGradient>
                 </defs>
+                {/* Vertical grid lines */}
+                {[0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22].map((h, i) => (
+                  <line key={i} x1={(h / 23) * 800} y1="0" x2={(h / 23) * 800} y2="170" stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="3 6" opacity="0.35" />
+                ))}
+                {/* Base line */}
+                <line x1="0" y1="170" x2="800" y2="170" stroke="var(--mm-border)" strokeWidth="0.6" opacity="0.4" />
                 {(() => {
                   const values = areaChartData.map(d => d.value);
-                  const linePath = generateSmoothPath(values, 800, 190, 10);
-                  const max = Math.max(...values, 1);
-                  const lastX = 800;
-                  const areaPath = `${linePath} L ${lastX},190 L 0,190 Z`;
+                  const linePath = generateSmoothPath(values, 800, 170, 10);
+                  const areaPath = `${linePath} L 800,170 L 0,170 Z`;
                   return (
                     <>
-                      <path d={areaPath} fill="url(#mmAreaGrad)" />
+                      <path d={areaPath} fill="url(#mmAreaGrad)" className="mm-chart-area-path" />
+                      <path d={linePath} fill="none" stroke="url(#mmLineGrad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mm-chart-line-path" />
                       <path d={linePath} fill="none" stroke="url(#mmLineGrad)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                     </>
                   );
                 })()}
+                {/* Hover vertical dashed line */}
+                {chartHover && (() => {
+                  const hx = (chartHover.idx / (areaChartData.length - 1)) * 800;
+                  return (
+                    <line x1={hx} y1="0" x2={hx} y2="170" stroke="#a0a0a0" strokeWidth="1" strokeDasharray="4 3" opacity="0.7" />
+                  );
+                })()}
                 {/* X-axis labels */}
-                {areaChartData.filter((_, i) => i % 4 === 0).map((d, idx) => (
-                  <text key={idx} x={((idx * 4) / 23) * 800} y="198" className="mm-chart-label">{d.label}</text>
+                {areaChartData.filter((_, i) => i % 2 === 0).map((d, idx) => (
+                  <text key={idx} x={((idx * 2) / 23) * 800} y="190" className="mm-chart-label">{d.label}</text>
                 ))}
               </svg>
+              {/* Hover Tooltip */}
+              {chartHover && (() => {
+                const d = areaChartData[chartHover.idx];
+                const totalMem = areaChartData.reduce((s, v) => s + v.value, 0);
+                const rate = totalMem > 0 ? ((d.value / totalMem) * 100).toFixed(1) : '0';
+                const tokVal = stats.totalTokens > 0 ? Math.round((d.value / (stats.totalMemories || 1)) * stats.totalTokens) : 0;
+                return (
+                  <div
+                    className="mm-chart-tooltip"
+                    style={{
+                      left: Math.min(Math.max(chartHover.x + 16, 10), (chartRef.current?.offsetWidth || 600) - 220),
+                      top: Math.max(chartHover.y - 80, 10),
+                    }}
+                  >
+                    <div className="mm-tooltip-header">
+                      <span className="mm-tooltip-time">{d.label}</span>
+                    </div>
+                    <div className="mm-tooltip-body">
+                      <div className="mm-tooltip-row">
+                        <span className="mm-tooltip-label">Memories</span>
+                        <span className="mm-tooltip-val">{d.value.toLocaleString()}</span>
+                      </div>
+                      <div className="mm-tooltip-row">
+                        <span className="mm-tooltip-label">Tokens</span>
+                        <span className="mm-tooltip-val">{tokVal.toLocaleString()}</span>
+                      </div>
+                      <div className="mm-tooltip-row">
+                        <span className="mm-tooltip-label">Conversation rate</span>
+                        <span className="mm-tooltip-val">{rate}%</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
           <div className="mm-chart-insights">
-            <div className="mm-insight">
-              <div className="mm-insight-icon-wrap mm-insight-green">
-                <TrendingUp size={14} />
+            <div className="mm-insight-item">
+              <div className="mm-insight-head">
+                <svg className="mm-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg>
+                <span className="mm-insight-title">Memory growing</span>
               </div>
-              <div className="mm-insight-body">
-                <span className="mm-insight-label">Memories growing</span>
-                <span className="mm-insight-value mm-green">{memoryDeltaStr} MoM</span>
-              </div>
+              <span className="mm-insight-badge">{memoryDeltaStr} MoM</span>
             </div>
-            <div className="mm-insight">
-              <div className="mm-insight-icon-wrap mm-insight-amber">
-                <Clock size={14} />
+            <div className="mm-insight-item">
+              <div className="mm-insight-head">
+                <svg className="mm-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                <span className="mm-insight-title">Highest activity time</span>
               </div>
-              <div className="mm-insight-body">
-                <span className="mm-insight-label">Peak activity time</span>
-                <span className="mm-insight-value">{stats.peakHour || '—'}</span>
-              </div>
+              <span className="mm-insight-badge">{stats.peakHour || '\u2014'}</span>
             </div>
-            <div className="mm-insight">
-              <div className="mm-insight-icon-wrap mm-insight-violet">
-                <BarChart3 size={14} />
+            <div className="mm-insight-item">
+              <div className="mm-insight-head">
+                <svg className="mm-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                <span className="mm-insight-title">Compression saved</span>
               </div>
-              <div className="mm-insight-body">
-                <span className="mm-insight-label">Compression ratio</span>
-                <span className="mm-insight-value mm-green">+{compressionRatio}</span>
-              </div>
+              <span className="mm-insight-badge">{compressionRatio}</span>
             </div>
           </div>
         </div>
@@ -381,18 +624,17 @@ export default function DashboardPage() {
           <div className="mm-stat-card">
             <div className="mm-stat-top">
               <span className="mm-stat-label">Total Memories</span>
-              <div className="mm-stat-icon-wrap mm-icon-violet"><Brain size={16} strokeWidth={1.6} /></div>
+              <Brain size={16} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
             <span className="mm-stat-value">{stats.totalMemories.toLocaleString()}</span>
             <span className={`mm-stat-delta ${stats.memoryDelta >= 0 ? 'mm-green' : 'mm-red'}`}>
               {memoryDeltaStr} vs prev period
-              {stats.memoryDelta >= 0 && <TrendingUp size={11} />}
             </span>
           </div>
           <div className="mm-stat-card">
             <div className="mm-stat-top">
               <span className="mm-stat-label">Tokens processed</span>
-              <div className="mm-stat-icon-wrap mm-icon-amber"><Zap size={16} strokeWidth={1.6} /></div>
+              <Zap size={16} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
             <span className="mm-stat-value">{stats.totalTokens.toLocaleString()}</span>
             <span className="mm-stat-delta mm-muted">avg value: {avgTokensPerMem.toLocaleString()} tok/mem</span>
@@ -400,17 +642,15 @@ export default function DashboardPage() {
           <div className="mm-stat-card">
             <div className="mm-stat-top">
               <span className="mm-stat-label">Compression rate</span>
-              <div className="mm-stat-icon-wrap mm-icon-green"><Gauge size={16} strokeWidth={1.6} /></div>
+              <Gauge size={16} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
             <span className="mm-stat-value">{compressionRatio}</span>
-            <span className="mm-stat-delta mm-green">
-              optimized <Activity size={11} />
-            </span>
+            <span className="mm-stat-delta mm-green">optimized</span>
           </div>
           <div className="mm-stat-card">
             <div className="mm-stat-top">
               <span className="mm-stat-label">Active sessions</span>
-              <div className="mm-stat-icon-wrap mm-icon-blue"><Users size={16} strokeWidth={1.6} /></div>
+              <Users size={16} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
             <span className="mm-stat-value">{stats.activeSessions}</span>
             <span className="mm-stat-delta">
@@ -454,7 +694,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Bucket Distribution Donut */}
+          {/* Bucket Distribution — Enhanced */}
           <div className="mm-panel mm-dist-panel">
             <div className="mm-panel-head">
               <h2>Bucket Distribution</h2>
@@ -462,13 +702,35 @@ export default function DashboardPage() {
             </div>
             <div className="mm-dist-body">
               {stats.buckets.length > 0 ? (
-                <DonutChart
-                  segments={distribution.map(d => ({ value: d.pct, color: d.color, label: d.label }))}
-                  size={150}
-                  thickness={18}
-                  centerValue={stats.totalMemories}
-                  centerLabel="memories"
-                />
+                <div className="mm-dist-layout">
+                  <DonutChart
+                    segments={distribution.map(d => ({ value: d.pct, color: d.color, label: d.label }))}
+                    size={140}
+                    thickness={16}
+                    centerValue={stats.totalMemories}
+                    centerLabel="memories"
+                  />
+                  <div className="mm-dist-details">
+                    {distribution.map((d, i) => {
+                      const count = stats.buckets[i]?.count ?? 0;
+                      return (
+                        <div key={i} className="mm-dist-row">
+                          <div className="mm-dist-row-left">
+                            <span className="mm-dist-color" style={{ background: d.color }} />
+                            <span className="mm-dist-name">{d.label}</span>
+                          </div>
+                          <div className="mm-dist-row-right">
+                            <span className="mm-dist-count">{count.toLocaleString()}</span>
+                            <div className="mm-dist-bar-track">
+                              <div className="mm-dist-bar-fill" style={{ width: `${d.pct}%`, background: d.color }} />
+                            </div>
+                            <span className="mm-dist-pct">{d.pct}%</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               ) : (
                 <div className="mm-empty-state" style={{ padding: '32px 0' }}>
                   <Brain size={28} strokeWidth={1.2} className="mm-empty-icon-svg" />
@@ -483,52 +745,174 @@ export default function DashboardPage() {
         <div className="mm-panel mm-trend-panel mm-trend-full">
           <div className="mm-panel-head">
             <h2>Memory Trends</h2>
-            <div className="mm-legend-row">
-              {distribution.map((d, i) => (
-                <span key={i} className="mm-legend-item">
-                  <span className="mm-legend-dot" style={{ background: d.color }} />
-                  {d.label}
-                </span>
-              ))}
+            <div className="mm-trend-head-right">
+              <div className="mm-legend-row">
+                {distribution.slice(0, 4).map((d, i) => (
+                  <span key={i} className="mm-legend-item">
+                    <span className="mm-legend-dot" style={{ background: d.color }} />
+                    {d.label}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
-          <div className="mm-trend-chart-wrap">
-            <svg viewBox="0 0 800 130" preserveAspectRatio="none" className="mm-trend-svg">
-              {/* Grid lines */}
-              {[0, 1, 2, 3, 4].map((i) => (
-                <line key={i} x1="40" y1={10 + i * 25} x2="780" y2={10 + i * 25} stroke="#1c1c1f" strokeWidth="0.5" />
-              ))}
-              {/* Area fill + line */}
-              {(() => {
-                const values = trendData.map(d => d.value);
-                const linePath = generateSmoothPath(values, 740, 110, 10);
-                if (!linePath) return null;
-                return (
-                  <g transform="translate(40, 0)">
-                    <defs>
-                      <linearGradient id="mmTrendFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.15" />
-                        <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <path d={`${linePath} L 740,110 L 0,110 Z`} fill="url(#mmTrendFill)" />
-                    <path d={linePath} fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    {values.map((v, i) => {
-                      const max = Math.max(...values, 1);
-                      const x = values.length > 1 ? (i / (values.length - 1)) * 740 : 370;
-                      const y = 110 - 10 - (v / max) * 90;
-                      return <circle key={i} cx={x} cy={y} r="3.5" fill="#8b5cf6" stroke="#0c0c0e" strokeWidth="1.5" />;
-                    })}
-                  </g>
-                );
-              })()}
-              {/* X labels */}
-              {trendData.map((d, i) => (
-                <text key={i} x={40 + (trendData.length > 1 ? (i / (trendData.length - 1)) * 740 : 370)} y="126" className="mm-chart-label" textAnchor="middle">
-                  {d.label}
-                </text>
-              ))}
-            </svg>
+
+          {/* Trend stats bar */}
+          <div className="mm-trend-stats-bar">
+            <div className="mm-trend-stat">
+              <span className="mm-trend-stat-label">Peak</span>
+              <span className="mm-trend-stat-value">{trendStats.peak.toLocaleString()}</span>
+              <span className="mm-trend-stat-sub">{trendStats.peakLabel}</span>
+            </div>
+            <div className="mm-trend-stat">
+              <span className="mm-trend-stat-label">Average</span>
+              <span className="mm-trend-stat-value">{trendStats.avg.toLocaleString()}</span>
+              <span className="mm-trend-stat-sub">per period</span>
+            </div>
+            <div className="mm-trend-stat">
+              <span className="mm-trend-stat-label">Total</span>
+              <span className="mm-trend-stat-value">{trendStats.total.toLocaleString()}</span>
+              <span className="mm-trend-stat-sub">memories</span>
+            </div>
+            <div className="mm-trend-stat">
+              <span className="mm-trend-stat-label">Growth</span>
+              <span className={`mm-trend-stat-value ${trendStats.growth.startsWith('+') ? 'mm-positive' : trendStats.growth.startsWith('-') ? 'mm-negative' : ''}`}>{trendStats.growth}</span>
+              <span className="mm-trend-stat-sub">vs start</span>
+            </div>
+          </div>
+
+          {/* Chart with hover */}
+          <div
+            ref={trendRef}
+            className="mm-trend-chart-wrap"
+            onMouseMove={handleTrendMouse}
+            onMouseLeave={() => setTrendHover(null)}
+          >
+            {(() => {
+              const values = trendData.map(d => d.value);
+              const max = Math.max(...values, 1);
+              const chartW = 720;
+              const chartH = 160;
+              const padTop = 10;
+              const padBottom = 30;
+              const plotH = chartH - padTop - padBottom;
+
+              // Y-axis ticks (5 ticks)
+              const yTicks = Array.from({ length: 5 }, (_, i) => Math.round(max - (max / 4) * i));
+
+              return (
+                <svg viewBox={`0 0 800 ${chartH}`} preserveAspectRatio="none" className="mm-trend-svg">
+                  <defs>
+                    <linearGradient id="mmTrendGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
+                      <stop offset="40%" stopColor="#7c3aed" stopOpacity="0.12" />
+                      <stop offset="100%" stopColor="#6d28d9" stopOpacity="0" />
+                    </linearGradient>
+                    <linearGradient id="mmTrendLineGrad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#6d28d9" />
+                      <stop offset="50%" stopColor="#8b5cf6" />
+                      <stop offset="100%" stopColor="#a78bfa" />
+                    </linearGradient>
+                  </defs>
+
+                  {/* Horizontal grid lines — subtle dashed */}
+                  {yTicks.map((tick, i) => {
+                    const y = padTop + (i / 4) * plotH;
+                    return (
+                      <g key={i}>
+                        <line x1="50" y1={y} x2="780" y2={y} stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="4 6" opacity="0.35" />
+                        <text x="44" y={y + 3.5} textAnchor="end" className="mm-chart-label">{tick}</text>
+                      </g>
+                    );
+                  })}
+                  {/* Base line */}
+                  <line x1="50" y1={padTop + plotH} x2="780" y2={padTop + plotH} stroke="var(--mm-border)" strokeWidth="0.6" opacity="0.4" />
+
+                  {/* Area fill + line */}
+                  {(() => {
+                    const linePath = generateSmoothPath(values, chartW, plotH, 0);
+                    if (!linePath) return null;
+                    return (
+                      <g transform={`translate(60, ${padTop})`}>
+                        <path d={`${linePath} L ${chartW},${plotH} L 0,${plotH} Z`} fill="url(#mmTrendGrad)" className="mm-trend-area-path" />
+                        <path d={linePath} fill="none" stroke="url(#mmTrendLineGrad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mm-trend-line-path" />
+                        {/* Data dots */}
+                        {values.map((v, i) => {
+                          const x = values.length > 1 ? (i / (values.length - 1)) * chartW : chartW / 2;
+                          const y = plotH - (v / max) * plotH;
+                          const isHovered = trendHover?.idx === i;
+                          return (
+                            <circle
+                              key={i}
+                              cx={x}
+                              cy={y}
+                              r={isHovered ? 5 : 3}
+                              fill={isHovered ? '#a78bfa' : '#8b5cf6'}
+                              stroke="var(--mm-bg-card)"
+                              strokeWidth={isHovered ? 2.5 : 1.5}
+                              style={{ transition: 'r 0.15s, fill 0.15s' }}
+                            />
+                          );
+                        })}
+                      </g>
+                    );
+                  })()}
+
+                  {/* Hover vertical line */}
+                  {trendHover && values.length > 1 && (() => {
+                    const hx = 60 + (trendHover.idx / (values.length - 1)) * chartW;
+                    return (
+                      <line x1={hx} y1={padTop} x2={hx} y2={padTop + plotH} stroke="#a0a0a0" strokeWidth="1" strokeDasharray="4 3" opacity="0.5" />
+                    );
+                  })()}
+
+                  {/* X labels */}
+                  {trendData.map((d, i) => {
+                    const x = 60 + (trendData.length > 1 ? (i / (trendData.length - 1)) * chartW : chartW / 2);
+                    return (
+                      <text key={i} x={x} y={chartH - 4} className="mm-chart-label" textAnchor="middle">{d.label}</text>
+                    );
+                  })}
+                </svg>
+              );
+            })()}
+
+            {/* Hover tooltip */}
+            {trendHover && trendData[trendHover.idx] && (() => {
+              const d = trendData[trendHover.idx];
+              const max = Math.max(...trendData.map(t => t.value), 1);
+              const avg = Math.round(trendData.reduce((s, t) => s + t.value, 0) / trendData.length);
+              const pctOfPeak = max > 0 ? ((d.value / max) * 100).toFixed(0) : '0';
+              return (
+                <div
+                  className="mm-chart-tooltip"
+                  style={{
+                    left: Math.min(Math.max(trendHover.x + 16, 10), (trendRef.current?.offsetWidth || 600) - 220),
+                    top: Math.max(trendHover.y - 90, 10),
+                  }}
+                >
+                  <div className="mm-tooltip-header">
+                    <span className="mm-tooltip-time">{d.label}</span>
+                  </div>
+                  <div className="mm-tooltip-body">
+                    <div className="mm-tooltip-row">
+                      <span className="mm-tooltip-label">Memories</span>
+                      <span className="mm-tooltip-val">{d.value.toLocaleString()}</span>
+                    </div>
+                    <div className="mm-tooltip-row">
+                      <span className="mm-tooltip-label">% of peak</span>
+                      <span className="mm-tooltip-val">{pctOfPeak}%</span>
+                    </div>
+                    <div className="mm-tooltip-row">
+                      <span className="mm-tooltip-label">vs average</span>
+                      <span className={`mm-tooltip-val ${d.value >= avg ? 'mm-positive' : 'mm-negative'}`}>
+                        {d.value >= avg ? '+' : ''}{d.value - avg}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -578,18 +962,101 @@ export default function DashboardPage() {
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Playground</h1>
-          <p className="mm-page-subtitle">Test memory operations in real-time.</p>
+          <p className="mm-page-subtitle">Query your memory layer in real-time.</p>
         </div>
       </div>
-      <div className="mm-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-        <div className="mm-coming-soon-card">
-          <div className="mm-cs-icon-wrap">
-            <MessageSquare size={32} strokeWidth={1.4} />
+      <div className="mm-content mm-pg-wrap">
+        {/* Terminal */}
+        <div className="mm-panel mm-pg-terminal">
+          <div className="mm-pg-terminal-head">
+            <div className="mm-pg-terminal-dots">
+              <span className="mm-pg-dot mm-pg-dot-red" />
+              <span className="mm-pg-dot mm-pg-dot-yellow" />
+              <span className="mm-pg-dot mm-pg-dot-green" />
+            </div>
+            <span className="mm-pg-terminal-title"><Terminal size={12} /> Memory Query Terminal</span>
+            <button className="mm-btn-icon-sm" onClick={() => setPgMessages([])} title="Clear"><Trash2 size={13} /></button>
           </div>
-          <h3 className="mm-cs-title">Playground</h3>
-          <p className="mm-cs-desc">Chat with your memory layer, run queries, and experiment with your AI agents — all in one interactive terminal.</p>
-          <div className="mm-cs-badge">
-            <Rocket size={12} /> Coming in v2.0
+          <div className="mm-pg-messages" ref={pgRef}>
+            {pgMessages.length === 0 && (
+              <div className="mm-pg-welcome">
+                <Brain size={28} strokeWidth={1.2} />
+                <h3>Welcome to Playground</h3>
+                <p>Type a query to search your memories. Try keywords, bucket names, or phrases.</p>
+                <div className="mm-pg-examples">
+                  {['meeting notes', 'API design', 'user feedback'].map(ex => (
+                    <button key={ex} className="mm-pg-example-btn" onClick={() => { setPgInput(ex); }}>
+                      <Search size={11} /> {ex}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {pgMessages.map((m, i) => (
+              <div key={i} className={`mm-pg-msg mm-pg-msg-${m.role}`}>
+                <div className="mm-pg-msg-icon">
+                  {m.role === 'user' ? <ChevronRight size={14} /> : <Brain size={14} />}
+                </div>
+                <div className="mm-pg-msg-body">
+                  <span className="mm-pg-msg-label">{m.role === 'user' ? 'You' : 'Memron'}</span>
+                  <pre className="mm-pg-msg-text">{m.content}</pre>
+                </div>
+              </div>
+            ))}
+            {pgLoading && (
+              <div className="mm-pg-msg mm-pg-msg-system">
+                <div className="mm-pg-msg-icon"><Loader2 size={14} className="mm-spin" /></div>
+                <div className="mm-pg-msg-body">
+                  <span className="mm-pg-msg-label">Memron</span>
+                  <span className="mm-pg-msg-text mm-text-muted">Searching memories...</span>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="mm-pg-input-bar">
+            <input
+              className="mm-pg-input"
+              placeholder="Search your memories..."
+              value={pgInput}
+              onChange={e => setPgInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && pgSend()}
+              disabled={pgLoading}
+            />
+            <button className="mm-pg-send" onClick={pgSend} disabled={pgLoading || !pgInput.trim()}>
+              <Send size={15} />
+            </button>
+          </div>
+        </div>
+
+        {/* Sidebar info */}
+        <div className="mm-pg-sidebar">
+          <div className="mm-panel mm-pg-stats-panel">
+            <div className="mm-panel-head"><h2>Quick Stats</h2></div>
+            <div className="mm-pg-stat-rows">
+              <div className="mm-pg-stat-row">
+                <span className="mm-pg-stat-label">Total Memories</span>
+                <span className="mm-pg-stat-val">{stats.totalMemories.toLocaleString()}</span>
+              </div>
+              <div className="mm-pg-stat-row">
+                <span className="mm-pg-stat-label">Buckets</span>
+                <span className="mm-pg-stat-val">{buckets.length}</span>
+              </div>
+              <div className="mm-pg-stat-row">
+                <span className="mm-pg-stat-label">Tokens</span>
+                <span className="mm-pg-stat-val">{stats.totalTokens.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+          <div className="mm-panel mm-pg-stats-panel">
+            <div className="mm-panel-head"><h2>Buckets</h2></div>
+            <div className="mm-pg-bucket-list">
+              {buckets.map(b => (
+                <button key={b.id} className="mm-pg-bucket-btn" onClick={() => setPgInput(b.name)}>
+                  <Hash size={12} /> {b.name}
+                  <span className="mm-pg-bucket-count">{b.memoryCount}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -597,169 +1064,623 @@ export default function DashboardPage() {
   );
 
   /* ══════════ Settings Page ══════════ */
+  const settingsCopyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
   const renderConfig = () => (
     <div className="mm-dashboard">
       <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="config" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Settings</h1>
-          <p className="mm-page-subtitle">Manage your workspace and preferences.</p>
+          <p className="mm-page-subtitle">Manage your workspace, preferences, and security.</p>
         </div>
       </div>
       <div className="mm-content">
-        {/* General */}
-        <div className="mm-panel">
-          <div className="mm-panel-head">
-            <h2><Globe size={15} strokeWidth={1.6} /> General</h2>
-          </div>
-          <div className="mm-config-list">
-            {[
-              { label: 'Workspace', value: organization?.name || 'Default' },
-              { label: 'Slug', value: organization?.slug || '—' },
-              { label: 'Plan', value: 'Free (Beta)' },
-              { label: 'User ID', value: userInfo?.universalId || '—', mono: true },
-              { label: 'Email', value: userInfo?.email || '—' },
-            ].map((c, i) => (
-              <div key={i} className="mm-config-row">
-                <span className="mm-config-label">{c.label}</span>
-                <span className={`mm-config-value${c.mono ? ' mono' : ''}`}>{c.value}</span>
+        {/* Tabs */}
+        <div className="mm-settings-tabs">
+          {([
+            { key: 'general', label: 'General', icon: <Globe size={14} /> },
+            { key: 'appearance', label: 'Appearance', icon: <Palette size={14} /> },
+            { key: 'security', label: 'Security', icon: <Shield size={14} /> },
+            { key: 'integrations', label: 'Integrations', icon: <GitBranch size={14} /> },
+          ] as const).map(tab => (
+            <button
+              key={tab.key}
+              className={`mm-settings-tab${settingsTab === tab.key ? ' active' : ''}`}
+              onClick={() => setSettingsTab(tab.key)}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* General Tab */}
+        {settingsTab === 'general' && (
+          <>
+            {/* Organization Details */}
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Organization Details</h2>
+                <button className="mm-btn-icon-sm" title="Edit" onClick={() => { setEditingField('org-name'); setEditValue(organization?.name || ''); }}>
+                  <Pencil size={13} />
+                </button>
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Appearance */}
-        <div className="mm-panel">
-          <div className="mm-panel-head">
-            <h2><Palette size={15} strokeWidth={1.6} /> Appearance</h2>
-          </div>
-          <div className="mm-config-list">
-            <div className="mm-config-row">
-              <span className="mm-config-label">Theme</span>
-              <span className="mm-config-value">{theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'System'}</span>
-            </div>
-            <div className="mm-config-row">
-              <span className="mm-config-label">Language</span>
-              <span className="mm-config-value">English (US)</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Security */}
-        <div className="mm-panel">
-          <div className="mm-panel-head">
-            <h2><Shield size={15} strokeWidth={1.6} /> Security</h2>
-          </div>
-          <div className="mm-config-list">
-            <div className="mm-config-row">
-              <span className="mm-config-label">Authentication</span>
-              <span className="mm-config-value">Clerk SSO</span>
-            </div>
-            <div className="mm-config-row">
-              <span className="mm-config-label">API Keys</span>
-              <span className="mm-config-value">{stats.activeSessions || 0} active</span>
-            </div>
-            <div className="mm-config-row">
-              <span className="mm-config-label">MCP Server</span>
-              <span className="mm-config-value mm-green">Connected</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Danger */}
-        <div className="mm-panel mm-panel-danger">
-          <div className="mm-panel-head">
-            <h2><AlertTriangle size={15} strokeWidth={1.6} /> Danger Zone</h2>
-          </div>
-          <div className="mm-config-list">
-            <div className="mm-config-row">
-              <div>
-                <span className="mm-config-label">Delete all memories</span>
-                <span className="mm-config-hint">This action cannot be undone.</span>
+              <div className="mm-settings-grid">
+                <div className="mm-settings-field">
+                  <label>Workspace Name</label>
+                  {editingField === 'org-name' ? (
+                    <div className="mm-settings-edit-row">
+                      <input className="mm-settings-input" value={editValue} onChange={e => setEditValue(e.target.value)} autoFocus />
+                      <button className="mm-btn-icon-sm mm-green" onClick={() => setEditingField(null)}><Check size={13} /></button>
+                      <button className="mm-btn-icon-sm" onClick={() => setEditingField(null)}><X size={13} /></button>
+                    </div>
+                  ) : (
+                    <span className="mm-settings-val">{organization?.name || 'Default Workspace'}</span>
+                  )}
+                </div>
+                <div className="mm-settings-field">
+                  <label>Slug</label>
+                  <span className="mm-settings-val mono">{organization?.slug || '—'}</span>
+                </div>
+                <div className="mm-settings-field">
+                  <label>Plan</label>
+                  <span className="mm-settings-val"><span className="mm-badge-beta">Beta</span> Free</span>
+                </div>
               </div>
-              <button className="mm-btn-danger" disabled>Delete All</button>
             </div>
-          </div>
-        </div>
+
+            {/* Personal Information */}
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Personal Information</h2>
+              </div>
+              <div className="mm-settings-grid mm-settings-grid-3">
+                <div className="mm-settings-field">
+                  <label>Email</label>
+                  <span className="mm-settings-val">{userInfo?.email || '—'}</span>
+                </div>
+                <div className="mm-settings-field">
+                  <label>User ID</label>
+                  <div className="mm-settings-copy-row">
+                    <span className="mm-settings-val mono">{(userInfo?.universalId || '—').slice(0, 16)}...</span>
+                    <button className="mm-btn-icon-sm" onClick={() => settingsCopyToClipboard(userInfo?.universalId || '')} title="Copy"><Copy size={11} /></button>
+                  </div>
+                </div>
+                <div className="mm-settings-field">
+                  <label>Role</label>
+                  <span className="mm-settings-val">Owner</span>
+                </div>
+                <div className="mm-settings-field">
+                  <label>Total Memories</label>
+                  <span className="mm-settings-val">{stats.totalMemories.toLocaleString()}</span>
+                </div>
+                <div className="mm-settings-field">
+                  <label>Buckets</label>
+                  <span className="mm-settings-val">{buckets.length}</span>
+                </div>
+                <div className="mm-settings-field">
+                  <label>Tokens Processed</label>
+                  <span className="mm-settings-val">{stats.totalTokens.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Danger Zone */}
+            <div className="mm-panel mm-panel-danger">
+              <div className="mm-panel-head">
+                <h2><AlertTriangle size={14} strokeWidth={1.6} /> Danger Zone</h2>
+              </div>
+              <div className="mm-config-list">
+                <div className="mm-config-row">
+                  <div>
+                    <span className="mm-config-label">Delete all memories</span>
+                    <span className="mm-config-hint">This action cannot be undone. All memories across all buckets will be permanently removed.</span>
+                  </div>
+                  <button className="mm-btn-danger" disabled>Delete All</button>
+                </div>
+                <div className="mm-config-row">
+                  <div>
+                    <span className="mm-config-label">Delete workspace</span>
+                    <span className="mm-config-hint">Permanently delete this workspace and all associated data.</span>
+                  </div>
+                  <button className="mm-btn-danger" disabled>Delete</button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Appearance Tab */}
+        {settingsTab === 'appearance' && (
+          <>
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Theme</h2>
+              </div>
+              <div className="mm-settings-theme-grid">
+                {([
+                  { key: 'dark', label: 'Dark', icon: <Moon size={18} />, desc: 'Easy on the eyes' },
+                  { key: 'light', label: 'Light', icon: <Sun size={18} />, desc: 'Classic bright mode' },
+                  { key: 'system', label: 'System', icon: <Monitor size={18} />, desc: 'Match OS preference' },
+                ] as const).map(t => (
+                  <button
+                    key={t.key}
+                    className={`mm-settings-theme-card${theme === t.key ? ' active' : ''}`}
+                    onClick={() => setTheme(t.key)}
+                  >
+                    <div className="mm-settings-theme-icon">{t.icon}</div>
+                    <span className="mm-settings-theme-label">{t.label}</span>
+                    <span className="mm-settings-theme-desc">{t.desc}</span>
+                    {theme === t.key && <div className="mm-settings-theme-check"><Check size={14} /></div>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Display</h2>
+              </div>
+              <div className="mm-config-list">
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Language</span>
+                  <span className="mm-config-value">English (US)</span>
+                </div>
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Font</span>
+                  <span className="mm-config-value" style={{ fontFamily: 'var(--mm-mono)', fontSize: '0.78rem' }}>JetBrains Mono</span>
+                </div>
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Density</span>
+                  <span className="mm-config-value">Comfortable</span>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Security Tab */}
+        {settingsTab === 'security' && (
+          <>
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Authentication</h2>
+              </div>
+              <div className="mm-config-list">
+                <div className="mm-config-row">
+                  <div>
+                    <span className="mm-config-label">Provider</span>
+                    <span className="mm-config-hint">Managed by Clerk</span>
+                  </div>
+                  <span className="mm-config-value">
+                    <span className="mm-settings-status-badge mm-green-bg"><Lock size={10} /> SSO Active</span>
+                  </span>
+                </div>
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Two-Factor Authentication</span>
+                  <span className="mm-config-value mm-text-muted">Managed via Clerk</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>API Keys</h2>
+                <button className="mm-btn-secondary" onClick={() => setActive('api-keys')}>
+                  Manage Keys <ExternalLink size={11} />
+                </button>
+              </div>
+              <div className="mm-config-list">
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Active Keys</span>
+                  <span className="mm-config-value">{stats.activeSessions || 0} / 5</span>
+                </div>
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Key Prefix</span>
+                  <span className="mm-config-value mono">mm_live_*</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Sessions</h2>
+              </div>
+              <div className="mm-config-list">
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Current Session</span>
+                  <span className="mm-config-value"><span className="mm-settings-status-badge mm-green-bg"><Circle size={8} /> Active</span></span>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Integrations Tab */}
+        {settingsTab === 'integrations' && (
+          <>
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>MCP Server</h2>
+              </div>
+              <div className="mm-config-list">
+                <div className="mm-config-row">
+                  <div>
+                    <span className="mm-config-label">Status</span>
+                    <span className="mm-config-hint">Model Context Protocol server for AI agent integration</span>
+                  </div>
+                  <span className="mm-config-value"><span className="mm-settings-status-badge mm-green-bg"><Activity size={10} /> Connected</span></span>
+                </div>
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Endpoint</span>
+                  <span className="mm-config-value mono" style={{ fontSize: '0.72rem' }}>mcp.memron.ai</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Webhooks</h2>
+                <button className="mm-btn-secondary" onClick={() => setActive('webhooks')}>
+                  Manage <ExternalLink size={11} />
+                </button>
+              </div>
+              <div className="mm-config-list">
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Active Endpoints</span>
+                  <span className="mm-config-value">{webhooksData.filter(w => w.isActive).length}</span>
+                </div>
+                <div className="mm-config-row">
+                  <span className="mm-config-label">Available Events</span>
+                  <span className="mm-config-value">5 event types</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mm-panel">
+              <div className="mm-panel-head">
+                <h2>Connected Services</h2>
+              </div>
+              <div className="mm-settings-integrations-list">
+                <div className="mm-settings-integration-row">
+                  <div className="mm-settings-integration-icon"><Brain size={16} /></div>
+                  <div className="mm-settings-integration-info">
+                    <span className="mm-settings-integration-name">Cursor IDE</span>
+                    <span className="mm-settings-integration-desc">MCP memory layer for Cursor</span>
+                  </div>
+                  <span className="mm-settings-status-badge mm-green-bg">Connected</span>
+                </div>
+                <div className="mm-settings-integration-row">
+                  <div className="mm-settings-integration-icon"><Terminal size={16} /></div>
+                  <div className="mm-settings-integration-info">
+                    <span className="mm-settings-integration-name">Windsurf</span>
+                    <span className="mm-settings-integration-desc">MCP memory layer for Windsurf</span>
+                  </div>
+                  <span className="mm-settings-status-badge">Available</span>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 
-  /* ══════════ Graph Memory (Coming Soon) ══════════ */
-  const renderGraphMemory = () => (
-    <div className="mm-dashboard">
-      <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="graph-memory" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
-      <div className="mm-page-header">
-        <div className="mm-page-header-left">
-          <h1 className="mm-page-title">Graph Memory</h1>
-          <p className="mm-page-subtitle">Visualize memory relationships and knowledge graphs.</p>
-        </div>
-      </div>
-      <div className="mm-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-        <div className="mm-coming-soon-card">
-          <div className="mm-cs-icon-wrap mm-cs-violet">
-            <Brain size={32} strokeWidth={1.4} />
-          </div>
-          <h3 className="mm-cs-title">Graph Memory</h3>
-          <p className="mm-cs-desc">Explore interconnected memory nodes, entity relationships, and knowledge graphs with an interactive visual explorer.</p>
-          <div className="mm-cs-badge">
-            <Sparkles size={12} /> Coming in v2.0
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  /* ══════════ Graph Memory ══════════ */
+  const renderGraphMemory = () => {
+    const bucketNodes = graphNodes.filter(n => n.type === 'bucket');
+    const memNodes = graphNodes.filter(n => n.type === 'memory');
+    const selectedNode = graphNodes.find(n => n.id === graphSelectedNode);
 
-  /* ══════════ Webhooks (UI Only) ══════════ */
+    // SVG layout: buckets in center ring, memories orbit around their bucket
+    const cx = 400, cy = 300;
+    const bucketRadius = 140;
+    const memoryRadius = 60;
+
+    return (
+      <div className="mm-dashboard">
+        <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="graph-memory" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+        <div className="mm-page-header">
+          <div className="mm-page-header-left">
+            <h1 className="mm-page-title">Graph Memory</h1>
+            <p className="mm-page-subtitle">Visualize memory relationships across buckets.</p>
+          </div>
+          <div className="mm-page-header-right">
+            <span className="mm-graph-legend"><span className="mm-graph-dot mm-graph-dot-bucket" /> Buckets</span>
+            <span className="mm-graph-legend"><span className="mm-graph-dot mm-graph-dot-memory" /> Memories</span>
+          </div>
+        </div>
+        <div className="mm-content mm-graph-wrap">
+          <div className="mm-panel mm-graph-canvas-panel">
+            {graphNodes.length === 0 ? (
+              <div className="mm-empty-state">
+                <Brain size={32} strokeWidth={1.2} className="mm-empty-icon-svg" />
+                <h3>No data to visualize</h3>
+                <p>Create some memories to see the graph visualization.</p>
+              </div>
+            ) : (
+              <svg viewBox="0 0 800 600" className="mm-graph-svg">
+                {/* Connections: memory → bucket */}
+                {bucketNodes.map((bn, bi) => {
+                  const bx = cx + bucketRadius * Math.cos((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  const by = cy + bucketRadius * Math.sin((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  const related = memNodes.filter(m => m.bucket === bn.label);
+                  return related.map((mn, mi) => {
+                    const angle = (2 * Math.PI * mi) / Math.max(related.length, 1);
+                    const mx = bx + memoryRadius * Math.cos(angle);
+                    const my = by + memoryRadius * Math.sin(angle);
+                    return (
+                      <line key={`${bn.id}-${mn.id}`} x1={bx} y1={by} x2={mx} y2={my} className="mm-graph-edge" />
+                    );
+                  });
+                })}
+                {/* Center node */}
+                <circle cx={cx} cy={cy} r={18} className="mm-graph-center" />
+                <text x={cx} y={cy + 4} textAnchor="middle" className="mm-graph-center-text">M</text>
+                {/* Bucket → center lines */}
+                {bucketNodes.map((bn, bi) => {
+                  const bx = cx + bucketRadius * Math.cos((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  const by = cy + bucketRadius * Math.sin((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  return <line key={`c-${bn.id}`} x1={cx} y1={cy} x2={bx} y2={by} className="mm-graph-edge mm-graph-edge-primary" />;
+                })}
+                {/* Bucket nodes */}
+                {bucketNodes.map((bn, bi) => {
+                  const bx = cx + bucketRadius * Math.cos((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  const by = cy + bucketRadius * Math.sin((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  const isSelected = graphSelectedNode === bn.id;
+                  return (
+                    <g key={bn.id} onClick={() => setGraphSelectedNode(isSelected ? null : bn.id)} style={{ cursor: 'pointer' }}>
+                      <circle cx={bx} cy={by} r={isSelected ? 26 : 22} className={`mm-graph-node-bucket${isSelected ? ' selected' : ''}`} />
+                      <text x={bx} y={by - 28} textAnchor="middle" className="mm-graph-node-label">{bn.label}</text>
+                      <text x={bx} y={by + 4} textAnchor="middle" className="mm-graph-node-count">{bn.count}</text>
+                    </g>
+                  );
+                })}
+                {/* Memory nodes */}
+                {bucketNodes.map((bn, bi) => {
+                  const bx = cx + bucketRadius * Math.cos((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  const by = cy + bucketRadius * Math.sin((2 * Math.PI * bi) / Math.max(bucketNodes.length, 1));
+                  const related = memNodes.filter(m => m.bucket === bn.label);
+                  return related.map((mn, mi) => {
+                    const angle = (2 * Math.PI * mi) / Math.max(related.length, 1);
+                    const mx = bx + memoryRadius * Math.cos(angle);
+                    const my = by + memoryRadius * Math.sin(angle);
+                    const isSelected = graphSelectedNode === mn.id;
+                    return (
+                      <g key={mn.id} onClick={() => setGraphSelectedNode(isSelected ? null : mn.id)} style={{ cursor: 'pointer' }}>
+                        <circle cx={mx} cy={my} r={isSelected ? 10 : 7} className={`mm-graph-node-memory${isSelected ? ' selected' : ''}`} />
+                      </g>
+                    );
+                  });
+                })}
+              </svg>
+            )}
+          </div>
+
+          {/* Detail sidebar */}
+          <div className="mm-graph-detail">
+            <div className="mm-panel">
+              <div className="mm-panel-head"><h2>Details</h2></div>
+              {selectedNode ? (
+                <div className="mm-graph-detail-content">
+                  <div className="mm-graph-detail-row">
+                    <span className="mm-graph-detail-label">Type</span>
+                    <span className={`mm-graph-detail-badge mm-graph-detail-${selectedNode.type}`}>
+                      {selectedNode.type === 'bucket' ? 'Bucket' : 'Memory'}
+                    </span>
+                  </div>
+                  <div className="mm-graph-detail-row">
+                    <span className="mm-graph-detail-label">Name</span>
+                    <span className="mm-graph-detail-val">{selectedNode.label}</span>
+                  </div>
+                  {selectedNode.type === 'bucket' && (
+                    <div className="mm-graph-detail-row">
+                      <span className="mm-graph-detail-label">Memories</span>
+                      <span className="mm-graph-detail-val">{selectedNode.count}</span>
+                    </div>
+                  )}
+                  {selectedNode.type === 'memory' && selectedNode.bucket && (
+                    <div className="mm-graph-detail-row">
+                      <span className="mm-graph-detail-label">Bucket</span>
+                      <span className="mm-graph-detail-val">{selectedNode.bucket}</span>
+                    </div>
+                  )}
+                  {selectedNode.content && (
+                    <div className="mm-graph-detail-row mm-graph-detail-row-full">
+                      <span className="mm-graph-detail-label">Content</span>
+                      <p className="mm-graph-detail-text">{selectedNode.content}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mm-graph-detail-empty">
+                  <Info size={16} />
+                  <p>Click a node to see details</p>
+                </div>
+              )}
+            </div>
+            <div className="mm-panel">
+              <div className="mm-panel-head"><h2>Summary</h2></div>
+              <div className="mm-pg-stat-rows">
+                <div className="mm-pg-stat-row">
+                  <span className="mm-pg-stat-label">Buckets</span>
+                  <span className="mm-pg-stat-val">{bucketNodes.length}</span>
+                </div>
+                <div className="mm-pg-stat-row">
+                  <span className="mm-pg-stat-label">Visible Nodes</span>
+                  <span className="mm-pg-stat-val">{memNodes.length}</span>
+                </div>
+                <div className="mm-pg-stat-row">
+                  <span className="mm-pg-stat-label">Total Memories</span>
+                  <span className="mm-pg-stat-val">{stats.totalMemories.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* ══════════ Webhooks ══════════ */
+  const WEBHOOK_EVENTS = ['memory.created', 'memory.updated', 'memory.deleted', 'bucket.created', 'bucket.shared'];
+
+  const toggleWhEvent = (ev: string) => {
+    setWhEvents(prev => prev.includes(ev) ? prev.filter(e => e !== ev) : [...prev, ev]);
+  };
+
   const renderWebhooks = () => (
     <div className="mm-dashboard">
       <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="webhooks" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Webhooks</h1>
-          <p className="mm-page-subtitle">Get notified when memory events occur.</p>
+          <p className="mm-page-subtitle">Subscribe to memory events and trigger workflows.</p>
+        </div>
+        <div className="mm-page-header-right">
+          <button className="mm-btn-primary" onClick={() => { setWhAddOpen(true); setWhNewSecret(null); }}>
+            <Plus size={14} /> Add Endpoint
+          </button>
         </div>
       </div>
       <div className="mm-content">
-        <div className="mm-blur-overlay">
-          <div className="mm-panel">
-            <div className="mm-panel-head">
-              <h2>Webhook Endpoints</h2>
-              <button className="mm-btn-primary" disabled>+ Add Endpoint</button>
+        {/* New webhook secret banner */}
+        {whNewSecret && (
+          <div className="mm-wh-secret-banner">
+            <div className="mm-wh-secret-banner-content">
+              <Shield size={16} />
+              <div>
+                <h4>Signing Secret Created</h4>
+                <p>Save this secret now. It won&apos;t be shown again.</p>
+                <code className="mm-wh-secret-code">{whNewSecret}</code>
+              </div>
             </div>
-            <div className="mm-webhook-list">
-              <div className="mm-webhook-row">
-                <div className="mm-webhook-icon"><Webhook size={15} /></div>
-                <div className="mm-webhook-info">
-                  <span className="mm-webhook-url">https://api.example.com/webhooks/memron</span>
-                  <span className="mm-webhook-meta">memory.created, memory.updated</span>
-                </div>
-                <span className="mm-webhook-status mm-green">Active</span>
-              </div>
-              <div className="mm-webhook-row">
-                <div className="mm-webhook-icon"><Webhook size={15} /></div>
-                <div className="mm-webhook-info">
-                  <span className="mm-webhook-url">https://slack.com/hooks/T123/B456</span>
-                  <span className="mm-webhook-meta">bucket.shared</span>
-                </div>
-                <span className="mm-webhook-status mm-muted">Paused</span>
-              </div>
+            <div className="mm-wh-secret-actions">
+              <button className="mm-btn-secondary" onClick={() => { navigator.clipboard.writeText(whNewSecret); }}>
+                <Copy size={12} /> Copy
+              </button>
+              <button className="mm-btn-icon-sm" onClick={() => setWhNewSecret(null)}><X size={14} /></button>
             </div>
           </div>
-          <div className="mm-blur-cover">
-            <div className="mm-coming-soon-card mm-cs-compact">
-              <div className="mm-cs-icon-wrap">
-                <Webhook size={28} strokeWidth={1.4} />
-              </div>
-              <h3 className="mm-cs-title">Webhooks</h3>
-              <p className="mm-cs-desc">Subscribe to memory events and trigger external workflows.</p>
-              <div className="mm-cs-badge">
-                <Rocket size={12} /> Coming in v2.0
-              </div>
+        )}
+
+        {/* Endpoints list */}
+        <div className="mm-panel">
+          <div className="mm-panel-head">
+            <h2>Endpoints</h2>
+            <span className="mm-text-muted" style={{ fontSize: '0.72rem' }}>{webhooksData.length} total</span>
+          </div>
+          {whLoading ? (
+            <div className="mm-empty-state" style={{ padding: '40px' }}>
+              <Loader2 size={24} className="mm-spin" />
+              <p>Loading webhooks...</p>
             </div>
+          ) : webhooksData.length === 0 ? (
+            <div className="mm-empty-state" style={{ padding: '40px' }}>
+              <Webhook size={28} strokeWidth={1.2} className="mm-empty-icon-svg" />
+              <h3>No webhooks configured</h3>
+              <p>Add an endpoint to receive event notifications.</p>
+            </div>
+          ) : (
+            <div className="mm-webhook-list">
+              {webhooksData.map(w => (
+                <div key={w.id} className="mm-webhook-row">
+                  <div className="mm-webhook-icon"><Webhook size={15} /></div>
+                  <div className="mm-webhook-info">
+                    <span className="mm-webhook-url">{w.url}</span>
+                    <span className="mm-webhook-meta">{(w.events || []).join(', ')}</span>
+                  </div>
+                  <div className="mm-wh-row-actions">
+                    <button
+                      className="mm-btn-icon-sm"
+                      onClick={() => toggleWebhook(w.id, !w.isActive)}
+                      title={w.isActive ? 'Pause' : 'Activate'}
+                    >
+                      {w.isActive ? <ToggleRight size={16} className="mm-green" /> : <ToggleLeft size={16} />}
+                    </button>
+                    <span className={`mm-webhook-status ${w.isActive ? 'mm-green' : 'mm-text-muted'}`}>
+                      {w.isActive ? 'Active' : 'Paused'}
+                    </span>
+                    <button className="mm-btn-icon-sm mm-hover-red" onClick={() => deleteWebhook(w.id)} title="Delete">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Event Types Reference */}
+        <div className="mm-panel">
+          <div className="mm-panel-head"><h2>Available Events</h2></div>
+          <div className="mm-wh-events-ref">
+            {WEBHOOK_EVENTS.map(ev => (
+              <div key={ev} className="mm-wh-event-ref-row">
+                <code className="mm-wh-event-code">{ev}</code>
+                <span className="mm-wh-event-desc">
+                  {ev === 'memory.created' && 'Triggered when a new memory is stored'}
+                  {ev === 'memory.updated' && 'Triggered when an existing memory is modified'}
+                  {ev === 'memory.deleted' && 'Triggered when a memory is removed'}
+                  {ev === 'bucket.created' && 'Triggered when a new bucket is created'}
+                  {ev === 'bucket.shared' && 'Triggered when a bucket is shared'}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
+
+      {/* Add Webhook Modal */}
+      {whAddOpen && (
+        <div className="mm-modal-overlay" onClick={() => setWhAddOpen(false)}>
+          <div className="mm-modal mm-wh-modal" onClick={e => e.stopPropagation()}>
+            <div className="mm-modal-head">
+              <h3>Add Webhook Endpoint</h3>
+              <button className="mm-btn-icon-sm" onClick={() => setWhAddOpen(false)}><X size={15} /></button>
+            </div>
+            <div className="mm-modal-body">
+              <div className="mm-modal-field">
+                <label>Endpoint URL</label>
+                <input
+                  className="mm-modal-input"
+                  placeholder="https://your-server.com/webhook"
+                  value={whUrl}
+                  onChange={e => setWhUrl(e.target.value)}
+                />
+                <span className="mm-modal-hint">Must use HTTPS</span>
+              </div>
+              <div className="mm-modal-field">
+                <label>Events</label>
+                <div className="mm-wh-event-picker">
+                  {WEBHOOK_EVENTS.map(ev => (
+                    <button
+                      key={ev}
+                      className={`mm-wh-event-chip${whEvents.includes(ev) ? ' active' : ''}`}
+                      onClick={() => toggleWhEvent(ev)}
+                    >
+                      {whEvents.includes(ev) ? <Check size={11} /> : <Plus size={11} />}
+                      {ev}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="mm-modal-footer">
+              <button className="mm-btn-secondary" onClick={() => setWhAddOpen(false)}>Cancel</button>
+              <button
+                className="mm-btn-primary"
+                disabled={!whUrl.startsWith('https://') || whEvents.length === 0 || whCreating}
+                onClick={async () => { await createWebhook(); setWhAddOpen(false); }}
+              >
+                {whCreating ? <><Loader2 size={13} className="mm-spin" /> Creating...</> : 'Create Endpoint'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
