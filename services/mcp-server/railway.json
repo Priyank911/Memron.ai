@@ -2,13 +2,19 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "infra/docker/Dockerfile.mcp"
+    "dockerfilePath": "infra/docker/Dockerfile.mcp",
+    "watchPatterns": [
+      "services/mcp-server/**",
+      "packages/shared-types/**",
+      "pnpm-lock.yaml"
+    ]
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "node dist/index.js",
+    "startCommand": "dumb-init -- node dist/index.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 15,
+    "sleepApplication": false,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
   }

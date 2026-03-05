@@ -1,0 +1,62 @@
+# ── Git ──
+.git
+.github
+.gitignore
+
+# ── Dependencies (rebuilt in Docker) ──
+node_modules
+**/node_modules
+
+# ── Build outputs (rebuilt in Docker) ──
+dist
+**/dist
+.next
+**/.next
+.turbo
+**/.turbo
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# ── Environment files (secrets injected at runtime) ──
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# ── IDE / OS ──
+.vscode
+.idea
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# ── Docs & Config not needed at build ──
+docs/
+*.md
+!README.md
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+RELEASES.md
+LICENSE
+
+# ── Infra / IaC not needed inside the image ──
+infra/k8s/
+infra/terraform/
+render.yaml
+.changeset/
+.husky/
+.prettierrc
+scripts/
+tools/
+
+# ── Apps not needed for MCP server build ──
+apps/platform/
+
+# ── Coverage / test artifacts ──
+coverage/
+**/*.test.ts
+**/*.spec.ts

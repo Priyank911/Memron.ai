@@ -22,8 +22,38 @@ const nextConfig = {
         '*.app.github.dev',
         '*.github.dev',
         '*.githubpreview.dev',
+        '*.vercel.app',
+        'memron.ai',
+        '*.memron.ai',
       ],
     },
+  },
+  // Security headers — applied to all routes on Vercel + self-host
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          {
+            key: 'Content-Security-Policy',
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://*.clerk.accounts.dev",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https://img.clerk.com https://img.clerkusercontent.com https://*.memron.ai",
+              "font-src 'self' data:",
+              "connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.dev https://api.clerk.com wss://*.clerk.accounts.dev https://*.memron.ai",
+              "frame-src 'self' https://challenges.cloudflare.com https://*.clerk.accounts.dev",
+              "worker-src 'self' blob:",
+            ].join('; '),
+          },
+        ],
+      },
+    ];
   },
 };
 
