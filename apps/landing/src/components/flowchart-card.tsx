@@ -342,29 +342,29 @@ export function FlowchartCard() {
 
           <div className="agent-logos-wrapper">
             <div className="agent-logos-track">
-              {/* First set - Using Icons8 icons */}
+              {/* First set */}
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/cursor-ai.png" alt="Cursor" className="agent-logo" />
+                <img width="24" height="24" src="/icons/cursor-ai.png" alt="Cursor" className="agent-logo" />
                 <span>Cursor</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/claude-ai.png" alt="Claude" className="agent-logo" />
+                <img width="24" height="24" src="/icons/claude-ai.png" alt="Claude" className="agent-logo" />
                 <span>Claude</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/visual-studio-code-2019.png" alt="VS Code" className="agent-logo" />
+                <img width="24" height="24" src="/icons/vscode.svg" alt="VS Code" className="agent-logo" />
                 <span>VS Code</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/ios-filled/50/windsurf-editor.png" alt="Windsurf" className="agent-logo" />
+                <img width="24" height="24" src="/icons/windsurf.png" alt="Windsurf" className="agent-logo" />
                 <span>Windsurf</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/chatgpt.png" alt="OpenAI" className="agent-logo" />
+                <img width="24" height="24" src="/icons/openai.svg" alt="OpenAI" className="agent-logo" />
                 <span>OpenAI</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/gemini-ai.png" alt="Gemini" className="agent-logo" />
+                <img width="24" height="24" src="/icons/gemini-ai.png" alt="Gemini" className="agent-logo" />
                 <span>Gemini</span>
               </div>
               <div className="agent-item">
@@ -372,7 +372,7 @@ export function FlowchartCard() {
                 <span>Cline</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/github-copilot.png" alt="GitHub Copilot" className="agent-logo" />
+                <img width="24" height="24" src="/icons/github-copilot.png" alt="GitHub Copilot" className="agent-logo" />
                 <span>GitHub Copilot</span>
               </div>
               <div className="agent-item">
@@ -384,33 +384,33 @@ export function FlowchartCard() {
                 <span>Warp</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/external-others-inmotus-design/67/external-Kangaroo-zoo-others-inmotus-design.png" alt="Roo Code" className="agent-logo" />
+                <img width="24" height="24" src="/icons/roo-logo.svg" alt="Roo Code" className="agent-logo" />
                 <span>Roo Code</span>
               </div>
 
               {/* Duplicate for seamless loop */}
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/cursor-ai.png" alt="Cursor" className="agent-logo" />
+                <img width="24" height="24" src="/icons/cursor-ai.png" alt="Cursor" className="agent-logo" />
                 <span>Cursor</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/claude-ai.png" alt="Claude" className="agent-logo" />
+                <img width="24" height="24" src="/icons/claude-ai.png" alt="Claude" className="agent-logo" />
                 <span>Claude</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/visual-studio-code-2019.png" alt="VS Code" className="agent-logo" />
+                <img width="24" height="24" src="/icons/vscode.svg" alt="VS Code" className="agent-logo" />
                 <span>VS Code</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/ios-filled/50/windsurf-editor.png" alt="Windsurf" className="agent-logo" />
+                <img width="24" height="24" src="/icons/windsurf.png" alt="Windsurf" className="agent-logo" />
                 <span>Windsurf</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/chatgpt.png" alt="OpenAI" className="agent-logo" />
+                <img width="24" height="24" src="/icons/openai.svg" alt="OpenAI" className="agent-logo" />
                 <span>OpenAI</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/gemini-ai.png" alt="Gemini" className="agent-logo" />
+                <img width="24" height="24" src="/icons/gemini-ai.png" alt="Gemini" className="agent-logo" />
                 <span>Gemini</span>
               </div>
               <div className="agent-item">
@@ -418,7 +418,7 @@ export function FlowchartCard() {
                 <span>Cline</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/fluency/48/github-copilot.png" alt="GitHub Copilot" className="agent-logo" />
+                <img width="24" height="24" src="/icons/github-copilot.png" alt="GitHub Copilot" className="agent-logo" />
                 <span>GitHub Copilot</span>
               </div>
               <div className="agent-item">
@@ -430,7 +430,7 @@ export function FlowchartCard() {
                 <span>Warp</span>
               </div>
               <div className="agent-item">
-                <img width="24" height="24" src="https://img.icons8.com/external-others-inmotus-design/67/external-Kangaroo-zoo-others-inmotus-design.png" alt="Roo Code" className="agent-logo" />
+                <img width="24" height="24" src="/icons/roo-logo.svg" alt="Roo Code" className="agent-logo" />
                 <span>Roo Code</span>
               </div>
             </div>
