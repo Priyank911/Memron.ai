@@ -29,7 +29,7 @@ COPY services/mcp-server/   ./services/mcp-server/
 RUN pnpm turbo build --filter=@memron/mcp-server
 
 # ── Prune dev dependencies ──
-RUN pnpm prune --prod --filter @memron/mcp-server... \
+RUN pnpm prune --prod \
  && rm -rf /app/.turbo /app/*/.turbo /app/*/*/.turbo
 
 # ── Production ──
