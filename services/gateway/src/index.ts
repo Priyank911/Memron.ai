@@ -13,13 +13,13 @@ const app = new Hono()
   .all('/api/*', async (c) => {
     // Proxy to memory-tunnel-api
     const url = new URL(c.req.url);
-    url.port = '4200';
+    url.port = '5200';
     url.pathname = url.pathname.replace('/api', '');
     // TODO: Forward request
     return c.json({ proxied: true });
   });
 
-const port = parseInt(process.env.PLATFORM_API_PORT ?? '4000', 10);
+const port = parseInt(process.env.PLATFORM_API_PORT ?? '5000', 10);
 const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`🌐 Gateway running on http://localhost:${port}`);
 });

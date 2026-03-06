@@ -37,14 +37,14 @@ function resolveServerUrl(): string {
   if (process.env.MCP_SERVER_URL) return process.env.MCP_SERVER_URL.replace(/\/$/, '');
   if (process.env.RAILWAY_STATIC_URL) return process.env.RAILWAY_STATIC_URL.replace(/\/$/, '');
   if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
-  return `http://localhost:${process.env.PORT || '4201'}`;
+  return `http://localhost:${process.env.PORT || '5201'}`;
 }
 
 // ─── Config ──────────────────────────────────────────────────
 
 export const config = {
   /** Server */
-  port: parseInt(process.env.PORT || '4201', 10),
+  port: parseInt(process.env.PORT || '5201', 10),
   nodeEnv: process.env.NODE_ENV || (isRailway ? 'production' : 'development'),
   isDev,
   isRailway,

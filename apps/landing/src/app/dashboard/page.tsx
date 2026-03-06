@@ -23,6 +23,7 @@ import {
   ApiKeysPage,
   ShareBucketModal,
   CreateBucketModal,
+  Playground,
 } from './_components';
 import { DonutChart } from './_components/charts';
 import { Topbar } from './_components/topbar';
@@ -957,110 +958,13 @@ export default function DashboardPage() {
 
   /* ══════════ Playground Page ══════════ */
   const renderPlayground = () => (
-    <div className="mm-dashboard">
-      <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="playground" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
-      <div className="mm-page-header">
-        <div className="mm-page-header-left">
-          <h1 className="mm-page-title">Playground</h1>
-          <p className="mm-page-subtitle">Query your memory layer in real-time.</p>
-        </div>
-      </div>
-      <div className="mm-content mm-pg-wrap">
-        {/* Terminal */}
-        <div className="mm-panel mm-pg-terminal">
-          <div className="mm-pg-terminal-head">
-            <div className="mm-pg-terminal-dots">
-              <span className="mm-pg-dot mm-pg-dot-red" />
-              <span className="mm-pg-dot mm-pg-dot-yellow" />
-              <span className="mm-pg-dot mm-pg-dot-green" />
-            </div>
-            <span className="mm-pg-terminal-title"><Terminal size={12} /> Memory Query Terminal</span>
-            <button className="mm-btn-icon-sm" onClick={() => setPgMessages([])} title="Clear"><Trash2 size={13} /></button>
-          </div>
-          <div className="mm-pg-messages" ref={pgRef}>
-            {pgMessages.length === 0 && (
-              <div className="mm-pg-welcome">
-                <Brain size={28} strokeWidth={1.2} />
-                <h3>Welcome to Playground</h3>
-                <p>Type a query to search your memories. Try keywords, bucket names, or phrases.</p>
-                <div className="mm-pg-examples">
-                  {['meeting notes', 'API design', 'user feedback'].map(ex => (
-                    <button key={ex} className="mm-pg-example-btn" onClick={() => { setPgInput(ex); }}>
-                      <Search size={11} /> {ex}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {pgMessages.map((m, i) => (
-              <div key={i} className={`mm-pg-msg mm-pg-msg-${m.role}`}>
-                <div className="mm-pg-msg-icon">
-                  {m.role === 'user' ? <ChevronRight size={14} /> : <Brain size={14} />}
-                </div>
-                <div className="mm-pg-msg-body">
-                  <span className="mm-pg-msg-label">{m.role === 'user' ? 'You' : 'Memron'}</span>
-                  <pre className="mm-pg-msg-text">{m.content}</pre>
-                </div>
-              </div>
-            ))}
-            {pgLoading && (
-              <div className="mm-pg-msg mm-pg-msg-system">
-                <div className="mm-pg-msg-icon"><Loader2 size={14} className="mm-spin" /></div>
-                <div className="mm-pg-msg-body">
-                  <span className="mm-pg-msg-label">Memron</span>
-                  <span className="mm-pg-msg-text mm-text-muted">Searching memories...</span>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="mm-pg-input-bar">
-            <input
-              className="mm-pg-input"
-              placeholder="Search your memories..."
-              value={pgInput}
-              onChange={e => setPgInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && pgSend()}
-              disabled={pgLoading}
-            />
-            <button className="mm-pg-send" onClick={pgSend} disabled={pgLoading || !pgInput.trim()}>
-              <Send size={15} />
-            </button>
-          </div>
-        </div>
-
-        {/* Sidebar info */}
-        <div className="mm-pg-sidebar">
-          <div className="mm-panel mm-pg-stats-panel">
-            <div className="mm-panel-head"><h2>Quick Stats</h2></div>
-            <div className="mm-pg-stat-rows">
-              <div className="mm-pg-stat-row">
-                <span className="mm-pg-stat-label">Total Memories</span>
-                <span className="mm-pg-stat-val">{stats.totalMemories.toLocaleString()}</span>
-              </div>
-              <div className="mm-pg-stat-row">
-                <span className="mm-pg-stat-label">Buckets</span>
-                <span className="mm-pg-stat-val">{buckets.length}</span>
-              </div>
-              <div className="mm-pg-stat-row">
-                <span className="mm-pg-stat-label">Tokens</span>
-                <span className="mm-pg-stat-val">{stats.totalTokens.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-          <div className="mm-panel mm-pg-stats-panel">
-            <div className="mm-panel-head"><h2>Buckets</h2></div>
-            <div className="mm-pg-bucket-list">
-              {buckets.map(b => (
-                <button key={b.id} className="mm-pg-bucket-btn" onClick={() => setPgInput(b.name)}>
-                  <Hash size={12} /> {b.name}
-                  <span className="mm-pg-bucket-count">{b.memoryCount}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <Playground
+      buckets={buckets}
+      totalMemories={stats.totalMemories}
+      totalTokens={stats.totalTokens}
+      userName={user?.firstName || 'there'}
+      onBack={() => setActive('dashboard')}
+    />
   );
 
   /* ══════════ Settings Page ══════════ */
