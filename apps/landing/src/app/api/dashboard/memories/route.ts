@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
 import { cachedQuery, checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
@@ -9,7 +9,7 @@ import { cachedQuery, checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
  * Protected by: auth + rate limiter + server-side cache (15s TTL, 30s SWR).
  * Reads from Supabase. Content is NOT returned (AES-256-GCM encrypted in DB).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const { userId: clerkId } = await auth();
     if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -22,8 +22,9 @@ export async function GET() {
       );
     }
 
-    const cacheKey = `memories:${clerkId}`;
-    const data = await cachedQuery(cacheKey, () => fetchMemories(clerkId), CACHE_PROFILES.memories);
+    const orgId = request.nextUrl.searchParams.get('orgId') || null;
+    const cacheKey = `memories:${clerkId}:${orgId || 'default'}`;
+    const data = await cachedQuery(cacheKey, () => fetchMemories(clerkId, orgId), CACHE_PROFILES.memories);
     return NextResponse.json(data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -32,8 +33,8 @@ export async function GET() {
   }
 }
 
-async function fetchMemories(clerkId: string) {
-  const supaUser = await resolveSupabaseUser(clerkId);
+async function fetchMemories(clerkId: string, targetOrgId: string | null = null) {
+  const supaUser = await resolveSupabaseUser(clerkId, targetOrgId);
   if (!supaUser) return { memories: [] };
 
   const { id: uid, orgId } = supaUser;

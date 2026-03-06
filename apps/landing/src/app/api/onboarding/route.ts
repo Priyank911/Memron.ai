@@ -118,6 +118,7 @@ export async function POST(request: NextRequest) {
                     name: orgResult.organization!.name,
                     slug: orgResult.organization!.slug,
                     ownerClerkId: userId,
+                    orgUuid: orgResult.organization!.org_id,
                     description: orgDescription?.trim() || null,
                 }).catch((e: any) => console.warn('[Onboarding API] Supabase org sync (non-fatal):', e.message));
 

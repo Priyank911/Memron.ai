@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MemoryRow, ActivityItem } from '../_components/types';
 
 /* ── Types ── */
@@ -57,67 +57,116 @@ const EMPTY_STATS: DashboardStats = {
   range: '30d',
 };
 
-export function useDashboardData(enabled = true, timeRange = '30d') {
+export function useDashboardData(enabled = true, timeRange = '30d', orgId: string | null = null) {
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [memories, setMemories] = useState<DashboardMemory[]>([]);
   const [buckets, setBuckets] = useState<DashboardBucket[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async (signal?: AbortSignal) => {
+  // Stable fetch — receives all params as arguments so it never needs to be recreated.
+  // Empty deps [] means this callback reference is the same for the component lifetime.
+  const doFetch = useCallback(async (
+    currentOrgId: string | null,
+    currentTimeRange: string,
+    signal: AbortSignal,
+    statsOnly: boolean,
+  ) => {
+    const opts: RequestInit = { credentials: 'include', signal };
+    const orgParam = currentOrgId ? `&orgId=${encodeURIComponent(currentOrgId)}` : '';
+    const orgQuery = currentOrgId ? `?orgId=${encodeURIComponent(currentOrgId)}` : '';
+
     try {
       setLoading(true);
       setError(null);
 
-      const opts: RequestInit = { credentials: 'include', signal };
-      const [statsRes, memoriesRes, bucketsRes] = await Promise.all([
-        fetch(`/api/dashboard/stats?range=${timeRange}`, opts),
-        fetch('/api/dashboard/memories', opts),
-        fetch('/api/dashboard/buckets', opts),
-      ]);
-
-      // Stats
-      if (statsRes.ok) {
-        const data = await statsRes.json();
-        setStats(data);
+      if (statsOnly) {
+        const sRes = await fetch(`/api/dashboard/stats?range=${currentTimeRange}${orgParam}`, opts);
+        if (sRes.ok) setStats(await sRes.json());
+        else {
+          const e = await sRes.json().catch(() => ({}));
+          setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
+        }
       } else {
-        const errBody = await statsRes.json().catch(() => ({}));
-        const msg = `Stats API ${statsRes.status}: ${errBody.details || errBody.error || 'unknown'}`;
-        console.error('[useDashboardData]', msg);
-        setError(msg);
-      }
-
-      // Memories
-      if (memoriesRes.ok) {
-        const data = await memoriesRes.json();
-        setMemories(data.memories || []);
-      } else {
-        const errBody = await memoriesRes.json().catch(() => ({}));
-        console.error('[useDashboardData] Memories API error:', errBody);
-      }
-
-      // Buckets
-      if (bucketsRes.ok) {
-        const data = await bucketsRes.json();
-        setBuckets(data.buckets || []);
-      } else {
-        console.warn('[useDashboardData] Buckets API error:', bucketsRes.status);
+        const [sRes, mRes, bRes] = await Promise.all([
+          fetch(`/api/dashboard/stats?range=${currentTimeRange}${orgParam}`, opts),
+          fetch(`/api/dashboard/memories${orgQuery}`, opts),
+          fetch(`/api/dashboard/buckets${orgQuery}`, opts),
+        ]);
+        if (sRes.ok) setStats(await sRes.json());
+        else {
+          const e = await sRes.json().catch(() => ({}));
+          setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
+        }
+        if (mRes.ok) setMemories((await mRes.json()).memories || []);
+        if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
-      console.error('[useDashboardData] Fetch error:', err);
-      setError(err.message);
+      if (err.name !== 'AbortError') setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [timeRange]);
+  }, []); // stable — intentionally no deps
+
+  // undefined = not yet run (sentinel distinct from null orgId)
+  const prevOrgRef = useRef<string | null | undefined>(undefined);
+  const prevRangeRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!enabled) return;
+
+    const prevOrg   = prevOrgRef.current;
+    const isInitial = prevOrg === undefined;
+    const orgChanged      = !isInitial && prevOrg !== orgId;
+    const onlyRangeChanged = !isInitial && !orgChanged && prevRangeRef.current !== timeRange;
+
+    prevOrgRef.current   = orgId;
+    prevRangeRef.current = timeRange;
+
+    // Clear stale data immediately when workspace changes so the UI shows loading
+    // instead of the previous org's memories while the new fetch is in flight.
+    if (orgChanged) {
+      setStats(EMPTY_STATS);
+      setMemories([]);
+      setBuckets([]);
+    }
+
     const ac = new AbortController();
-    refresh(ac.signal).catch(() => {});
-    return () => ac.abort();
-  }, [enabled, refresh, timeRange]);
+    doFetch(orgId, timeRange, ac.signal, onlyRangeChanged).catch(() => {});
+
+    return () => {
+      ac.abort();
+      // Reset refs on cleanup so the next mount (StrictMode re-mount or real re-mount)
+      // is treated as a fresh initial load and does a full refresh.
+      prevOrgRef.current   = undefined;
+      prevRangeRef.current = undefined;
+    };
+  // doFetch is stable ([] deps), so effect only re-runs when enabled/orgId/timeRange change.
+  }, [enabled, orgId, timeRange, doFetch]);
+
+  // Manual refresh exposed to the Topbar button — always does a full refresh.
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    const opts: RequestInit = { credentials: 'include' };
+    if (signal instanceof AbortSignal) opts.signal = signal;
+    const orgParam = orgId ? `&orgId=${encodeURIComponent(orgId)}` : '';
+    const orgQuery = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
+    try {
+      setLoading(true);
+      setError(null);
+      const [sRes, mRes, bRes] = await Promise.all([
+        fetch(`/api/dashboard/stats?range=${timeRange}${orgParam}`, opts),
+        fetch(`/api/dashboard/memories${orgQuery}`, opts),
+        fetch(`/api/dashboard/buckets${orgQuery}`, opts),
+      ]);
+      if (sRes.ok) setStats(await sRes.json());
+      if (mRes.ok) setMemories((await mRes.json()).memories || []);
+      if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [timeRange, orgId]);
 
   /* ── Transform for components ── */
   const memoryRows: MemoryRow[] = memories.map((m) => ({

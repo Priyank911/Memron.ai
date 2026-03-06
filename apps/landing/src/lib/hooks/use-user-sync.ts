@@ -74,8 +74,7 @@ export function useUserSync(): { isReady: boolean } {
 
             if (response.ok) {
                 const data = await response.json();
-                console.log(`[UserSync] ✅ Synced to: ${data.synced}`);
-                // Mark as synced in sessionStorage
+                    // Mark as synced in sessionStorage
                 if (typeof window !== 'undefined' && user?.id) {
                     sessionStorage.setItem(SYNC_KEY, user.id);
                 }
@@ -88,28 +87,21 @@ export function useUserSync(): { isReady: boolean } {
                 // Server error — retry with exponential backoff
                 retryCount.current++;
                 const delay = BASE_DELAY_MS * Math.pow(2, retryCount.current - 1);
-                console.warn(`[UserSync] ⚠️ Server error (${response.status}), retrying in ${delay}ms`);
                 setTimeout(() => {
                     isSyncing.current = false;
                     syncUser();
                 }, delay);
                 return; // Don't reset isSyncing yet
-            } else {
-                console.warn(`[UserSync] Sync failed with status ${response.status}`);
             }
         } catch (error) {
             if (retryCount.current < MAX_RETRIES) {
                 retryCount.current++;
                 const delay = BASE_DELAY_MS * Math.pow(2, retryCount.current - 1);
-                console.warn(`[UserSync] ⚠️ Network error, retrying in ${delay}ms`);
                 setTimeout(() => {
                     isSyncing.current = false;
                     syncUser();
                 }, delay);
                 return; // Don't reset isSyncing yet
-            } else {
-                // Silent fail — the webhook will handle sync as backup
-                console.warn('[UserSync] Could not sync user after retries');
             }
         }
 
@@ -124,12 +116,10 @@ export function useUserSync(): { isReady: boolean } {
 
             // Guard: ensure we got JSON back, not an HTML error page
             if (!res.ok) {
-                console.warn('[UserSync] Onboarding check returned', res.status, '— skipping redirect');
                 return;
             }
             const contentType = res.headers.get('content-type') || '';
             if (!contentType.includes('application/json')) {
-                console.warn('[UserSync] Onboarding check returned non-JSON — skipping redirect');
                 return;
             }
 
@@ -145,8 +135,7 @@ export function useUserSync(): { isReady: boolean } {
                     router.replace('/onboarding');
                 }
             }
-        } catch (err) {
-            console.error('[UserSync] Failed to check onboarding:', err);
+        } catch {
             // On network error, allow rendering to avoid infinite loading.
             // The middleware is the primary guard; this is defense-in-depth.
             setIsReady(true);

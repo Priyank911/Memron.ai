@@ -7,6 +7,7 @@ const nextConfig = {
     fetches: {
       fullUrl: false,
     },
+    incomingRequests: false,
   },
   images: {
     remotePatterns: [

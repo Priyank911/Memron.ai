@@ -478,6 +478,16 @@
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
+[data-mm-theme='light'] .db-cmd-modal {
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+[data-mm-theme='light'] .db-cmd-search { border-bottom-color: rgba(0, 0, 0, 0.08); }
+[data-mm-theme='light'] .db-cmd-footer { border-top-color: rgba(0, 0, 0, 0.06); }
+[data-mm-theme='light'] .db-kbd { background: rgba(0, 0, 0, 0.04); border-color: rgba(0, 0, 0, 0.08); }
+[data-mm-theme='light'] .db-cmd-item.active { background: rgba(124, 58, 237, 0.06); color: #7c3aed; }
+[data-mm-theme='light'] .db-cmd-item:hover { background: rgba(0, 0, 0, 0.03); }
+
 /* Logout */
 .mm-user-menu-logout {
     display: flex;
@@ -707,6 +717,9 @@
 }
 
 .mm-dropdown-create {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     background: none;
     border: none;
     color: var(--mm-text-2);
@@ -723,6 +736,92 @@
 .mm-dropdown-create:hover {
     color: var(--mm-white);
     background: var(--mm-bg-3);
+}
+
+/* Workspace creation form inside dropdown */
+.mm-dropdown-create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+}
+
+.mm-dropdown-create-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--mm-text);
+    font-family: var(--mm-heading);
+}
+
+.mm-dropdown-create-input {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--mm-bg);
+    border: 1px solid var(--mm-border-2);
+    border-radius: var(--mm-r-sm);
+    color: var(--mm-text);
+    font-family: var(--mm-font);
+    font-size: 0.82rem;
+    outline: none;
+    transition: border-color var(--mm-transition);
+}
+
+.mm-dropdown-create-input:focus {
+    border-color: var(--mm-violet-3);
+}
+
+.mm-dropdown-create-input::placeholder {
+    color: var(--mm-text-4);
+}
+
+.mm-dropdown-create-error {
+    font-size: 0.72rem;
+    color: var(--mm-red);
+}
+
+.mm-dropdown-create-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.mm-dropdown-create-cancel {
+    background: none;
+    border: 1px solid var(--mm-border);
+    color: var(--mm-text-3);
+    padding: 5px 14px;
+    border-radius: var(--mm-r-sm);
+    font-size: 0.76rem;
+    cursor: pointer;
+    font-family: var(--mm-font);
+    transition: all var(--mm-transition);
+}
+
+.mm-dropdown-create-cancel:hover {
+    color: var(--mm-text);
+    border-color: var(--mm-border-2);
+}
+
+.mm-dropdown-create-submit {
+    background: var(--mm-violet-3);
+    border: none;
+    color: #fff;
+    padding: 5px 16px;
+    border-radius: var(--mm-r-sm);
+    font-size: 0.76rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: var(--mm-font);
+    transition: all var(--mm-transition);
+}
+
+.mm-dropdown-create-submit:hover {
+    background: var(--mm-violet-4);
+}
+
+.mm-dropdown-create-submit:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .mm-dropdown-list {
@@ -1144,66 +1243,172 @@
 
 /* ── Insights sidebar ── */
 .mm-chart-insights {
-    width: 210px;
+    width: 230px;
     border-left: 1px solid var(--mm-border);
-    padding: 22px 18px;
+    padding: 14px 16px;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 22px;
+    gap: 10px;
     flex-shrink: 0;
+    overflow-y: auto;
 }
 
-.mm-insight-item {
+.mm-insight-card {
+    padding: 10px 12px;
+    background: var(--mm-bg-2);
+    border: 1px solid var(--mm-border);
+    border-radius: 10px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
+    transition: border-color var(--mm-transition);
 }
 
-.mm-insight-head {
+.mm-insight-card:hover {
+    border-color: var(--mm-border-2);
+}
+
+.mm-insight-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
 }
 
-.mm-insight-icon {
-    width: 16px;
-    height: 16px;
-    color: var(--mm-text-3);
+.mm-insight-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.mm-insight-label {
+    font-size: 0.65rem;
+    color: var(--mm-text-4);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+}
+
+.mm-insight-value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--mm-text);
+    font-family: var(--mm-heading);
+    line-height: 1.2;
+}
+
+.mm-insight-arrow {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
 }
 
-.mm-insight-title {
-    font-size: 0.82rem;
-    font-weight: 500;
+.mm-insight-arrow.up {
+    background: rgba(34, 197, 94, 0.1);
+    color: var(--mm-green);
+}
+
+.mm-insight-arrow.down {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--mm-red);
+}
+
+.mm-insight-ring {
+    flex-shrink: 0;
+}
+
+.mm-insight-saved {
+    font-size: 0.68rem;
+    font-weight: 600;
     color: var(--mm-text-2);
+    font-family: var(--mm-mono);
+    text-align: right;
+    white-space: nowrap;
+}
+
+.mm-insight-saved small {
+    font-size: 0.58rem;
+    color: var(--mm-text-4);
+    font-weight: 400;
+    display: block;
+    font-family: var(--mm-font);
+}
+
+.mm-insight-micro {
+    font-size: 0.68rem;
+    color: var(--mm-text-3);
+    font-family: var(--mm-mono);
+    background: var(--mm-bg-3);
+    padding: 2px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+
+.mm-insight-bar-track {
+    height: 3px;
+    background: var(--mm-bg-3);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.mm-insight-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
+}
+
+.mm-insight-bar-fill.fill-green {
+    background: var(--mm-green);
+}
+
+.mm-insight-bar-fill.fill-red {
+    background: var(--mm-red);
+}
+
+.mm-insight-bar-fill.fill-violet {
+    background: var(--mm-violet-3);
+}
+
+.mm-insight-hint {
+    font-size: 0.6rem;
+    color: var(--mm-text-4);
     line-height: 1.3;
 }
 
-.mm-insight-badge {
-    display: inline-block;
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--mm-text);
-    background: var(--mm-bg-3);
-    border: 1px solid var(--mm-border);
-    border-radius: 8px;
-    padding: 5px 14px;
-    width: fit-content;
-    font-family: var(--mm-mono);
-    letter-spacing: -0.01em;
+.mm-insight-unit {
+    font-size: 0.6rem;
+    font-weight: 500;
+    color: var(--mm-text-3);
+    margin-left: 2px;
+    font-family: var(--mm-font);
 }
 
-.mm-badge-green {
-    color: var(--mm-green);
-    background: rgba(34, 197, 94, 0.1);
-    border: 1px solid rgba(34, 197, 94, 0.15);
+.mm-insight-spark-mini {
+    flex-shrink: 0;
+    opacity: 0.85;
 }
 
-.mm-badge-default {
-    color: var(--mm-text);
-    background: var(--mm-bg-3);
-    border: 1px solid var(--mm-border);
+.mm-insight-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.mm-insight-status-dot.dot-active {
+    background: var(--mm-green);
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+    animation: mmPulse 2s infinite;
+}
+
+.mm-insight-status-dot.dot-idle {
+    background: var(--mm-text-4);
 }
 
 .mm-green {
@@ -1655,22 +1860,33 @@
 .mm-trend-head-right {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
+}
+
+.mm-trend-range-badge {
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--mm-violet-3);
+    background: var(--mm-violet-bg);
+    padding: 3px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
 }
 
 .mm-trend-stats-bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     gap: 0;
     border-bottom: 1px solid var(--mm-border);
 }
 
 .mm-trend-stat {
-    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
-    padding: 12px 16px;
+    gap: 1px;
+    padding: 8px 10px;
     border-right: 1px solid var(--mm-border);
 }
 
@@ -1678,8 +1894,44 @@
     border-right: none;
 }
 
+.mm-trend-stat-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.mm-trend-stat-mini {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+.mm-trend-stat-chip {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.mm-trend-stat-chip.chip-green {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--mm-green);
+}
+
+.mm-trend-stat-chip.chip-red {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--mm-red);
+}
+
+.mm-trend-stat-chip.chip-neutral {
+    background: var(--mm-bg-3);
+    color: var(--mm-text-3);
+}
+
 .mm-trend-stat-label {
-    font-size: 0.68rem;
+    font-size: 0.58rem;
     color: var(--mm-text-4);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -1687,7 +1939,7 @@
 }
 
 .mm-trend-stat-value {
-    font-size: 1.1rem;
+    font-size: 0.92rem;
     font-weight: 700;
     color: var(--mm-text);
     font-family: var(--mm-heading);
@@ -1703,13 +1955,13 @@
 }
 
 .mm-trend-stat-sub {
-    font-size: 0.66rem;
+    font-size: 0.56rem;
     color: var(--mm-text-4);
 }
 
 .mm-trend-chart-wrap {
-    padding: 14px 18px;
-    height: 190px;
+    padding: 12px 0 8px 0;
+    height: 220px;
     position: relative;
     cursor: crosshair;
 }
@@ -1717,6 +1969,8 @@
 .mm-trend-svg {
     width: 100%;
     height: 100%;
+    display: block;
+    overflow: visible;
 }
 
 /* Trend chart draw-in animation */
@@ -1863,6 +2117,33 @@
     line-height: 1.5;
 }
 
+/* ── Empty Workspace Banner ── */
+.mm-empty-workspace {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 24px 40px;
+    text-align: center;
+    gap: 10px;
+    border: 1px dashed var(--mm-border);
+    border-radius: 14px;
+    margin-bottom: 20px;
+}
+.mm-empty-workspace-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--mm-text);
+    margin: 0;
+}
+.mm-empty-workspace-desc {
+    font-size: 0.84rem;
+    color: var(--mm-text-3);
+    margin: 0;
+    max-width: 420px;
+    line-height: 1.55;
+}
+
 /* ═══════════════════════════════════════
    MODAL THEME OVERRIDES
    Make Share Bucket, Create Bucket, Command Palette
@@ -1875,21 +2156,24 @@
     inset: 0;
     z-index: 100;
     background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(6px);
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    padding-top: 120px;
+    padding-top: 100px;
 }
 
 .db-cmd-modal {
-    width: 560px;
+    width: 580px;
     max-width: 90vw;
     background: var(--mm-bg-1);
-    border: 1px solid var(--mm-border);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: var(--mm-r-lg);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    max-height: min(520px, 70vh);
 }
 
 .db-cmd-search {
@@ -1897,8 +2181,9 @@
     align-items: center;
     gap: 10px;
     padding: 14px 18px;
-    border-bottom: 1px solid var(--mm-border);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     color: var(--mm-text-2);
+    flex-shrink: 0;
 }
 
 .db-cmd-input {
@@ -1908,7 +2193,7 @@
     outline: none;
     color: var(--mm-text);
     font-family: var(--mm-font);
-    font-size: 0.88rem;
+    font-size: 0.9rem;
 }
 
 .db-cmd-input::placeholder {
@@ -1917,20 +2202,37 @@
 
 .db-kbd {
     font-size: 0.65rem;
-    background: var(--mm-bg-3);
+    background: rgba(255, 255, 255, 0.06);
     color: var(--mm-text-4);
     padding: 3px 7px;
     border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     font-family: var(--mm-font);
+    line-height: 1;
 }
 
 .db-kbd.sm {
-    font-size: 0.62rem;
-    padding: 2px 6px;
+    font-size: 0.6rem;
+    padding: 2px 5px;
 }
 
 .db-cmd-list {
-    padding: 6px 0;
+    overflow-y: auto;
+    flex: 1;
+    padding: 4px 0;
+}
+
+.db-cmd-group {
+    padding: 2px 0;
+}
+
+.db-cmd-group-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--mm-text-4);
+    padding: 8px 18px 4px;
 }
 
 .db-cmd-item {
@@ -1938,24 +2240,76 @@
     align-items: center;
     gap: 10px;
     width: 100%;
-    padding: 10px 18px;
+    padding: 9px 18px;
     background: none;
     border: none;
     color: var(--mm-text-2);
     cursor: pointer;
     font-family: var(--mm-font);
     font-size: 0.82rem;
-    transition: all var(--mm-transition);
+    transition: all 0.12s ease;
 }
 
-.db-cmd-item:hover {
-    background: var(--mm-bg-3);
+.db-cmd-item:hover,
+.db-cmd-item.active {
+    background: rgba(255, 255, 255, 0.05);
     color: var(--mm-white);
 }
 
-.db-cmd-item-label {
+.db-cmd-item.active {
+    background: rgba(139, 92, 246, 0.1);
+    color: #c4b5fd;
+}
+
+.db-cmd-item-text {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
     text-align: left;
+    min-width: 0;
+}
+
+.db-cmd-item-label {
+    font-size: 0.82rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.db-cmd-item-desc {
+    font-size: 0.7rem;
+    color: var(--mm-text-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.db-cmd-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 32px 18px;
+    color: var(--mm-text-4);
+    font-size: 0.82rem;
+}
+
+.db-cmd-footer {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 18px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.db-cmd-hint {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.65rem;
+    color: var(--mm-text-4);
 }
 
 /* ── Share Bucket Modal ── */
@@ -4648,12 +5002,18 @@
         border-left: none;
         border-top: 1px solid var(--mm-border);
         flex-direction: row;
-        padding: 16px 20px;
-        gap: 24px;
+        flex-wrap: wrap;
+        padding: 12px 16px;
+        gap: 8px;
     }
 
-    .mm-insight-item {
+    .mm-insight-card {
         flex: 1;
+        min-width: 140px;
+    }
+
+    .mm-trend-stats-bar {
+        grid-template-columns: repeat(2, 1fr);
     }
 
     .mm-topbar-user-text {

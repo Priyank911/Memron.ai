@@ -25,11 +25,12 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const range = searchParams.get('range') || '30d';
+    const orgId = searchParams.get('orgId') || null;
 
-    // Cache key scoped to user + time range
-    const cacheKey = `stats:${clerkId}:${range}`;
+    // Cache key scoped to user + time range + workspace
+    const cacheKey = `stats:${clerkId}:${range}:${orgId || 'default'}`;
 
-    const payload = await cachedQuery(cacheKey, () => fetchStats(clerkId, range), CACHE_PROFILES.stats);
+    const payload = await cachedQuery(cacheKey, () => fetchStats(clerkId, range, orgId), CACHE_PROFILES.stats);
     return NextResponse.json(payload);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -45,13 +46,13 @@ const EMPTY_STATS = {
   memoryDelta: 0, previousMemories: 0, range: '30d',
 };
 
-async function fetchStats(clerkId: string, range: string) {
+async function fetchStats(clerkId: string, range: string, targetOrgId: string | null = null) {
   const intervalMap: Record<string, string> = {
     today: '1 day', '7d': '7 days', '30d': '30 days', quarter: '90 days', year: '365 days',
   };
   const interval = intervalMap[range] || '30 days';
 
-  const supaUser = await resolveSupabaseUser(clerkId);
+  const supaUser = await resolveSupabaseUser(clerkId, targetOrgId);
   if (!supaUser) return { ...EMPTY_STATS, range };
 
   const { id: uid, orgId } = supaUser;

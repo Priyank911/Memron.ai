@@ -28,6 +28,7 @@ import {
 import { DonutChart, Sparkline } from './_components/charts';
 import { Topbar } from './_components/topbar';
 import type { OrgInfo, UserInfo, ApiKeyInfo } from './_components';
+import type { WorkspaceItem } from './_components/topbar';
 import { useDashboardData } from './_hooks/use-dashboard-data';
 import { useNotifications } from './_hooks/use-notifications';
 
@@ -47,6 +48,8 @@ export default function DashboardPage() {
   const { isReady } = useUserSync();
 
   const [organization, setOrganization] = useState<OrgInfo | null>(null);
+  const [orgResolved, setOrgResolved] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [apiKeyInfo, setApiKeyInfo] = useState<ApiKeyInfo | null>(null);
   const [active, setActive] = useState('dashboard');
@@ -115,9 +118,9 @@ export default function DashboardPage() {
   }, [theme]);
 
   const {
-    stats, buckets, memoryRows, activityItems, sparkTokens, sparkMemories,
+    stats, memories, buckets, memoryRows, activityItems, sparkTokens, sparkMemories,
     loading: dataLoading, error: dataError, refresh: refreshData,
-  } = useDashboardData(isLoaded && !!user, timeRange);
+  } = useDashboardData(isLoaded && !!user && orgResolved, timeRange, organization?.id || null);
 
   /* ── Prevent back ── */
   useEffect(() => {
@@ -128,21 +131,54 @@ export default function DashboardPage() {
     return () => window.removeEventListener('popstate', h);
   }, []);
 
-  /* ── Fetch onboarding data ── */
+  /* ── Fetch onboarding data + workspaces ── */
   useEffect(() => {
     if (!isLoaded || !user) return;
     (async () => {
       try {
-        const r = await fetch('/api/onboarding', { credentials: 'include' });
-        if (!r.ok) return;
-        const ct = r.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) return;
-        const d = await r.json();
-        if (d.organization) setOrganization(d.organization);
-        if (d.user) setUserInfo(d.user);
-        if (d.apiKey) setApiKeyInfo(d.apiKey);
-      } catch { /* ignore */ }
+        // Fetch both endpoints and parse their bodies in one Promise.all so that
+        // all resulting state updates happen in a single React batch (one render).
+        const [onboardRes, wsRes] = await Promise.all([
+          fetch('/api/onboarding', { credentials: 'include' }),
+          fetch('/api/workspaces', { credentials: 'include' }),
+        ]);
+
+        const [onboardData, wsData] = await Promise.all([
+          onboardRes.ok ? onboardRes.json().catch(() => null) : Promise.resolve(null),
+          wsRes.ok     ? wsRes.json().catch(() => null)     : Promise.resolve(null),
+        ]);
+
+        const wsList: WorkspaceItem[] = wsData?.workspaces || [];
+        const savedWsId = localStorage.getItem('mm-selected-workspace');
+
+        // Resolve which workspace to activate — prefer saved, then first, then onboarding default
+        let resolvedOrg: OrgInfo | null = null;
+        if (savedWsId) {
+          const saved = wsList.find(w => w.id === savedWsId);
+          if (saved) {
+            resolvedOrg = { id: saved.id, name: saved.name, slug: saved.slug, description: saved.description || undefined };
+          } else if (wsList.length > 0) {
+            const first = wsList[0];
+            resolvedOrg = { id: first.id, name: first.name, slug: first.slug, description: first.description || undefined };
+            localStorage.setItem('mm-selected-workspace', first.id);
+          }
+        } else if (wsList.length > 0) {
+          const first = wsList[0];
+          resolvedOrg = { id: first.id, name: first.name, slug: first.slug, description: first.description || undefined };
+        } else if (onboardData?.organization) {
+          resolvedOrg = onboardData.organization;
+        }
+
+        // All state updates in one sync block → single React batch → single render
+        if (onboardData?.user) setUserInfo(onboardData.user);
+        if (onboardData?.apiKey) setApiKeyInfo(onboardData.apiKey);
+        if (wsList.length > 0) setWorkspaces(wsList);
+        if (resolvedOrg) setOrganization(resolvedOrg);
+      } catch { /* ignore */ } finally {
+        setOrgResolved(true);
+      }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, user]);
 
   /* ── Ctrl+K ── */
@@ -423,6 +459,32 @@ export default function DashboardPage() {
     ? Math.round(stats.totalTokens / stats.totalMemories)
     : 0;
 
+  /* ── Workspace switching ── */
+  const handleSelectWorkspace = useCallback((ws: WorkspaceItem) => {
+    setOrganization({ id: ws.id, name: ws.name, slug: ws.slug, description: ws.description || undefined });
+    localStorage.setItem('mm-selected-workspace', ws.id);
+    setSelectedBucket(null);
+  }, []);
+
+  /* ── Workspace creation ── */
+  const handleCreateWorkspace = useCallback(async (name: string, description?: string) => {
+    const res = await fetch('/api/workspaces', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to create workspace');
+    }
+    const data = await res.json();
+    const newWs: WorkspaceItem = data.workspace;
+    setWorkspaces(prev => [...prev, newWs]);
+    // Auto-switch to new workspace
+    handleSelectWorkspace(newWs);
+  }, [handleSelectWorkspace]);
+
   /* ── Loading ── */
   if (!isLoaded || !isReady) {
     return (
@@ -439,6 +501,9 @@ export default function DashboardPage() {
       {/* ── Top Header ── */}
       <Topbar
         org={organization}
+        workspaces={workspaces}
+        onSelectWorkspace={handleSelectWorkspace}
+        onCreateWorkspace={handleCreateWorkspace}
         buckets={buckets}
         selectedBucket={selectedBucket}
         onSelectBucket={setSelectedBucket}
@@ -474,6 +539,15 @@ export default function DashboardPage() {
         <div className="mm-error-bar">
           <AlertTriangle size={13} /> {dataError}
           <button onClick={() => refreshData()}>Retry</button>
+        </div>
+      )}
+
+      {/* ══ EMPTY STATE for zero-memory workspaces ══ */}
+      {!dataLoading && stats.totalMemories === 0 && !dataError && (
+        <div className="mm-empty-workspace">
+          <Brain size={36} strokeWidth={1.2} className="mm-empty-icon-svg" />
+          <h3 className="mm-empty-workspace-title">No memories in this workspace</h3>
+          <p className="mm-empty-workspace-desc">Start by connecting your AI agent and sending memories via the MCP server or API.</p>
         </div>
       )}
 
@@ -572,36 +646,50 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mm-chart-insights">
-            <div className="mm-insight-item">
-              <div className="mm-insight-head">
-                <svg className="mm-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                </svg>
-                <span className="mm-insight-title">Memory growing</span>
+            {/* Memory Velocity — unique: rate of memory creation */}
+            <div className="mm-insight-card">
+              <div className="mm-insight-row">
+                <div className="mm-insight-info">
+                  <span className="mm-insight-label">Memory Velocity</span>
+                  <span className="mm-insight-value">{stats.totalMemories > 0 && trendData.length > 0 ? (stats.totalMemories / trendData.length).toFixed(1) : '0'}<small className="mm-insight-unit">/day</small></span>
+                </div>
+                <div className="mm-insight-spark-mini">
+                  <Sparkline data={stats.sparkMemories.length > 2 ? stats.sparkMemories : [0, 1, 0]} width={48} height={18} color="#a78bfa" strokeWidth={1.5} />
+                </div>
               </div>
-              <span className="mm-insight-badge">{memoryDeltaStr} MoM</span>
+              <div className="mm-insight-bar-track">
+                <div className="mm-insight-bar-fill fill-violet" style={{ width: `${Math.min((stats.totalMemories / Math.max(trendData.length, 1)) * 20, 100)}%` }} />
+              </div>
+              <span className="mm-insight-hint">creation rate this period</span>
             </div>
-            <div className="mm-insight-item">
-              <div className="mm-insight-head">
-                <svg className="mm-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
+
+            {/* Peak Window — unique: peak hour range not shown in stat cards */}
+            <div className="mm-insight-card">
+              <div className="mm-insight-row">
+                <div className="mm-insight-info">
+                  <span className="mm-insight-label">Peak Window</span>
+                  <span className="mm-insight-value">{stats.peakHour || '\u2014'}</span>
+                </div>
+                <svg className="mm-insight-ring" width="28" height="28" viewBox="0 0 28 28">
+                  <circle cx="14" cy="14" r="11" fill="none" stroke="var(--mm-bg-3)" strokeWidth="2.5" />
+                  <circle cx="14" cy="14" r="11" fill="none" stroke="var(--mm-violet-3)" strokeWidth="2.5" strokeLinecap="round"
+                    strokeDasharray={`${(parseInt(stats.peakHour || '0') / 24) * 69.1} 69.1`}
+                    style={{ transform: 'rotate(-90deg)', transformOrigin: 'center' }} />
                 </svg>
-                <span className="mm-insight-title">Highest activity time</span>
               </div>
-              <span className="mm-insight-badge">{stats.peakHour || '\u2014'}</span>
+              <span className="mm-insight-hint">highest activity window</span>
             </div>
-            <div className="mm-insight-item">
-              <div className="mm-insight-head">
-                <svg className="mm-insight-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
-                </svg>
-                <span className="mm-insight-title">Compression saved</span>
+
+            {/* Data Freshness — unique: how recent is the latest data */}
+            <div className="mm-insight-card">
+              <div className="mm-insight-row">
+                <div className="mm-insight-info">
+                  <span className="mm-insight-label">Data Freshness</span>
+                  <span className="mm-insight-value">{stats.sparkMemories.length > 0 && stats.sparkMemories[stats.sparkMemories.length - 1] > 0 ? 'Active' : 'Idle'}</span>
+                </div>
+                <span className={`mm-insight-status-dot ${stats.sparkMemories.length > 0 && stats.sparkMemories[stats.sparkMemories.length - 1] > 0 ? 'dot-active' : 'dot-idle'}`} />
               </div>
-              <span className="mm-insight-badge">{compressionRatio}</span>
+              <span className="mm-insight-hint">{stats.range === 'today' ? 'today' : stats.range === '7d' ? 'last 7 days' : stats.range === '30d' ? 'last 30 days' : stats.range} &middot; {stats.activeSessions} session{stats.activeSessions !== 1 ? 's' : ''}</span>
             </div>
           </div>
         </div>
@@ -770,6 +858,7 @@ export default function DashboardPage() {
           <div className="mm-panel-head">
             <h2>Memory Trends</h2>
             <div className="mm-trend-head-right">
+              <span className="mm-trend-range-badge">{timeRange === 'today' ? 'Today' : timeRange === '7d' ? 'Last 7 days' : timeRange === '30d' ? 'Last 30 days' : timeRange === 'quarter' ? 'Quarter' : 'Year'}</span>
               <div className="mm-legend-row">
                 {distribution.slice(0, 4).map((d, i) => (
                   <span key={i} className="mm-legend-item">
@@ -781,27 +870,35 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Trend stats bar */}
+          {/* Trend stats bar — compact grid */}
           <div className="mm-trend-stats-bar">
             <div className="mm-trend-stat">
               <span className="mm-trend-stat-label">Peak</span>
-              <span className="mm-trend-stat-value">{trendStats.peak.toLocaleString()}</span>
+              <div className="mm-trend-stat-main">
+                <span className="mm-trend-stat-value">{trendStats.peak.toLocaleString()}</span>
+              </div>
               <span className="mm-trend-stat-sub">{trendStats.peakLabel}</span>
             </div>
             <div className="mm-trend-stat">
               <span className="mm-trend-stat-label">Average</span>
-              <span className="mm-trend-stat-value">{trendStats.avg.toLocaleString()}</span>
+              <div className="mm-trend-stat-main">
+                <span className="mm-trend-stat-value">{trendStats.avg.toLocaleString()}</span>
+              </div>
               <span className="mm-trend-stat-sub">per period</span>
             </div>
             <div className="mm-trend-stat">
               <span className="mm-trend-stat-label">Total</span>
-              <span className="mm-trend-stat-value">{trendStats.total.toLocaleString()}</span>
+              <div className="mm-trend-stat-main">
+                <span className="mm-trend-stat-value">{trendStats.total.toLocaleString()}</span>
+              </div>
               <span className="mm-trend-stat-sub">memories</span>
             </div>
             <div className="mm-trend-stat">
-              <span className="mm-trend-stat-label">Growth</span>
-              <span className={`mm-trend-stat-value ${trendStats.growth.startsWith('+') ? 'mm-positive' : trendStats.growth.startsWith('-') ? 'mm-negative' : ''}`}>{trendStats.growth}</span>
-              <span className="mm-trend-stat-sub">vs start</span>
+              <span className="mm-trend-stat-label">Density</span>
+              <div className="mm-trend-stat-main">
+                <span className="mm-trend-stat-value">{trendData.length > 0 ? (trendStats.total / trendData.length).toFixed(1) : '0'}</span>
+              </div>
+              <span className="mm-trend-stat-sub">mem/period</span>
             </div>
           </div>
 
@@ -815,17 +912,29 @@ export default function DashboardPage() {
             {(() => {
               const values = trendData.map(d => d.value);
               const max = Math.max(...values, 1);
-              const chartW = 720;
-              const chartH = 160;
-              const padTop = 10;
-              const padBottom = 30;
+              const vbW = 900;
+              const chartW = 820;
+              const chartH = 200;
+              const padTop = 16;
+              const padBottom = 28;
+              const padLeft = 55;
               const plotH = chartH - padTop - padBottom;
 
-              // Y-axis ticks (5 ticks)
-              const yTicks = Array.from({ length: 5 }, (_, i) => Math.round(max - (max / 4) * i));
+              // Smart Y-axis ticks — avoid duplicates for small values
+              const tickCount = 5;
+              const yTicks: string[] = [];
+              for (let i = 0; i < tickCount; i++) {
+                const val = max - (max / (tickCount - 1)) * i;
+                yTicks.push(max <= 5 ? val.toFixed(1) : Math.round(val).toLocaleString());
+              }
+              // Deduplicate: if all ticks are the same, show simpler scale
+              const uniqueTicks = [...new Set(yTicks)];
+              const finalTicks = uniqueTicks.length < 3 && max <= 5
+                ? Array.from({ length: tickCount }, (_, i) => ((max / (tickCount - 1)) * (tickCount - 1 - i)).toFixed(1))
+                : yTicks;
 
               return (
-                <svg viewBox={`0 0 800 ${chartH}`} preserveAspectRatio="none" className="mm-trend-svg">
+                <svg viewBox={`0 0 ${vbW} ${chartH}`} preserveAspectRatio="none" className="mm-trend-svg">
                   <defs>
                     <linearGradient id="mmTrendGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
@@ -840,24 +949,24 @@ export default function DashboardPage() {
                   </defs>
 
                   {/* Horizontal grid lines — subtle dashed */}
-                  {yTicks.map((tick, i) => {
-                    const y = padTop + (i / 4) * plotH;
+                  {finalTicks.map((tick, i) => {
+                    const y = padTop + (i / (finalTicks.length - 1)) * plotH;
                     return (
                       <g key={i}>
-                        <line x1="50" y1={y} x2="780" y2={y} stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="4 6" opacity="0.35" />
-                        <text x="44" y={y + 3.5} textAnchor="end" className="mm-chart-label">{tick}</text>
+                        <line x1={padLeft - 4} y1={y} x2={vbW - 10} y2={y} stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="4 6" opacity="0.3" vectorEffect="non-scaling-stroke" />
+                        <text x={padLeft - 8} y={y + 3.5} textAnchor="end" className="mm-chart-label" style={{ fontSize: 11 }}>{tick}</text>
                       </g>
                     );
                   })}
                   {/* Base line */}
-                  <line x1="50" y1={padTop + plotH} x2="780" y2={padTop + plotH} stroke="var(--mm-border)" strokeWidth="0.6" opacity="0.4" />
+                  <line x1={padLeft - 4} y1={padTop + plotH} x2={vbW - 10} y2={padTop + plotH} stroke="var(--mm-border)" strokeWidth="0.6" opacity="0.35" vectorEffect="non-scaling-stroke" />
 
                   {/* Area fill + line */}
                   {(() => {
                     const linePath = generateSmoothPath(values, chartW, plotH, 0);
                     if (!linePath) return null;
                     return (
-                      <g transform={`translate(60, ${padTop})`}>
+                      <g transform={`translate(${padLeft + 5}, ${padTop})`}>
                         <path d={`${linePath} L ${chartW},${plotH} L 0,${plotH} Z`} fill="url(#mmTrendGrad)" className="mm-trend-area-path" />
                         <path d={linePath} fill="none" stroke="url(#mmTrendLineGrad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mm-trend-line-path" />
                         {/* Data dots */}
@@ -870,10 +979,11 @@ export default function DashboardPage() {
                               key={i}
                               cx={x}
                               cy={y}
-                              r={isHovered ? 5 : 3}
+                              r={isHovered ? 4 : 2.5}
                               fill={isHovered ? '#a78bfa' : '#8b5cf6'}
                               stroke="var(--mm-bg-card)"
-                              strokeWidth={isHovered ? 2.5 : 1.5}
+                              strokeWidth={isHovered ? 2 : 1.2}
+                              vectorEffect="non-scaling-stroke"
                               style={{ transition: 'r 0.15s, fill 0.15s' }}
                             />
                           );
@@ -884,17 +994,17 @@ export default function DashboardPage() {
 
                   {/* Hover vertical line */}
                   {trendHover && values.length > 1 && (() => {
-                    const hx = 60 + (trendHover.idx / (values.length - 1)) * chartW;
+                    const hx = padLeft + 5 + (trendHover.idx / (values.length - 1)) * chartW;
                     return (
-                      <line x1={hx} y1={padTop} x2={hx} y2={padTop + plotH} stroke="#a0a0a0" strokeWidth="1" strokeDasharray="4 3" opacity="0.5" />
+                      <line x1={hx} y1={padTop} x2={hx} y2={padTop + plotH} stroke="#a0a0a0" strokeWidth="1" strokeDasharray="4 3" opacity="0.5" vectorEffect="non-scaling-stroke" />
                     );
                   })()}
 
                   {/* X labels */}
                   {trendData.map((d, i) => {
-                    const x = 60 + (trendData.length > 1 ? (i / (trendData.length - 1)) * chartW : chartW / 2);
+                    const x = padLeft + 5 + (trendData.length > 1 ? (i / (trendData.length - 1)) * chartW : chartW / 2);
                     return (
-                      <text key={i} x={x} y={chartH - 4} className="mm-chart-label" textAnchor="middle">{d.label}</text>
+                      <text key={i} x={x} y={chartH - 4} className="mm-chart-label" textAnchor="middle" style={{ fontSize: 11 }}>{d.label}</text>
                     );
                   })}
                 </svg>
@@ -904,15 +1014,19 @@ export default function DashboardPage() {
             {/* Hover tooltip */}
             {trendHover && trendData[trendHover.idx] && (() => {
               const d = trendData[trendHover.idx];
-              const max = Math.max(...trendData.map(t => t.value), 1);
-              const avg = Math.round(trendData.reduce((s, t) => s + t.value, 0) / trendData.length);
+              const values = trendData.map(t => t.value);
+              const max = Math.max(...values, 1);
+              const avg = Math.round(values.reduce((s, v) => s + v, 0) / values.length);
               const pctOfPeak = max > 0 ? ((d.value / max) * 100).toFixed(0) : '0';
+              const prevIdx = trendHover.idx > 0 ? trendHover.idx - 1 : null;
+              const prevVal = prevIdx !== null ? values[prevIdx] : null;
+              const changePct = prevVal !== null && prevVal > 0 ? (((d.value - prevVal) / prevVal) * 100).toFixed(1) : null;
               return (
                 <div
                   className="mm-chart-tooltip"
                   style={{
                     left: Math.min(Math.max(trendHover.x + 16, 10), (trendRef.current?.offsetWidth || 600) - 220),
-                    top: Math.max(trendHover.y - 90, 10),
+                    top: Math.max(trendHover.y - 110, 10),
                   }}
                 >
                   <div className="mm-tooltip-header">
@@ -933,6 +1047,14 @@ export default function DashboardPage() {
                         {d.value >= avg ? '+' : ''}{d.value - avg}
                       </span>
                     </div>
+                    {changePct !== null && (
+                      <div className="mm-tooltip-row">
+                        <span className="mm-tooltip-label">vs prev period</span>
+                        <span className={`mm-tooltip-val ${parseFloat(changePct) >= 0 ? 'mm-positive' : 'mm-negative'}`}>
+                          {parseFloat(changePct) >= 0 ? '+' : ''}{changePct}%
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -946,7 +1068,7 @@ export default function DashboardPage() {
   /* ══════════ Memories Page ══════════ */
   const renderMemories = () => (
     <div className="mm-dashboard">
-      <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="memories" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+      <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="memories" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Memories</h1>
@@ -997,7 +1119,7 @@ export default function DashboardPage() {
 
   const renderConfig = () => (
     <div className="mm-dashboard">
-      <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="config" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+      <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="config" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Settings</h1>
@@ -1308,7 +1430,7 @@ export default function DashboardPage() {
 
     return (
       <div className="mm-dashboard">
-        <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="graph-memory" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+        <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="graph-memory" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
         <div className="mm-page-header">
           <div className="mm-page-header-left">
             <h1 className="mm-page-title">Graph Memory</h1>
@@ -1460,7 +1582,7 @@ export default function DashboardPage() {
 
   const renderWebhooks = () => (
     <div className="mm-dashboard">
-      <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="webhooks" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+      <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="webhooks" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Webhooks</h1>
@@ -1614,7 +1736,7 @@ export default function DashboardPage() {
   /* ══════════ Usage & Billing ══════════ */
   const renderUsage = () => (
     <div className="mm-dashboard">
-      <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="usage" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+      <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="usage" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Usage & Billing</h1>
@@ -1707,7 +1829,7 @@ export default function DashboardPage() {
 
   const renderNotifications = () => (
     <div className="mm-dashboard">
-      <Topbar org={organization} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="notifications" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+      <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="notifications" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Notifications</h1>
@@ -1818,7 +1940,18 @@ export default function DashboardPage() {
       />
       <main className="mm-main">{renderContent()}</main>
 
-      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+      <CommandPalette
+        open={cmdOpen}
+        onClose={() => setCmdOpen(false)}
+        onNavigate={setActive}
+        onRefresh={() => refreshData()}
+        onCreateBucket={() => setCreateBucketOpen(true)}
+        onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+        onSignOut={doSignOut}
+        memories={memories.slice(0, 20).map(m => ({ id: m.id, title: m.title, bucket: m.bucket }))}
+        buckets={buckets}
+        stats={stats}
+      />
       <ShareBucketModal open={shareOpen} onClose={() => setShareOpen(false)} buckets={buckets} onShareComplete={refreshData} />
       <CreateBucketModal open={createBucketOpen} onClose={() => setCreateBucketOpen(false)} onCreated={refreshData} />
     </div>

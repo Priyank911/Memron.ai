@@ -4,13 +4,24 @@ import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import {
   Building2, ChevronDown, Copy, FolderOpen, Search, Check,
-  RefreshCw, Settings, ExternalLink,
+  RefreshCw, Settings, ExternalLink, Plus, Loader2,
 } from 'lucide-react';
 import { NotificationBell } from './notification-bell';
 import type { OrgInfo } from './types';
 
+export interface WorkspaceItem {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  isOwner: boolean;
+}
+
 interface TopbarProps {
   org: OrgInfo | null;
+  workspaces: WorkspaceItem[];
+  onSelectWorkspace: (ws: WorkspaceItem) => void;
+  onCreateWorkspace: (name: string, description?: string) => Promise<void>;
   buckets: { id: string; name: string; slug: string; memoryCount: number }[];
   selectedBucket: string | null;
   onSelectBucket: (slug: string | null) => void;
@@ -24,7 +35,8 @@ interface TopbarProps {
 }
 
 export function Topbar({
-  org, buckets, selectedBucket, onSelectBucket,
+  org, workspaces, onSelectWorkspace, onCreateWorkspace,
+  buckets, selectedBucket, onSelectBucket,
   onCreateBucket, activePage, onSearch, onRefresh, onSettings,
   isLoading, notificationsEnabled,
 }: TopbarProps) {
@@ -33,13 +45,16 @@ export function Topbar({
   const [orgSearch, setOrgSearch] = useState('');
   const [projSearch, setProjSearch] = useState('');
   const [copied, setCopied] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newWsName, setNewWsName] = useState('');
+  const [createError, setCreateError] = useState('');
   const orgRef = useRef<HTMLDivElement>(null);
   const projRef = useRef<HTMLDivElement>(null);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (orgRef.current && !orgRef.current.contains(e.target as Node)) setOrgOpen(false);
+      if (orgRef.current && !orgRef.current.contains(e.target as Node)) { setOrgOpen(false); setCreating(false); }
       if (projRef.current && !projRef.current.contains(e.target as Node)) setProjOpen(false);
     };
     document.addEventListener('mousedown', handler);
@@ -47,12 +62,31 @@ export function Topbar({
   }, []);
 
   const orgName = org?.name || 'Memron Workspace';
-  const orgSlug = org?.slug || 'default';
 
   const handleCopyOrgId = () => {
     navigator.clipboard.writeText(org?.id || '');
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const filteredWorkspaces = orgSearch
+    ? workspaces.filter(w => w.name.toLowerCase().includes(orgSearch.toLowerCase()))
+    : workspaces;
+
+  const handleCreateWorkspace = async () => {
+    if (!newWsName.trim() || newWsName.trim().length < 2) {
+      setCreateError('Name must be at least 2 characters');
+      return;
+    }
+    setCreateError('');
+    try {
+      await onCreateWorkspace(newWsName.trim());
+      setNewWsName('');
+      setCreating(false);
+      setOrgOpen(false);
+    } catch (e: any) {
+      setCreateError(e.message || 'Failed to create workspace');
+    }
   };
 
   const selectedBucketName = selectedBucket
@@ -86,31 +120,64 @@ export function Topbar({
           {/* Org dropdown */}
           {orgOpen && (
             <div className="mm-dropdown mm-org-dropdown">
-              <div className="mm-dropdown-search">
-                <Search size={13} />
-                <input
-                  type="text"
-                  placeholder="Search for organization"
-                  value={orgSearch}
-                  onChange={e => setOrgSearch(e.target.value)}
-                  autoFocus
-                />
-                <button className="mm-dropdown-create" onClick={() => { setOrgOpen(false); }}>
-                  Create New
-                </button>
-              </div>
-              <div className="mm-dropdown-list">
-                <button className="mm-dropdown-item selected" onClick={() => setOrgOpen(false)}>
-                  <div className="mm-dropdown-item-icon">
-                    <Building2 size={14} />
+              {!creating ? (
+                <>
+                  <div className="mm-dropdown-search">
+                    <Search size={13} />
+                    <input
+                      type="text"
+                      placeholder="Search workspaces..."
+                      value={orgSearch}
+                      onChange={e => setOrgSearch(e.target.value)}
+                      autoFocus
+                    />
+                    <button className="mm-dropdown-create" onClick={() => { setCreating(true); setOrgSearch(''); }}>
+                      <Plus size={12} /> New
+                    </button>
                   </div>
-                  <div className="mm-dropdown-item-info">
-                    <span className="mm-dropdown-item-name">{orgName}</span>
-                    <span className="mm-dropdown-item-sub">Free Plan</span>
+                  <div className="mm-dropdown-list">
+                    {filteredWorkspaces.map(ws => (
+                      <button
+                        key={ws.id}
+                        className={`mm-dropdown-item${org?.id === ws.id ? ' selected' : ''}`}
+                        onClick={() => { onSelectWorkspace(ws); setOrgOpen(false); }}
+                      >
+                        <div className="mm-dropdown-item-icon">
+                          <Building2 size={14} />
+                        </div>
+                        <div className="mm-dropdown-item-info">
+                          <span className="mm-dropdown-item-name">{ws.name}</span>
+                          <span className="mm-dropdown-item-sub">{ws.isOwner ? 'Owner' : 'Member'}</span>
+                        </div>
+                        {org?.id === ws.id && <Check size={14} className="mm-dropdown-check" />}
+                      </button>
+                    ))}
+                    {filteredWorkspaces.length === 0 && (
+                      <div className="mm-dropdown-empty">No workspaces found</div>
+                    )}
                   </div>
-                  <Check size={14} className="mm-dropdown-check" />
-                </button>
-              </div>
+                </>
+              ) : (
+                <div className="mm-dropdown-create-form">
+                  <span className="mm-dropdown-create-title">Create Workspace</span>
+                  <input
+                    className="mm-dropdown-create-input"
+                    placeholder="Workspace name"
+                    value={newWsName}
+                    onChange={e => setNewWsName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleCreateWorkspace(); if (e.key === 'Escape') setCreating(false); }}
+                    autoFocus
+                    maxLength={100}
+                  />
+                  {createError && <span className="mm-dropdown-create-error">{createError}</span>}
+                  <div className="mm-dropdown-create-actions">
+                    <button className="mm-dropdown-create-cancel" onClick={() => { setCreating(false); setNewWsName(''); setCreateError(''); }}>Cancel</button>
+                    <button className="mm-dropdown-create-submit" onClick={handleCreateWorkspace} disabled={!newWsName.trim()}>
+                      Create
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

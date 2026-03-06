@@ -283,6 +283,7 @@ export async function syncOrgToSupabase(data: {
   name: string;
   slug: string;
   ownerClerkId: string;
+  orgUuid?: string | null;
   logoUrl?: string | null;
   description?: string | null;
 }): Promise<{ success: boolean; orgId?: number; error?: string }> {
@@ -301,18 +302,33 @@ export async function syncOrgToSupabase(data: {
       return { success: false, error: 'User not found in Supabase — sync user first' };
     }
 
-    const result = await exec(
-      `INSERT INTO organizations (name, slug, owner_id, logo_url, description)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (slug) DO UPDATE SET
-         name        = EXCLUDED.name,
-         owner_id    = EXCLUDED.owner_id,
-         logo_url    = EXCLUDED.logo_url,
-         description = EXCLUDED.description,
-         updated_at  = NOW()
-       RETURNING id`,
-      [data.name, data.slug, ownerId, data.logoUrl || null, data.description || null],
-    );
+    // If an explicit Aiven org_id UUID is provided, use it instead of auto-generating
+    const result = data.orgUuid
+      ? await exec(
+          `INSERT INTO organizations (org_id, name, slug, owner_id, logo_url, description)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (slug) DO UPDATE SET
+             org_id      = EXCLUDED.org_id,
+             name        = EXCLUDED.name,
+             owner_id    = EXCLUDED.owner_id,
+             logo_url    = EXCLUDED.logo_url,
+             description = EXCLUDED.description,
+             updated_at  = NOW()
+           RETURNING id`,
+          [data.orgUuid, data.name, data.slug, ownerId, data.logoUrl || null, data.description || null],
+        )
+      : await exec(
+          `INSERT INTO organizations (name, slug, owner_id, logo_url, description)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (slug) DO UPDATE SET
+             name        = EXCLUDED.name,
+             owner_id    = EXCLUDED.owner_id,
+             logo_url    = EXCLUDED.logo_url,
+             description = EXCLUDED.description,
+             updated_at  = NOW()
+           RETURNING id`,
+          [data.name, data.slug, ownerId, data.logoUrl || null, data.description || null],
+        );
 
     const orgId = result?.rows[0]?.id;
 
@@ -553,6 +569,7 @@ export async function fullOnboardingSyncToSupabase(data: {
   provider?: string;
   orgName: string;
   orgSlug: string;
+  orgUuid?: string | null;
   orgDescription?: string | null;
   apiKeyPrefix: string;
   apiKeyHash: string;
@@ -582,6 +599,7 @@ export async function fullOnboardingSyncToSupabase(data: {
       name: data.orgName,
       slug: data.orgSlug,
       ownerClerkId: data.clerkId,
+      orgUuid: data.orgUuid,
       description: data.orgDescription,
     });
 
@@ -599,8 +617,6 @@ export async function fullOnboardingSyncToSupabase(data: {
 
     // 5. Mark onboarded
     await markUserOnboardedSupabase(data.clerkId);
-
-    console.log(`[SupaSync] ✅ Full onboarding sync complete for ${data.clerkId}`);
   } catch (err) {
     logFail('fullOnboardingSync', err);
   }
