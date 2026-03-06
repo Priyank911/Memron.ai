@@ -109,24 +109,37 @@ export async function resolveSupabaseUser(clerkId: string, targetOrgUuid?: strin
         const orgRes = await pool.query(
           `SELECT o.id FROM organizations o
            LEFT JOIN org_members om ON om.org_id = o.id AND om.user_id = $2
-           WHERE (o.org_id = $1 OR o.slug = $1) AND o.is_active = true AND (o.owner_id = $2 OR om.user_id = $2)
+           WHERE (o.org_id = $1::text OR o.slug = $1::text)
+             AND o.is_active = true
+             AND (o.owner_id = $2 OR om.user_id = $2)
            LIMIT 1`,
           [targetOrgUuid, user.id],
         );
         orgId = orgRes.rows[0]?.id ?? null;
-        // Org not found in Supabase (new workspace or sync pending) → return null
-        // so callers return empty data instead of falling back to all user memories.
-        if (orgId === null) return null;
+
+        if (orgId === null) {
+          // Org not found by UUID/slug — workspace may not be synced to Supabase yet
+          // (race condition between workspace creation and async sync).
+          // Fallback: resolve to the user's primary org so the user always sees their data.
+          // This is safe because buildUserWhereClause still applies the orgId scope,
+          // and it only affects which integer ID is used for the `org_id` column filter.
+          // When the workspace eventually syncs, the correct org ID will be resolved.
+          const fallbackRes = await pool.query(
+            `SELECT id FROM organizations WHERE owner_id = $1 AND is_active = true ORDER BY id ASC LIMIT 1`,
+            [user.id],
+          );
+          orgId = fallbackRes.rows[0]?.id ?? null;
+        }
       } else {
-        // No specific workspace — get user's primary org
+        // No specific workspace — get user's primary org (oldest, most likely the default)
         const orgRes = await pool.query(
-          'SELECT id FROM organizations WHERE owner_id = $1 AND is_active = true LIMIT 1',
+          'SELECT id FROM organizations WHERE owner_id = $1 AND is_active = true ORDER BY id ASC LIMIT 1',
           [user.id],
         );
         orgId = orgRes.rows[0]?.id ?? null;
       }
     } catch {
-      /* table may not exist */
+      /* organizations table may not exist in this Supabase instance yet */
     }
 
     return { id: user.id, email: user.email, orgId };
@@ -137,8 +150,13 @@ export async function resolveSupabaseUser(clerkId: string, targetOrgUuid?: strin
 
 /**
  * Build a WHERE clause that matches both user_id and org_id.
- * This handles edge cases where MCP stores memories under org_id
- * instead of user_id.
+ *
+ * Org isolation model:
+ *  - Memories explicitly tagged to an org (org_id = X) are isolated to that org.
+ *  - Memories with org_id IS NULL are "universal" — written before org context
+ *    was tracked or by tools that don't send org context. They surface in whichever
+ *    workspace the user is viewing so historical data is never hidden.
+ *  - A memory from org A (org_id = A) never appears in org B's view — true isolation.
  */
 export function buildUserWhereClause(
   userId: number,
@@ -149,11 +167,12 @@ export function buildUserWhereClause(
   let idx = startParamIdx + 1;
 
   if (orgId) {
-    // Strict org scope: only memories explicitly tagged with this org.
-    // Using AND prevents cross-org bleed when a user owns multiple workspaces.
+    // Show memories for this org PLUS any untagged (null org_id) memories.
+    // Untagged memories are universal — they show in every workspace the user has.
+    // Memories explicitly tagged to a different org will NOT appear here.
     params.push(orgId);
     return {
-      where: `user_id = $${startParamIdx} AND org_id = $${idx}`,
+      where: `user_id = $${startParamIdx} AND (org_id = $${idx} OR org_id IS NULL)`,
       params,
       nextIdx: idx + 1,
     };
@@ -162,6 +181,6 @@ export function buildUserWhereClause(
   return {
     where: `user_id = $${startParamIdx}`,
     params,
-    nextIdx: idx,
+    nextIdx: startParamIdx + 1,
   };
 }

@@ -43,7 +43,7 @@ const EMPTY_STATS = {
   totalMemories: 0, totalTokens: 0, originalTokens: 0,
   activeSessions: 0, buckets: [], sparkMemories: [], dailyChart: [],
   hourlyChart: [], heatmapData: [], peakHour: '—',
-  memoryDelta: 0, previousMemories: 0, range: '30d',
+  memoryDelta: 0, previousMemories: 0, range: '30d', mcpFetchChart: [],
 };
 
 async function fetchStats(clerkId: string, range: string, targetOrgId: string | null = null) {
@@ -59,7 +59,7 @@ async function fetchStats(clerkId: string, range: string, targetOrgId: string | 
   const { where: whereUser, params } = buildUserWhereClause(uid, orgId);
 
   // Run independent queries in parallel for speed
-  const [memoriesRes, tokensRes, prevRes, bucketsRes, dailyRes, sessionsRes, hourlyRes, heatmapRes] =
+  const [memoriesRes, tokensRes, prevRes, bucketsRes, dailyRes, sessionsRes, hourlyRes, heatmapRes, tokenChartRes] =
     await Promise.allSettled([
       supaQuery(`SELECT COUNT(*) as total FROM memories WHERE (${whereUser}) AND is_active = true`, params),
       supaQuery(`SELECT COALESCE(SUM(token_count), 0) as total_tokens, COALESCE(SUM(original_tokens), 0) as original_tokens FROM memories WHERE (${whereUser}) AND is_active = true`, params),
@@ -69,6 +69,7 @@ async function fetchStats(clerkId: string, range: string, targetOrgId: string | 
       supaQuery(`SELECT COUNT(DISTINCT client_id) as count FROM mcp_refresh_tokens WHERE user_id = $1 AND revoked = false AND expires_at > NOW()`, [uid]),
       supaQuery(`SELECT EXTRACT(HOUR FROM created_at)::int as hour, COUNT(*) as count FROM memories WHERE (${whereUser}) AND is_active = true AND created_at > NOW() - INTERVAL '${interval}' GROUP BY hour ORDER BY hour ASC`, params),
       supaQuery(`SELECT DATE(created_at) as day, COUNT(*) as count FROM memories WHERE (${whereUser}) AND is_active = true AND created_at > NOW() - INTERVAL '150 days' GROUP BY DATE(created_at) ORDER BY day ASC`, params),
+      supaQuery(`SELECT DATE(created_at) as day, COALESCE(SUM(token_count), 0)::bigint as count FROM memories WHERE (${whereUser}) AND is_active = true AND created_at > NOW() - INTERVAL '${interval}' GROUP BY DATE(created_at) ORDER BY day ASC`, params),
     ]);
 
   // Extract results safely
@@ -162,9 +163,27 @@ async function fetchStats(clerkId: string, range: string, targetOrgId: string | 
     ? parseFloat(((totalMemories - previousMemories) / previousMemories * 100).toFixed(1))
     : totalMemories > 0 ? 100 : 0;
 
+  // MCP Fetch chart — daily token sums as proxy for fetch/read query volume
+  const tokenDailyRows = tokenChartRes.status === 'fulfilled' ? tokenChartRes.value.rows : [];
+  const mcpFetchChart = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dayStr = date.toISOString().split('T')[0];
+    const label = days <= 7
+      ? date.toLocaleDateString('en-US', { weekday: 'short' })
+      : days <= 30
+        ? `${date.getMonth() + 1}/${date.getDate()}`
+        : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const match = tokenDailyRows.find(
+      (r: any) => r.day?.toISOString?.().split('T')[0] === dayStr || String(r.day).startsWith(dayStr),
+    );
+    mcpFetchChart.push({ label, value: match ? parseInt(match.count, 10) : 0 });
+  }
+
   return {
     totalMemories, totalTokens, originalTokens, activeSessions,
     buckets, sparkMemories, dailyChart, hourlyChart, heatmapData,
-    peakHour, memoryDelta, previousMemories, range,
+    peakHour, memoryDelta, previousMemories, range, mcpFetchChart,
   };
 }

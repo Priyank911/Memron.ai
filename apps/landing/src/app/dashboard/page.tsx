@@ -286,19 +286,97 @@ export default function DashboardPage() {
     router.push('/');
   }, [signOut, router]);
 
-  /* ── Area chart data (24 hours from API) ── */
+  /* ── Area chart data — adapts to current time range ──
+   * Returns up to 24 points regardless of the raw data size so the SVG
+   * chart (which scales linearly) renders cleanly for every interval.
+   * Today → 24 hourly points.
+   * 7d/30d → 7 or 30 daily points (always ≤ 30, fine for the SVG).
+   * Quarter → 90 daily points aggregated into ~13 weekly buckets.
+   * Year → 365 daily points aggregated into 12 monthly buckets.
+   */
   const areaChartData = useMemo(() => {
-    if (stats.hourlyChart && stats.hourlyChart.length === 24) {
-      return stats.hourlyChart;
+    if (timeRange === 'today') {
+      if (stats.hourlyChart && stats.hourlyChart.length === 24) return stats.hourlyChart;
+      return Array.from({ length: 24 }, (_, h) => ({
+        label: `${String(h).padStart(2, '0')}:00`,
+        value: 0,
+      }));
     }
-    // Fallback: evenly spread dailyChart values across 24 hours
-    const hours = [];
-    for (let i = 0; i < 24; i++)  {
-      const val = stats.dailyChart[i % stats.dailyChart.length]?.value ?? 0;
-      hours.push({ label: `${String(i).padStart(2, '0')}:00`, value: val });
+
+    const daily = stats.dailyChart;
+    if (!daily || daily.length === 0) return [];
+
+    if (timeRange === '7d' || timeRange === '30d') {
+      // ≤30 points — return as-is; the SVG handles this well
+      return daily;
     }
-    return hours;
-  }, [stats.hourlyChart, stats.dailyChart]);
+
+    if (timeRange === 'quarter') {
+      // Aggregate 90 daily points into weekly buckets (13 weeks)
+      const weeks: { label: string; value: number }[] = [];
+      for (let i = 0; i < daily.length; i += 7) {
+        const slice = daily.slice(i, i + 7);
+        const total = slice.reduce((s, d) => s + d.value, 0);
+        weeks.push({ label: slice[0]?.label ?? `W${weeks.length + 1}`, value: total });
+      }
+      return weeks;
+    }
+
+    if (timeRange === 'year') {
+      // Aggregate 365 daily points into monthly buckets using label prefix (e.g. "Mar")
+      const monthMap = new Map<string, number>();
+      const monthOrder: string[] = [];
+      for (const d of daily) {
+        // Labels for year range look like "Mar 15" → extract "Mar"
+        const month = d.label.split(' ')[0];
+        if (!monthMap.has(month)) { monthMap.set(month, 0); monthOrder.push(month); }
+        monthMap.set(month, (monthMap.get(month) ?? 0) + d.value);
+      }
+      return monthOrder.map(m => ({ label: m, value: monthMap.get(m) ?? 0 }));
+    }
+
+    return daily;
+  }, [stats.hourlyChart, stats.dailyChart, timeRange]);
+
+  /* ── Fetch series data for Memory Trends — daily token sums aggregated to same bins as areaChartData ── */
+  const fetchSeriesData = useMemo(() => {
+    const daily = stats.mcpFetchChart;
+    if (!daily || daily.length === 0) {
+      // Return zero-filled array matching areaChartData shape so chart aligns
+      return areaChartData.map(d => ({ label: d.label, value: 0 }));
+    }
+
+    if (timeRange === 'today') {
+      // mcpFetchChart is daily; spread today's total evenly across areaChartData (hourly) bins
+      const todayTotal = daily.reduce((s, d) => s + d.value, 0);
+      return areaChartData.map(d => ({ label: d.label, value: Math.round(todayTotal / 24) }));
+    }
+
+    if (timeRange === '7d' || timeRange === '30d') return daily;
+
+    if (timeRange === 'quarter') {
+      const weeks: { label: string; value: number }[] = [];
+      for (let i = 0; i < daily.length; i += 7) {
+        const slice = daily.slice(i, i + 7);
+        const total = slice.reduce((s, d) => s + d.value, 0);
+        weeks.push({ label: slice[0]?.label ?? `W${weeks.length + 1}`, value: total });
+      }
+      return weeks;
+    }
+
+    if (timeRange === 'year') {
+      const monthMap = new Map<string, number>();
+      const monthOrder: string[] = [];
+      for (const d of daily) {
+        const month = d.label.split(' ')[0];
+        if (!monthMap.has(month)) { monthMap.set(month, 0); monthOrder.push(month); }
+        monthMap.set(month, (monthMap.get(month) ?? 0) + d.value);
+      }
+      return monthOrder.map(m => ({ label: m, value: monthMap.get(m) ?? 0 }));
+    }
+
+    return daily;
+  }, [stats.mcpFetchChart, timeRange, areaChartData]);
 
   /* Generate smooth SVG path using cubic bezier */
   const generateSmoothPath = useCallback((data: number[], width: number, height: number, padding = 5) => {
@@ -397,17 +475,17 @@ export default function DashboardPage() {
   /* ── Trend hover handler ── */
   const handleTrendMouse = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const wrap = trendRef.current;
-    if (!wrap || trendData.length === 0) return;
+    if (!wrap || areaChartData.length === 0) return;
     const rect = wrap.getBoundingClientRect();
     const padLeft = 50;
     const padRight = 20;
     const chartWidth = rect.width - padLeft - padRight;
     const xPos = e.clientX - rect.left - padLeft;
     const xRatio = xPos / chartWidth;
-    const idx = Math.round(xRatio * (trendData.length - 1));
-    const clampedIdx = Math.max(0, Math.min(idx, trendData.length - 1));
+    const idx = Math.round(xRatio * (areaChartData.length - 1));
+    const clampedIdx = Math.max(0, Math.min(idx, areaChartData.length - 1));
     setTrendHover({ idx: clampedIdx, x: e.clientX - rect.left, y: e.clientY - rect.top });
-  }, [trendData]);
+  }, [areaChartData]);
 
   /* ── Trend stats ── */
   const trendStats = useMemo(() => {
@@ -543,7 +621,7 @@ export default function DashboardPage() {
       )}
 
       {/* ══ EMPTY STATE for zero-memory workspaces ══ */}
-      {!dataLoading && stats.totalMemories === 0 && !dataError && (
+      {!dataLoading && stats.totalMemories === 0 && memories.length === 0 && !dataError && (
         <div className="mm-empty-workspace">
           <Brain size={36} strokeWidth={1.2} className="mm-empty-icon-svg" />
           <h3 className="mm-empty-workspace-title">No memories in this workspace</h3>
@@ -579,10 +657,18 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#a78bfa" />
                   </linearGradient>
                 </defs>
-                {/* Vertical grid lines */}
-                {[0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22].map((h, i) => (
-                  <line key={i} x1={(h / 23) * 800} y1="0" x2={(h / 23) * 800} y2="170" stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="3 6" opacity="0.35" />
-                ))}
+                {/* Vertical grid lines — position relative to actual data length */}
+                {(() => {
+                  const n = Math.max(areaChartData.length - 1, 1);
+                  // Always draw 12 evenly-spaced grid lines regardless of point count
+                  return Array.from({ length: 12 }, (_, i) => {
+                    const ratio = i / 11;
+                    return (
+                      <line key={i} x1={ratio * 800} y1="0" x2={ratio * 800} y2="170"
+                        stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="3 6" opacity="0.35" />
+                    );
+                  });
+                })()}
                 {/* Base line */}
                 <line x1="0" y1="170" x2="800" y2="170" stroke="var(--mm-border)" strokeWidth="0.6" opacity="0.4" />
                 {(() => {
@@ -598,20 +684,38 @@ export default function DashboardPage() {
                   );
                 })()}
                 {/* Hover vertical dashed line */}
-                {chartHover && (() => {
+                {chartHover && areaChartData.length > 1 && (() => {
                   const hx = (chartHover.idx / (areaChartData.length - 1)) * 800;
                   return (
                     <line x1={hx} y1="0" x2={hx} y2="170" stroke="#a0a0a0" strokeWidth="1" strokeDasharray="4 3" opacity="0.7" />
                   );
                 })()}
-                {/* X-axis labels */}
-                {areaChartData.filter((_, i) => i % 2 === 0).map((d, idx) => (
-                  <text key={idx} x={((idx * 2) / 23) * 800} y="190" className="mm-chart-label">{d.label}</text>
-                ))}
+                {/* X-axis labels — show up to 12 evenly-spaced labels for any data length */}
+                {(() => {
+                  const n = areaChartData.length;
+                  if (n === 0) return null;
+                  // Pick at most 12 labels evenly spread across the data
+                  const maxLabels = Math.min(12, n);
+                  const step = n <= maxLabels ? 1 : Math.floor(n / maxLabels);
+                  return areaChartData
+                    .filter((_, i) => i % step === 0 || i === n - 1)
+                    .slice(0, maxLabels)
+                    .map((d, displayIdx, arr) => {
+                      const realIdx = areaChartData.findIndex(x => x === d);
+                      return (
+                        <text key={displayIdx}
+                          x={(realIdx / Math.max(n - 1, 1)) * 800}
+                          y="190" className="mm-chart-label">
+                          {d.label}
+                        </text>
+                      );
+                    });
+                })()}
               </svg>
               {/* Hover Tooltip */}
               {chartHover && (() => {
                 const d = areaChartData[chartHover.idx];
+                if (!d) return null;
                 const totalMem = areaChartData.reduce((s, v) => s + v.value, 0);
                 const rate = totalMem > 0 ? ((d.value / totalMem) * 100).toFixed(1) : '0';
                 const tokVal = stats.totalTokens > 0 ? Math.round((d.value / (stats.totalMemories || 1)) * stats.totalTokens) : 0;
@@ -853,56 +957,70 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* ── Memory Trends — Full Width ── */}
+        {/* ── MCP Insights — Full Width ── */}
         <div className="mm-panel mm-trend-panel mm-trend-full">
           <div className="mm-panel-head">
-            <h2>Memory Trends</h2>
+            <h2>MCP Insights</h2>
             <div className="mm-trend-head-right">
               <span className="mm-trend-range-badge">{timeRange === 'today' ? 'Today' : timeRange === '7d' ? 'Last 7 days' : timeRange === '30d' ? 'Last 30 days' : timeRange === 'quarter' ? 'Quarter' : 'Year'}</span>
               <div className="mm-legend-row">
-                {distribution.slice(0, 4).map((d, i) => (
-                  <span key={i} className="mm-legend-item">
-                    <span className="mm-legend-dot" style={{ background: d.color }} />
-                    {d.label}
-                  </span>
-                ))}
+                <span className="mm-legend-item"><span className="mm-legend-dot" style={{ background: '#f97316' }} />Write Ops</span>
+                <span className="mm-legend-item"><span className="mm-legend-dot" style={{ background: '#a78bfa' }} />Token Density</span>
+                <span className="mm-legend-item"><span className="mm-legend-dot" style={{ background: '#22d3ee' }} />Growth Trend</span>
               </div>
             </div>
           </div>
 
-          {/* Trend stats bar — compact grid */}
-          <div className="mm-trend-stats-bar">
-            <div className="mm-trend-stat">
-              <span className="mm-trend-stat-label">Peak</span>
-              <div className="mm-trend-stat-main">
-                <span className="mm-trend-stat-value">{trendStats.peak.toLocaleString()}</span>
+          {/* 4-card insight stats bar */}
+          {(() => {
+            const storeVals = areaChartData.map(d => d.value);
+            const tokenVals = fetchSeriesData.map(d => d.value);
+            const storeTotal = storeVals.reduce((s, v) => s + v, 0);
+            const tokenTotal = tokenVals.reduce((s, v) => s + v, 0);
+            const storePeak = Math.max(...storeVals, 0);
+            const storePeakIdx = storeVals.indexOf(storePeak);
+            const storePeakLabel = areaChartData[storePeakIdx]?.label ?? '—';
+            const avgDensity = storeTotal > 0 ? Math.round(tokenTotal / storeTotal) : 0;
+            const half = Math.max(1, Math.floor(storeVals.length / 2));
+            const firstHalf = storeVals.slice(0, half).reduce((s, v) => s + v, 0);
+            const secondHalf = storeVals.slice(half).reduce((s, v) => s + v, 0);
+            const growthPct = firstHalf > 0 ? (((secondHalf - firstHalf) / firstHalf) * 100).toFixed(0) : storeTotal > 0 ? '100' : '0';
+            const growthPos = parseFloat(growthPct) >= 0;
+            return (
+              <div className="mm-trend-stats-bar">
+                <div className="mm-trend-stat">
+                  <span className="mm-trend-stat-label">Write Ops</span>
+                  <div className="mm-trend-stat-main">
+                    <span className="mm-trend-stat-value" style={{ color: '#f97316' }}>{storeTotal.toLocaleString()}</span>
+                  </div>
+                  <span className="mm-trend-stat-sub">total stores</span>
+                </div>
+                <div className="mm-trend-stat">
+                  <span className="mm-trend-stat-label">Peak Write</span>
+                  <div className="mm-trend-stat-main">
+                    <span className="mm-trend-stat-value">{storePeak.toLocaleString()}</span>
+                  </div>
+                  <span className="mm-trend-stat-sub">{storePeakLabel}</span>
+                </div>
+                <div className="mm-trend-stat">
+                  <span className="mm-trend-stat-label">Avg Density</span>
+                  <div className="mm-trend-stat-main">
+                    <span className="mm-trend-stat-value" style={{ color: '#a78bfa' }}>{avgDensity.toLocaleString()}</span>
+                  </div>
+                  <span className="mm-trend-stat-sub">tokens / write</span>
+                </div>
+                <div className="mm-trend-stat">
+                  <span className="mm-trend-stat-label">Period Growth</span>
+                  <div className="mm-trend-stat-main">
+                    <span className="mm-trend-stat-value" style={{ color: growthPos ? '#22d3ee' : '#f87171' }}>{growthPos ? '+' : ''}{growthPct}%</span>
+                  </div>
+                  <span className="mm-trend-stat-sub">vs prior half</span>
+                </div>
               </div>
-              <span className="mm-trend-stat-sub">{trendStats.peakLabel}</span>
-            </div>
-            <div className="mm-trend-stat">
-              <span className="mm-trend-stat-label">Average</span>
-              <div className="mm-trend-stat-main">
-                <span className="mm-trend-stat-value">{trendStats.avg.toLocaleString()}</span>
-              </div>
-              <span className="mm-trend-stat-sub">per period</span>
-            </div>
-            <div className="mm-trend-stat">
-              <span className="mm-trend-stat-label">Total</span>
-              <div className="mm-trend-stat-main">
-                <span className="mm-trend-stat-value">{trendStats.total.toLocaleString()}</span>
-              </div>
-              <span className="mm-trend-stat-sub">memories</span>
-            </div>
-            <div className="mm-trend-stat">
-              <span className="mm-trend-stat-label">Density</span>
-              <div className="mm-trend-stat-main">
-                <span className="mm-trend-stat-value">{trendData.length > 0 ? (trendStats.total / trendData.length).toFixed(1) : '0'}</span>
-              </div>
-              <span className="mm-trend-stat-sub">mem/period</span>
-            </div>
-          </div>
+            );
+          })()}
 
-          {/* Chart with hover */}
+          {/* 3-series line chart */}
           <div
             ref={trendRef}
             className="mm-trend-chart-wrap"
@@ -910,151 +1028,181 @@ export default function DashboardPage() {
             onMouseLeave={() => setTrendHover(null)}
           >
             {(() => {
-              const values = trendData.map(d => d.value);
-              const max = Math.max(...values, 1);
-              const vbW = 900;
-              const chartW = 820;
-              const chartH = 200;
-              const padTop = 16;
-              const padBottom = 28;
-              const padLeft = 55;
+              const storeValues = areaChartData.map(d => d.value);
+              const n = storeValues.length;
+              const rawTokens = fetchSeriesData.slice(0, n).map(d => d.value);
+              while (rawTokens.length < n) rawTokens.push(0);
+
+              const storeMax = Math.max(...storeValues, 1);
+
+              // Token density per period (tokens/write), scaled to storeMax for overlay
+              const densityRaw = storeValues.map((s, i) => s > 0 ? rawTokens[i] / s : 0);
+              const densityMax = Math.max(...densityRaw, 1);
+              const densityScaled = densityRaw.map(v => (v / densityMax) * storeMax * 0.9);
+
+              // Cumulative growth, scaled to 75% of storeMax
+              let cum = 0;
+              const cumArr = storeValues.map(v => { cum += v; return cum; });
+              const cumMax = Math.max(...cumArr, 1);
+              const cumScaled = cumArr.map(v => (v / cumMax) * storeMax * 0.75);
+
+              const vbW = 940;
+              const chartW = 860;
+              const chartH = 220;
+              const padTop = 20;
+              const padBottom = 34;
+              const padLeft = 52;
               const plotH = chartH - padTop - padBottom;
 
-              // Smart Y-axis ticks — avoid duplicates for small values
+              const buildCurve = (vals: number[], max: number) => {
+                const pts = vals.map((v, i) => ({
+                  x: n > 1 ? (i / (n - 1)) * chartW : chartW / 2,
+                  y: plotH - Math.min(v / max, 1) * plotH,
+                }));
+                if (pts.length < 2) return { path: '', pts };
+                let p = `M ${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
+                for (let i = 0; i < pts.length - 1; i++) {
+                  const cp1x = pts[i].x + (pts[i + 1].x - pts[i].x) / 3;
+                  const cp2x = pts[i + 1].x - (pts[i + 1].x - pts[i].x) / 3;
+                  p += ` C ${cp1x.toFixed(2)},${pts[i].y.toFixed(2)} ${cp2x.toFixed(2)},${pts[i + 1].y.toFixed(2)} ${pts[i + 1].x.toFixed(2)},${pts[i + 1].y.toFixed(2)}`;
+                }
+                return { path: p, pts };
+              };
+
+              const { path: storePath, pts: storePts } = buildCurve(storeValues, storeMax);
+              const { path: densityPath, pts: densityPts } = buildCurve(densityScaled, storeMax);
+              const { path: cumPath, pts: cumPts } = buildCurve(cumScaled, storeMax);
+
               const tickCount = 5;
-              const yTicks: string[] = [];
-              for (let i = 0; i < tickCount; i++) {
-                const val = max - (max / (tickCount - 1)) * i;
-                yTicks.push(max <= 5 ? val.toFixed(1) : Math.round(val).toLocaleString());
-              }
-              // Deduplicate: if all ticks are the same, show simpler scale
-              const uniqueTicks = [...new Set(yTicks)];
-              const finalTicks = uniqueTicks.length < 3 && max <= 5
-                ? Array.from({ length: tickCount }, (_, i) => ((max / (tickCount - 1)) * (tickCount - 1 - i)).toFixed(1))
-                : yTicks;
+              const yTicks = Array.from({ length: tickCount }, (_, i) => {
+                const val = Math.round(storeMax * (1 - i / (tickCount - 1)));
+                return storeMax <= 5 ? val.toFixed(1) : val.toLocaleString();
+              });
+
+              const hlx = trendHover && storePts[trendHover.idx] ? storePts[trendHover.idx].x : null;
 
               return (
                 <svg viewBox={`0 0 ${vbW} ${chartH}`} preserveAspectRatio="none" className="mm-trend-svg">
                   <defs>
-                    <linearGradient id="mmTrendGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
-                      <stop offset="40%" stopColor="#7c3aed" stopOpacity="0.12" />
-                      <stop offset="100%" stopColor="#6d28d9" stopOpacity="0" />
+                    <linearGradient id="mcpStoreGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f97316" stopOpacity="0.18" />
+                      <stop offset="100%" stopColor="#f97316" stopOpacity="0" />
                     </linearGradient>
-                    <linearGradient id="mmTrendLineGrad" x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor="#6d28d9" />
-                      <stop offset="50%" stopColor="#8b5cf6" />
-                      <stop offset="100%" stopColor="#a78bfa" />
+                    <linearGradient id="mcpDensGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.14" />
+                      <stop offset="100%" stopColor="#a78bfa" stopOpacity="0" />
+                    </linearGradient>
+                    <linearGradient id="mcpCumGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.10" />
+                      <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
                     </linearGradient>
                   </defs>
 
-                  {/* Horizontal grid lines — subtle dashed */}
-                  {finalTicks.map((tick, i) => {
-                    const y = padTop + (i / (finalTicks.length - 1)) * plotH;
+                  {/* Grid */}
+                  {yTicks.map((tick, i) => {
+                    const y = padTop + (i / (yTicks.length - 1)) * plotH;
                     return (
                       <g key={i}>
-                        <line x1={padLeft - 4} y1={y} x2={vbW - 10} y2={y} stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="4 6" opacity="0.3" vectorEffect="non-scaling-stroke" />
-                        <text x={padLeft - 8} y={y + 3.5} textAnchor="end" className="mm-chart-label" style={{ fontSize: 11 }}>{tick}</text>
+                        <line x1={padLeft - 4} y1={y} x2={vbW - 12} y2={y} stroke="var(--mm-border)" strokeWidth="0.5" strokeDasharray="3 6" opacity="0.22" vectorEffect="non-scaling-stroke" />
+                        <text x={padLeft - 8} y={y + 4} textAnchor="end" className="mm-chart-label" style={{ fontSize: 9.5 }}>{tick}</text>
                       </g>
                     );
                   })}
-                  {/* Base line */}
-                  <line x1={padLeft - 4} y1={padTop + plotH} x2={vbW - 10} y2={padTop + plotH} stroke="var(--mm-border)" strokeWidth="0.6" opacity="0.35" vectorEffect="non-scaling-stroke" />
+                  <line x1={padLeft - 4} y1={padTop + plotH} x2={vbW - 12} y2={padTop + plotH} stroke="var(--mm-border)" strokeWidth="0.7" opacity="0.35" vectorEffect="non-scaling-stroke" />
 
-                  {/* Area fill + line */}
-                  {(() => {
-                    const linePath = generateSmoothPath(values, chartW, plotH, 0);
-                    if (!linePath) return null;
-                    return (
-                      <g transform={`translate(${padLeft + 5}, ${padTop})`}>
-                        <path d={`${linePath} L ${chartW},${plotH} L 0,${plotH} Z`} fill="url(#mmTrendGrad)" className="mm-trend-area-path" />
-                        <path d={linePath} fill="none" stroke="url(#mmTrendLineGrad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mm-trend-line-path" />
-                        {/* Data dots */}
-                        {values.map((v, i) => {
-                          const x = values.length > 1 ? (i / (values.length - 1)) * chartW : chartW / 2;
-                          const y = plotH - (v / max) * plotH;
-                          const isHovered = trendHover?.idx === i;
-                          return (
-                            <circle
-                              key={i}
-                              cx={x}
-                              cy={y}
-                              r={isHovered ? 4 : 2.5}
-                              fill={isHovered ? '#a78bfa' : '#8b5cf6'}
-                              stroke="var(--mm-bg-card)"
-                              strokeWidth={isHovered ? 2 : 1.2}
-                              vectorEffect="non-scaling-stroke"
-                              style={{ transition: 'r 0.15s, fill 0.15s' }}
-                            />
-                          );
-                        })}
-                      </g>
-                    );
-                  })()}
+                  <g transform={`translate(${padLeft + 3}, ${padTop})`}>
+                    {/* ① Growth Trend — cyan dashed */}
+                    {cumPath && cumPts.length >= 2 && (
+                      <>
+                        <path d={`${cumPath} L ${cumPts[cumPts.length - 1].x},${plotH} L ${cumPts[0].x},${plotH} Z`} fill="url(#mcpCumGrad)" />
+                        <path d={cumPath} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 4" opacity="0.8" />
+                      </>
+                    )}
+                    {/* ② Token Density — purple */}
+                    {densityPath && densityPts.length >= 2 && (
+                      <>
+                        <path d={`${densityPath} L ${densityPts[densityPts.length - 1].x},${plotH} L ${densityPts[0].x},${plotH} Z`} fill="url(#mcpDensGrad)" />
+                        <path d={densityPath} fill="none" stroke="#a78bfa" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      </>
+                    )}
+                    {/* ③ Write Ops — orange solid */}
+                    {storePath && storePts.length >= 2 && (
+                      <>
+                        <path d={`${storePath} L ${storePts[storePts.length - 1].x},${plotH} L ${storePts[0].x},${plotH} Z`} fill="url(#mcpStoreGrad)" />
+                        <path d={storePath} fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </>
+                    )}
 
-                  {/* Hover vertical line */}
-                  {trendHover && values.length > 1 && (() => {
-                    const hx = padLeft + 5 + (trendHover.idx / (values.length - 1)) * chartW;
-                    return (
-                      <line x1={hx} y1={padTop} x2={hx} y2={padTop + plotH} stroke="#a0a0a0" strokeWidth="1" strokeDasharray="4 3" opacity="0.5" vectorEffect="non-scaling-stroke" />
-                    );
-                  })()}
+                    {/* Hover crosshair */}
+                    {hlx !== null && (
+                      <line x1={hlx} y1={0} x2={hlx} y2={plotH} stroke="rgba(255,255,255,0.18)" strokeWidth="1" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
+                    )}
 
-                  {/* X labels */}
-                  {trendData.map((d, i) => {
-                    const x = padLeft + 5 + (trendData.length > 1 ? (i / (trendData.length - 1)) * chartW : chartW / 2);
-                    return (
-                      <text key={i} x={x} y={chartH - 4} className="mm-chart-label" textAnchor="middle" style={{ fontSize: 11 }}>{d.label}</text>
-                    );
+                    {/* Hover dots */}
+                    {trendHover !== null && [
+                      { pts: cumPts, color: '#22d3ee' },
+                      { pts: densityPts, color: '#a78bfa' },
+                      { pts: storePts, color: '#f97316' },
+                    ].map(({ pts, color }, si) => {
+                      const pt = pts[trendHover.idx];
+                      if (!pt) return null;
+                      return <circle key={si} cx={pt.x} cy={pt.y} r={3.5} fill={color} stroke="var(--mm-bg-card)" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />;
+                    })}
+                  </g>
+
+                  {/* X-axis labels — up to 10 */}
+                  {areaChartData.map((d, i) => {
+                    const step = Math.max(1, Math.ceil(n / 10));
+                    if (i % step !== 0 && i !== n - 1) return null;
+                    const x = padLeft + 3 + (n > 1 ? (i / (n - 1)) * chartW : chartW / 2);
+                    return <text key={i} x={x} y={chartH - 10} className="mm-chart-label" textAnchor="middle" style={{ fontSize: 9.5 }}>{d.label}</text>;
                   })}
                 </svg>
               );
             })()}
 
-            {/* Hover tooltip */}
-            {trendHover && trendData[trendHover.idx] && (() => {
-              const d = trendData[trendHover.idx];
-              const values = trendData.map(t => t.value);
-              const max = Math.max(...values, 1);
-              const avg = Math.round(values.reduce((s, v) => s + v, 0) / values.length);
-              const pctOfPeak = max > 0 ? ((d.value / max) * 100).toFixed(0) : '0';
-              const prevIdx = trendHover.idx > 0 ? trendHover.idx - 1 : null;
-              const prevVal = prevIdx !== null ? values[prevIdx] : null;
-              const changePct = prevVal !== null && prevVal > 0 ? (((d.value - prevVal) / prevVal) * 100).toFixed(1) : null;
+            {/* Tooltip — 3 rows */}
+            {trendHover !== null && areaChartData[trendHover.idx] && (() => {
+              const i = trendHover.idx;
+              const storeVal = areaChartData[i]?.value ?? 0;
+              const tokenVal = fetchSeriesData[i]?.value ?? 0;
+              const density = storeVal > 0 ? Math.round(tokenVal / storeVal) : 0;
+              const label = areaChartData[i].label;
+              let cumAtI = 0;
+              for (let j = 0; j <= i && j < areaChartData.length; j++) cumAtI += areaChartData[j].value;
               return (
                 <div
                   className="mm-chart-tooltip"
                   style={{
-                    left: Math.min(Math.max(trendHover.x + 16, 10), (trendRef.current?.offsetWidth || 600) - 220),
-                    top: Math.max(trendHover.y - 110, 10),
+                    left: Math.min(Math.max(trendHover.x + 16, 10), (trendRef.current?.offsetWidth || 600) - 200),
+                    top: Math.max(trendHover.y - 120, 6),
                   }}
                 >
                   <div className="mm-tooltip-header">
-                    <span className="mm-tooltip-time">{d.label}</span>
+                    <span className="mm-tooltip-time">{label}</span>
                   </div>
                   <div className="mm-tooltip-body">
                     <div className="mm-tooltip-row">
-                      <span className="mm-tooltip-label">Memories</span>
-                      <span className="mm-tooltip-val">{d.value.toLocaleString()}</span>
-                    </div>
-                    <div className="mm-tooltip-row">
-                      <span className="mm-tooltip-label">% of peak</span>
-                      <span className="mm-tooltip-val">{pctOfPeak}%</span>
-                    </div>
-                    <div className="mm-tooltip-row">
-                      <span className="mm-tooltip-label">vs average</span>
-                      <span className={`mm-tooltip-val ${d.value >= avg ? 'mm-positive' : 'mm-negative'}`}>
-                        {d.value >= avg ? '+' : ''}{d.value - avg}
+                      <span className="mm-tooltip-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f97316', flexShrink: 0 }} />
+                        Write Ops
                       </span>
+                      <span className="mm-tooltip-val" style={{ color: '#f97316' }}>{storeVal.toLocaleString()}</span>
                     </div>
-                    {changePct !== null && (
-                      <div className="mm-tooltip-row">
-                        <span className="mm-tooltip-label">vs prev period</span>
-                        <span className={`mm-tooltip-val ${parseFloat(changePct) >= 0 ? 'mm-positive' : 'mm-negative'}`}>
-                          {parseFloat(changePct) >= 0 ? '+' : ''}{changePct}%
-                        </span>
-                      </div>
-                    )}
+                    <div className="mm-tooltip-row">
+                      <span className="mm-tooltip-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#a78bfa', flexShrink: 0 }} />
+                        Token Density
+                      </span>
+                      <span className="mm-tooltip-val" style={{ color: '#a78bfa' }}>{density.toLocaleString()} tk/w</span>
+                    </div>
+                    <div className="mm-tooltip-row">
+                      <span className="mm-tooltip-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', border: '1.5px dashed #22d3ee', flexShrink: 0 }} />
+                        Cumulative
+                      </span>
+                      <span className="mm-tooltip-val" style={{ color: '#22d3ee' }}>{cumAtI.toLocaleString()}</span>
+                    </div>
                   </div>
                 </div>
               );

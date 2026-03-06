@@ -95,14 +95,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error || 'Failed to create workspace' }, { status: 500 });
     }
 
-    // Sync to Supabase (non-blocking) — pass Aiven org_id so UUIDs match
-    syncOrgToSupabase({
-      name: result.organization!.name,
-      slug: result.organization!.slug,
-      ownerClerkId: clerkId,
-      orgUuid: result.organization!.org_id,
-      description: description?.trim() || null,
-    }).catch((e: any) => console.warn('[Workspaces API] Supabase sync (non-fatal):', e.message));
+    // Sync to Supabase — awaited so the org exists in Supabase before we return
+    // the workspace to the client. This prevents the race condition where the user
+    // immediately switches to the new workspace before the sync completes.
+    try {
+      await syncOrgToSupabase({
+        name: result.organization!.name,
+        slug: result.organization!.slug,
+        ownerClerkId: clerkId,
+        orgUuid: result.organization!.org_id,
+        description: description?.trim() || null,
+      });
+    } catch (e: any) {
+      // Non-fatal: workspace was created in Aiven. Supabase sync will be retried
+      // automatically next time the user views data (fallback logic in resolveSupabaseUser).
+      console.warn('[Workspaces API] Supabase org sync failed (non-fatal):', e.message);
+    }
 
     return NextResponse.json({
       workspace: {

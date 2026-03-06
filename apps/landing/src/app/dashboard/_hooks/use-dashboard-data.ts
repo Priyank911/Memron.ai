@@ -18,6 +18,8 @@ export interface DashboardStats {
   memoryDelta: number;
   previousMemories: number;
   range: string;
+  /** Daily token sums — proxy for MCP fetch/read query volume */
+  mcpFetchChart: { label: string; value: number }[];
 }
 
 export interface DashboardMemory {
@@ -55,6 +57,7 @@ const EMPTY_STATS: DashboardStats = {
   memoryDelta: 0,
   previousMemories: 0,
   range: '30d',
+  mcpFetchChart: [],
 };
 
 export function useDashboardData(enabled = true, timeRange = '30d', orgId: string | null = null) {
@@ -82,10 +85,12 @@ export function useDashboardData(enabled = true, timeRange = '30d', orgId: strin
 
       if (statsOnly) {
         const sRes = await fetch(`/api/dashboard/stats?range=${currentTimeRange}${orgParam}`, opts);
-        if (sRes.ok) setStats(await sRes.json());
-        else {
-          const e = await sRes.json().catch(() => ({}));
-          setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
+        if (!signal.aborted) {
+          if (sRes.ok) setStats(await sRes.json());
+          else {
+            const e = await sRes.json().catch(() => ({}));
+            setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
+          }
         }
       } else {
         const [sRes, mRes, bRes] = await Promise.all([
@@ -93,31 +98,49 @@ export function useDashboardData(enabled = true, timeRange = '30d', orgId: strin
           fetch(`/api/dashboard/memories${orgQuery}`, opts),
           fetch(`/api/dashboard/buckets${orgQuery}`, opts),
         ]);
-        if (sRes.ok) setStats(await sRes.json());
-        else {
-          const e = await sRes.json().catch(() => ({}));
-          setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
+        if (!signal.aborted) {
+          if (sRes.ok) setStats(await sRes.json());
+          else {
+            const e = await sRes.json().catch(() => ({}));
+            setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
+          }
+          if (mRes.ok) setMemories((await mRes.json()).memories || []);
+          if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
         }
-        if (mRes.ok) setMemories((await mRes.json()).memories || []);
-        if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
       }
     } catch (err: any) {
-      if (err.name !== 'AbortError') setError(err.message);
+      if (err.name !== 'AbortError' && !signal.aborted) setError(err.message);
     } finally {
-      setLoading(false);
+      // Only clear loading if this fetch was not superseded by another one.
+      // Checking signal.aborted prevents an aborted fetch from clearing the loading
+      // state that the next (active) fetch has already set.
+      if (!signal.aborted) setLoading(false);
     }
   }, []); // stable — intentionally no deps
 
   // undefined = not yet run (sentinel distinct from null orgId)
-  const prevOrgRef = useRef<string | null | undefined>(undefined);
+  const prevOrgRef  = useRef<string | null | undefined>(undefined);
   const prevRangeRef = useRef<string | undefined>(undefined);
+  // Track whether the component is still mounted to decide if refs should be reset.
+  const isMountedRef = useRef(false);
+
+  // Set/unset isMounted only on true mount/unmount (no deps).
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // True unmount — reset tracking refs so the next mount starts fresh.
+      prevOrgRef.current   = undefined;
+      prevRangeRef.current = undefined;
+    };
+  }, []);
 
   useEffect(() => {
     if (!enabled) return;
 
     const prevOrg   = prevOrgRef.current;
     const isInitial = prevOrg === undefined;
-    const orgChanged      = !isInitial && prevOrg !== orgId;
+    const orgChanged       = !isInitial && prevOrg !== orgId;
     const onlyRangeChanged = !isInitial && !orgChanged && prevRangeRef.current !== timeRange;
 
     prevOrgRef.current   = orgId;
@@ -135,11 +158,11 @@ export function useDashboardData(enabled = true, timeRange = '30d', orgId: strin
     doFetch(orgId, timeRange, ac.signal, onlyRangeChanged).catch(() => {});
 
     return () => {
+      // Abort any in-flight fetch so it doesn't update state for old params.
+      // Do NOT reset the tracking refs here — they are only reset on true unmount
+      // (handled by the isMountedRef effect above). Resetting here would cause every
+      // range-click to be treated as an initial load, doubling API calls.
       ac.abort();
-      // Reset refs on cleanup so the next mount (StrictMode re-mount or real re-mount)
-      // is treated as a fresh initial load and does a full refresh.
-      prevOrgRef.current   = undefined;
-      prevRangeRef.current = undefined;
     };
   // doFetch is stable ([] deps), so effect only re-runs when enabled/orgId/timeRange change.
   }, [enabled, orgId, timeRange, doFetch]);

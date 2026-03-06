@@ -37,6 +37,7 @@
     --mm-mono: 'JetBrains Mono', 'Fira Code', monospace;
     --mm-sidebar-w: 230px;
     --mm-transition: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    --mm-donut-track: rgba(255, 255, 255, 0.1);
 }
 
 /* ── RESET ── */
@@ -64,6 +65,7 @@
     --mm-white: #111113;
     --mm-violet-bg: rgba(124, 58, 237, 0.05);
     --mm-violet-border: rgba(124, 58, 237, 0.14);
+    --mm-donut-track: rgba(0, 0, 0, 0.09);
 }
 
 /* ═══ ROOT ═══ */

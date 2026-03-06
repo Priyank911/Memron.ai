@@ -96,7 +96,7 @@ export function DonutChart({
       <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
           {/* track */}
-          <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={thickness} />
+          <circle cx={cx} cy={cx} r={r} fill="none" stroke="var(--mm-donut-track, rgba(120,120,120,0.15))" strokeWidth={thickness} />
           {arcs.map((a, i) => (
             <circle
               key={i}
@@ -117,8 +117,8 @@ export function DonutChart({
             position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <span style={{ fontSize: 22, fontWeight: 700, color: '#fff', fontFamily: "'Space Grotesk',sans-serif", lineHeight: 1 }}>{centerValue}</span>
-            {centerLabel && <span style={{ fontSize: 10, color: '#71717a', marginTop: 2 }}>{centerLabel}</span>}
+            <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--mm-text)', fontFamily: "'Space Grotesk',sans-serif", lineHeight: 1 }}>{centerValue}</span>
+            {centerLabel && <span style={{ fontSize: 10, color: 'var(--mm-text-2)', marginTop: 2 }}>{centerLabel}</span>}
           </div>
         )}
       </div>
@@ -128,7 +128,7 @@ export function DonutChart({
         {segments.map((s, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, color: '#a1a1aa' }}>{s.label}</span>
+            <span style={{ fontSize: 12, color: 'var(--mm-text-2)' }}>{s.label}</span>
           </div>
         ))}
       </div>
