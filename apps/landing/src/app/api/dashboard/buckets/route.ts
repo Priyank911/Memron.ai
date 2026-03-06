@@ -14,7 +14,7 @@ import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from 
  * GET /api/dashboard/buckets — List all buckets for the current user
  * Protected by: auth + rate limiter + server-side cache (30s TTL).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -27,8 +27,9 @@ export async function GET() {
       );
     }
 
-    const cacheKey = `buckets:${userId}`;
-    const data = await cachedQuery(cacheKey, () => fetchBuckets(userId), CACHE_PROFILES.buckets);
+    const orgId = request.nextUrl.searchParams.get('orgId') || null;
+    const cacheKey = `buckets:${userId}:${orgId || 'default'}`;
+    const data = await cachedQuery(cacheKey, () => fetchBuckets(userId, orgId), CACHE_PROFILES.buckets);
     return NextResponse.json(data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -37,8 +38,8 @@ export async function GET() {
   }
 }
 
-async function fetchBuckets(clerkId: string) {
-  const supaUser = await resolveSupabaseUser(clerkId);
+async function fetchBuckets(clerkId: string, targetOrgId: string | null = null) {
+  const supaUser = await resolveSupabaseUser(clerkId, targetOrgId);
   if (!supaUser) return { buckets: [] };
 
   const { id: uid, orgId } = supaUser;

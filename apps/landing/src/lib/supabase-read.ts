@@ -84,7 +84,7 @@ export function isSupabaseConfigured(): boolean {
  *
  * Dashboard must use the Supabase user_id when querying memories.
  */
-export async function resolveSupabaseUser(clerkId: string): Promise<{
+export async function resolveSupabaseUser(clerkId: string, targetOrgUuid?: string | null): Promise<{
   id: number;
   email: string;
   orgId: number | null;
@@ -101,22 +101,36 @@ export async function resolveSupabaseUser(clerkId: string): Promise<{
 
     const user = userRes.rows[0];
 
-    // Resolve org_id
+    // Resolve org_id — use specified workspace UUID if provided
     let orgId: number | null = null;
     try {
-      const orgRes = await pool.query(
-        'SELECT id FROM organizations WHERE owner_id = $1 AND is_active = true LIMIT 1',
-        [user.id],
-      );
-      orgId = orgRes.rows[0]?.id ?? null;
+      if (targetOrgUuid) {
+        // Try matching by org_id UUID first, then by slug as fallback
+        const orgRes = await pool.query(
+          `SELECT o.id FROM organizations o
+           LEFT JOIN org_members om ON om.org_id = o.id AND om.user_id = $2
+           WHERE (o.org_id = $1 OR o.slug = $1) AND o.is_active = true AND (o.owner_id = $2 OR om.user_id = $2)
+           LIMIT 1`,
+          [targetOrgUuid, user.id],
+        );
+        orgId = orgRes.rows[0]?.id ?? null;
+        // Org not found in Supabase (new workspace or sync pending) → return null
+        // so callers return empty data instead of falling back to all user memories.
+        if (orgId === null) return null;
+      } else {
+        // No specific workspace — get user's primary org
+        const orgRes = await pool.query(
+          'SELECT id FROM organizations WHERE owner_id = $1 AND is_active = true LIMIT 1',
+          [user.id],
+        );
+        orgId = orgRes.rows[0]?.id ?? null;
+      }
     } catch {
       /* table may not exist */
     }
 
     return { id: user.id, email: user.email, orgId };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[SupaRead] resolveSupabaseUser error:', msg);
+  } catch {
     return null;
   }
 }
@@ -131,18 +145,22 @@ export function buildUserWhereClause(
   orgId: number | null,
   startParamIdx = 1,
 ): { where: string; params: (number)[]; nextIdx: number } {
-  const conditions: string[] = [`user_id = $${startParamIdx}`];
   const params: number[] = [userId];
   let idx = startParamIdx + 1;
 
   if (orgId) {
-    conditions.push(`org_id = $${idx}`);
+    // Strict org scope: only memories explicitly tagged with this org.
+    // Using AND prevents cross-org bleed when a user owns multiple workspaces.
     params.push(orgId);
-    idx++;
+    return {
+      where: `user_id = $${startParamIdx} AND org_id = $${idx}`,
+      params,
+      nextIdx: idx + 1,
+    };
   }
 
   return {
-    where: conditions.join(' OR '),
+    where: `user_id = $${startParamIdx}`,
     params,
     nextIdx: idx,
   };

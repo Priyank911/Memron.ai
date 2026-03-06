@@ -661,6 +661,60 @@ export async function checkOrgSlugExists(slug: string): Promise<boolean> {
     }
 }
 
+/**
+ * Get all organizations a user belongs to (owned + member)
+ */
+export async function getUserOrganizations(userId: number): Promise<PgOrganization[]> {
+    if (!pool) return [];
+
+    try {
+        await ensureSchema();
+        const result = await pool.query(
+            `SELECT DISTINCT o.* FROM organizations o
+             LEFT JOIN org_members om ON om.org_id = o.id
+             WHERE (o.owner_id = $1 OR om.user_id = $1) AND o.is_active = true
+             ORDER BY o.created_at ASC`,
+            [userId]
+        );
+        return result.rows as PgOrganization[];
+    } catch (error: any) {
+        console.error('[PostgreSQL] Failed to get user organizations:', error.message);
+        return [];
+    }
+}
+
+/**
+ * Update organization name/description
+ */
+export async function updateOrganization(orgId: string, data: {
+    name?: string;
+    description?: string;
+}, ownerId: number): Promise<{ success: boolean; error?: string }> {
+    if (!pool) return { success: false, error: 'PostgreSQL not configured' };
+
+    try {
+        await ensureSchema();
+        const sets: string[] = [];
+        const params: any[] = [];
+        let idx = 1;
+
+        if (data.name) { sets.push(`name = $${idx++}`); params.push(data.name); }
+        if (data.description !== undefined) { sets.push(`description = $${idx++}`); params.push(data.description); }
+        if (sets.length === 0) return { success: true };
+
+        params.push(orgId, ownerId);
+        await pool.query(
+            `UPDATE organizations SET ${sets.join(', ')}, updated_at = NOW()
+             WHERE org_id = $${idx++} AND owner_id = $${idx}`,
+            params
+        );
+        return { success: true };
+    } catch (error: any) {
+        console.error('[PostgreSQL] Failed to update organization:', error.message);
+        return { success: false, error: error.message };
+    }
+}
+
 // ─── API Key Operations ─────────────────────────────────────
 
 /**
