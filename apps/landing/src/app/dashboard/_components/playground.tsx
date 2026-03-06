@@ -13,19 +13,79 @@ const IconSend = () => (
   </svg>
 );
 
-const IconBrain = ({ size = 16 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
-    <path d="M9 21h6M10 17v4M14 17v4" />
-  </svg>
-);
-
 const IconMemory = ({ size = 14 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <rect x="4" y="4" width="16" height="16" rx="2" />
     <path d="M9 9h6M9 13h6M9 17h4" />
   </svg>
 );
+
+/* ── Typewriter subtitle: types sentence, pauses, erases, next ── */
+const TYPEWRITER_SENTENCES = [
+  'Search through your memory buckets instantly.',
+  'Ask anything about your stored memories.',
+  'Your AI-powered memory companion.',
+  'Query, recall, and explore your data.',
+  'Talk to your knowledge base naturally.',
+  'Find context across all your buckets.',
+];
+
+function TypewriterSubtitle() {
+  const [text, setText] = useState('');
+  const idxRef = useRef(0);
+
+  useEffect(() => {
+    let animId: number;
+    let charI = 0;
+    let erasing = false;
+    let waitUntil = 0;
+    const TYPE_SPEED = 45;
+    const ERASE_SPEED = 25;
+    const PAUSE_AFTER_TYPE = 2000;
+    const PAUSE_AFTER_ERASE = 400;
+
+    const tick = (now: number) => {
+      if (now < waitUntil) {
+        animId = requestAnimationFrame(tick);
+        return;
+      }
+
+      const sentence = TYPEWRITER_SENTENCES[idxRef.current];
+
+      if (!erasing) {
+        if (charI < sentence.length) {
+          charI++;
+          setText(sentence.slice(0, charI));
+          waitUntil = now + TYPE_SPEED;
+        } else {
+          erasing = true;
+          waitUntil = now + PAUSE_AFTER_TYPE;
+        }
+      } else {
+        if (charI > 0) {
+          charI--;
+          setText(sentence.slice(0, charI));
+          waitUntil = now + ERASE_SPEED;
+        } else {
+          erasing = false;
+          idxRef.current = (idxRef.current + 1) % TYPEWRITER_SENTENCES.length;
+          waitUntil = now + PAUSE_AFTER_ERASE;
+        }
+      }
+
+      animId = requestAnimationFrame(tick);
+    };
+
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, []);
+
+  return (
+    <p className="pg-typewriter">
+      {text}<span className="pg-typewriter-cursor">|</span>
+    </p>
+  );
+}
 
 /* ── Types ── */
 interface MemoryResult {
@@ -71,11 +131,12 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-function scoreColor(score: number): string {
-  if (score >= 0.85) return '#22c55e';
-  if (score >= 0.7) return '#3b82f6';
-  if (score >= 0.5) return '#f59e0b';
-  return '#6b7280';
+/** Score level class for theme-adaptive colors */
+function scoreLevel(score: number): string {
+  if (score >= 0.85) return 'pg-score-high';
+  if (score >= 0.7)  return 'pg-score-good';
+  if (score >= 0.5)  return 'pg-score-mid';
+  return 'pg-score-low';
 }
 
 function buildReasoning(memories: MemoryResult[], query: string): string {
@@ -122,8 +183,12 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeSession?.messages.length]);
+    // Scroll to bottom when new messages arrive
+    const el = messagesEndRef.current;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [activeSession?.messages.length, loading]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
@@ -234,9 +299,6 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
             <ArrowLeft size={16} />
           </button>
           <span className="pg-logo">Playground</span>
-          <button className="pg-new" onClick={createSession} title="New Chat">
-            <Plus size={16} />
-          </button>
         </div>
 
         <div className="pg-search-box">
@@ -295,31 +357,35 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
         </div>
 
         <div className="pg-sidebar-footer">
+          <button className="pg-new-chat-box" onClick={createSession}>
+            <Plus size={14} />
+            <span>New Chat</span>
+          </button>
           <div className="pg-foot-stat"><IconMemory size={12} /> {totalMemories.toLocaleString()} memories</div>
         </div>
       </aside>
 
       {/* ── Main Chat ── */}
       <section className="pg-main">
+
+
         {activeSession ? (
           <>
             <div className="pg-messages">
-              {/* Greeting */}
+              {/* Greeting with animated subtitle */}
               {activeSession.messages.length === 0 && (
                 <div className="pg-greeting">
-                  <h2 className="pg-greeting-text">Hey {userName}</h2>
+                  <h2 className="pg-greeting-text text-3xl font-semibold text-center mb-1">Hi {userName}</h2>
+                  <TypewriterSubtitle />
                 </div>
               )}
 
               {activeSession.messages.map(msg => (
                 <div key={msg.id} className={`pg-msg pg-msg-${msg.role}`}>
                   {msg.role === 'user' ? (
-                    /* User bubble — right aligned like reference */
                     <div className="pg-user-bubble">{msg.content}</div>
                   ) : (
-                    /* Assistant response */
                     <div className="pg-assistant-block">
-                      {/* "No Memories Added" or "Retrieved" label */}
                       {msg.content === 'No Memories Added' ? (
                         <div className="pg-no-mem">{msg.content}</div>
                       ) : (
@@ -327,24 +393,21 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
                           {msg.memories && msg.memories.length > 0 && (
                             <>
                               <div className="pg-retrieved-label">{msg.content}</div>
-                              {/* Score cards row — like the reference image */}
                               <div className="pg-score-row">
                                 {msg.memories.map(m => (
                                   <div key={m.id} className="pg-score-card">
-                                    <span className="pg-score-badge" style={{ color: scoreColor(m.score) }}>
+                                    <span className={`pg-score-badge ${scoreLevel(m.score)}`}>
                                       Score: {m.score.toFixed(2)}
                                     </span>
                                     <span className="pg-score-title">{m.title}</span>
                                   </div>
                                 ))}
                               </div>
-                              {/* Reasoning */}
                               {msg.reasoning && (
                                 <div className="pg-reasoning">{msg.reasoning}</div>
                               )}
                             </>
                           )}
-                          {/* Plain text response (error etc) */}
                           {!msg.memories && <div className="pg-assistant-text">{msg.content}</div>}
                         </>
                       )}
@@ -363,7 +426,6 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input — bottom center like reference */}
             <div className="pg-input-area">
               <div className="pg-input-box">
                 <textarea
@@ -384,8 +446,8 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
           </>
         ) : (
           <div className="pg-greeting">
-            <h2 className="pg-greeting-text">Hey {userName}</h2>
-            <button className="pg-new-chat" onClick={createSession}><Plus size={14} /> New Chat</button>
+            <h2 className="pg-greeting-text text-3xl font-semibold text-center mb-1">Hi {userName}</h2>
+            <TypewriterSubtitle />
           </div>
         )}
       </section>

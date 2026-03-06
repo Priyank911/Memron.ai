@@ -18,7 +18,7 @@ const isAuthRoute = createRouteMatcher([
   '/forgot-password',
 ])
 
-const isDashboardRoute = createRouteMatcher(['/dashboard(.*)', '/api/dashboard(.*)'])
+const isDashboardRoute = createRouteMatcher(['/dashboard(.*)', '/playground(.*)', '/api/dashboard(.*)'])
 const isOnboardingRoute = createRouteMatcher(['/onboarding(.*)'])
 
 export default clerkMiddleware(async (auth, request) => {
