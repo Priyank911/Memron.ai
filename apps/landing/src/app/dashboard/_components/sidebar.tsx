@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard, MessageSquare, Key, Settings, Database,
@@ -90,6 +91,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreateBucket, user, theme, onThemeChange }: SidebarProps) {
+  const router = useRouter();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
     const map: Record<string, boolean> = {};
     NAV_SECTIONS.forEach(s => { map[s.id] = s.defaultOpen; });
@@ -148,7 +150,7 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
                   <button
                     key={item.id}
                     className={`mm-sb-item${active === item.id ? ' active' : ''}`}
-                    onClick={() => onNav(item.id)}
+                    onClick={() => item.id === 'playground' ? router.push('/playground') : onNav(item.id)}
                   >
                     <item.icon size={15} strokeWidth={1.7} />
                     <span>{item.label}</span>

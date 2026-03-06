@@ -23,7 +23,7 @@ export async function GET() {
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfter / 1000)) } },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter ?? 60000) / 1000)) } },
       );
     }
 

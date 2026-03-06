@@ -1793,7 +1793,7 @@ export default function DashboardPage() {
     switch (active) {
       case 'api-keys': return <ApiKeysPage />;
       case 'memories': return renderMemories();
-      case 'playground': return renderPlayground();
+      case 'playground': { router.push('/playground'); return null; }
       case 'config': return renderConfig();
       case 'graph-memory': return renderGraphMemory();
       case 'webhooks': return renderWebhooks();

@@ -4673,7 +4673,7 @@
 
 
 /* ═══════════════════════════════════════════════════════════════
-   PLAYGROUND V3 — Pitch Black + White Minimalist Chat
+   PLAYGROUND V5 — White Theme + Design Canvas + Light Mode
    ═══════════════════════════════════════════════════════════════ */
 
 .pg-overlay {
@@ -4709,8 +4709,7 @@
     border-bottom: 1px solid #1a1a1a;
 }
 
-.pg-back,
-.pg-new {
+.pg-back {
     width: 30px;
     height: 30px;
     display: flex;
@@ -4724,8 +4723,7 @@
     transition: all 0.15s;
 }
 
-.pg-back:hover,
-.pg-new:hover {
+.pg-back:hover {
     background: #111;
     color: #fff;
     border-color: #333;
@@ -4816,6 +4814,8 @@
     transition: border-color 0.15s;
 }
 
+
+
 .pg-select:focus {
     border-color: #333;
 }
@@ -4856,7 +4856,7 @@
 }
 
 .pg-bucket-active {
-    background: #111 !important;
+    background: rgba(255, 255, 255, 0.06) !important;
     color: #fff !important;
 }
 
@@ -4874,7 +4874,7 @@
 }
 
 .pg-bucket-active .pg-bucket-count {
-    color: #999;
+    color: #ccc;
 }
 
 .pg-empty-hint {
@@ -4964,10 +4964,36 @@
     color: #ef4444;
 }
 
-/* Footer */
+/* Footer with New Chat box */
 .pg-sidebar-footer {
     padding: 12px 14px;
     border-top: 1px solid #1a1a1a;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.pg-new-chat-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 12px;
+    background: #0a0a0a;
+    border: 1px solid #1a1a1a;
+    border-radius: 8px;
+    color: #aaa;
+    font-size: 0.76rem;
+    font-weight: 500;
+    font-family: var(--mm-font);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.pg-new-chat-box:hover {
+    background: #151515;
+    color: #fff;
+    border-color: #333;
 }
 
 .pg-foot-stat {
@@ -4985,61 +5011,92 @@
     flex-direction: column;
     min-width: 0;
     background: #000;
+    position: relative;
+    overflow: hidden;
 }
 
-/* Messages */
+
+
+/* ── Messages — full width, scrollbar on right ── */
 .pg-messages {
     flex: 1;
     overflow-y: auto;
-    padding: 40px 40px 20px;
+    overflow-x: hidden;
+    padding: 40px 48px 20px 48px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    max-width: 860px;
+    gap: 18px;
     width: 100%;
-    margin: 0 auto;
+    position: relative;
+    z-index: 1;
+
+    scrollbar-width: thin;
+    scrollbar-color: #1a1a1a transparent;
 }
 
-/* Greeting */
+.pg-messages::-webkit-scrollbar {
+    width: 5px;
+}
+
+.pg-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.pg-messages::-webkit-scrollbar-thumb {
+    background: #1a1a1a;
+    border-radius: 4px;
+}
+
+.pg-messages::-webkit-scrollbar-thumb:hover {
+    background: #333;
+}
+
+/* ── Greeting with animated dots ── */
 .pg-greeting {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     flex: 1;
-    gap: 16px;
+    gap: 10px;
+    position: relative;
+    z-index: 1;
 }
 
 .pg-greeting-text {
-    font-size: 1.6rem;
+    font-size: 1.8rem;
     font-weight: 600;
     color: #ffffff;
     letter-spacing: -0.02em;
 }
 
-/* New chat btn */
-.pg-new-chat {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 9px 18px;
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 6px;
-    color: #ccc;
-    font-size: 0.78rem;
-    font-weight: 500;
-    font-family: var(--mm-font);
-    cursor: pointer;
-    transition: all 0.15s;
+.pg-typewriter {
+    font-size: 0.92rem;
+    color: #888;
+    margin: 0;
+    min-height: 1.4em;
+    letter-spacing: 0.01em;
 }
 
-.pg-new-chat:hover {
-    background: #222;
-    color: #fff;
+.pg-typewriter-cursor {
+    display: inline-block;
+    color: #555;
+    animation: pg-cursor-blink 0.9s step-end infinite;
+    font-weight: 300;
+    margin-left: 1px;
+}
+
+@keyframes pg-cursor-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0; }
 }
 
 /* ── User bubble — right aligned ── */
+.pg-msg {
+    position: relative;
+    z-index: 1;
+}
+
 .pg-msg-user {
     display: flex;
     justify-content: flex-end;
@@ -5048,23 +5105,23 @@
 .pg-user-bubble {
     background: #1a1a1a;
     color: #fff;
-    padding: 10px 16px;
-    border-radius: 16px;
-    font-size: 0.84rem;
+    padding: 12px 20px;
+    border-radius: 18px;
+    font-size: 0.86rem;
     line-height: 1.55;
-    max-width: 600px;
+    max-width: 70%;
     word-break: break-word;
     border: 1px solid #222;
 }
 
-/* ── Assistant block — left aligned ── */
+/* ── Assistant block — left aligned, full width ── */
 .pg-msg-assistant {
     display: flex;
     justify-content: flex-start;
 }
 
 .pg-assistant-block {
-    max-width: 720px;
+    max-width: 85%;
     width: 100%;
 }
 
@@ -5074,70 +5131,77 @@
     background: #1a1a1a;
     border: 1px solid #222;
     color: #ccc;
-    padding: 8px 16px;
-    border-radius: 16px;
-    font-size: 0.82rem;
+    padding: 10px 20px;
+    border-radius: 18px;
+    font-size: 0.84rem;
 }
 
 /* "Retrieved" label */
 .pg-retrieved-label {
-    font-size: 0.8rem;
-    color: #888;
-    margin-bottom: 10px;
+    font-size: 0.82rem;
+    color: var(--mm-text-2);
+    margin-bottom: 12px;
     font-weight: 500;
 }
 
-/* ── Score Cards Row — reference image style ── */
+/* ── Score Cards Row — white/neutral theme ── */
 .pg-score-row {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     flex-wrap: wrap;
-    margin-bottom: 14px;
+    margin-bottom: 16px;
 }
 
 .pg-score-card {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    min-width: 160px;
-    max-width: 240px;
-    padding: 12px 16px;
-    border: 1px solid #222;
-    border-radius: 10px;
-    background: #000;
-    transition: border-color 0.15s;
+    min-width: 170px;
+    max-width: 280px;
+    flex: 1;
+    padding: 14px 18px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    transition: border-color 0.15s, background 0.15s;
 }
 
 .pg-score-card:hover {
-    border-color: #333;
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
 }
 
 .pg-score-badge {
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     font-weight: 600;
     font-family: var(--mm-mono);
 }
 
+.pg-score-high { color: #ffffff; }
+.pg-score-good { color: #e0e0e0; }
+.pg-score-mid  { color: #b0b0b0; }
+.pg-score-low  { color: #6e6e76; }
+
 .pg-score-title {
-    font-size: 0.8rem;
+    font-size: 0.82rem;
     color: #ccc;
     line-height: 1.4;
 }
 
 /* Reasoning text */
 .pg-reasoning {
-    font-size: 0.82rem;
-    color: #999;
+    font-size: 0.84rem;
+    color: var(--mm-text-2);
     line-height: 1.7;
-    padding-top: 4px;
+    padding-top: 6px;
     border-top: 1px solid #1a1a1a;
-    margin-top: 2px;
+    margin-top: 4px;
 }
 
 /* Plain assistant text */
 .pg-assistant-text {
-    font-size: 0.82rem;
-    color: #999;
+    font-size: 0.84rem;
+    color: var(--mm-text-2);
     line-height: 1.65;
 }
 
@@ -5152,7 +5216,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #555;
+    background: #888;
     animation: pgDot 1.2s infinite;
 }
 
@@ -5173,17 +5237,17 @@
     to { transform: rotate(360deg); }
 }
 
-/* ── Input Area — reference image style ── */
+/* ── Input Area ── */
 .pg-input-area {
-    padding: 0 40px 32px;
-    max-width: 860px;
+    padding: 0 48px 32px;
     width: 100%;
-    margin: 0 auto;
+    position: relative;
+    z-index: 1;
 }
 
 .pg-input-box {
     position: relative;
-    background: #0f0f0f;
+    background: #0a0a0a;
     border: 1px solid #1a1a1a;
     border-radius: 16px;
     overflow: hidden;
@@ -5191,7 +5255,7 @@
 }
 
 .pg-input-box:focus-within {
-    border-color: #333;
+    border-color: rgba(255, 255, 255, 0.2);
 }
 
 .pg-textarea {
@@ -5203,7 +5267,7 @@
     background: transparent;
     border: none;
     color: #e0e0e0;
-    font-size: 0.86rem;
+    font-size: 0.88rem;
     font-family: var(--mm-font);
     line-height: 1.5;
     resize: none;
@@ -5218,22 +5282,21 @@
     position: absolute;
     bottom: 12px;
     right: 12px;
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #222;
+    background: #ffffff;
     border: none;
     border-radius: 8px;
-    color: #999;
+    color: #000;
     cursor: pointer;
     transition: all 0.15s;
 }
 
 .pg-send:hover:not(:disabled) {
-    background: #333;
-    color: #fff;
+    background: #e0e0e0;
 }
 
 .pg-send:disabled {
@@ -5280,3 +5343,258 @@
         max-width: 100%;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   PLAYGROUND — LIGHT THEME OVERRIDES
+   Triggered by [data-theme="light"] on <html>
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] .pg-overlay {
+    background: #fafafa;
+}
+
+[data-theme="light"] .pg-sidebar {
+    background: #ffffff;
+    border-right-color: #e5e5e5;
+}
+
+[data-theme="light"] .pg-sidebar-top {
+    border-bottom-color: #e5e5e5;
+}
+
+[data-theme="light"] .pg-back {
+    border-color: #e0e0e0;
+    color: #888;
+}
+
+[data-theme="light"] .pg-back:hover {
+    background: #f0f0f0;
+    color: #222;
+    border-color: #ccc;
+}
+
+[data-theme="light"] .pg-logo {
+    color: #222;
+}
+
+[data-theme="light"] .pg-search-box {
+    background: #f5f5f5;
+    border-color: #e5e5e5;
+}
+
+[data-theme="light"] .pg-search-box:focus-within {
+    border-color: #ccc;
+}
+
+[data-theme="light"] .pg-search-icon {
+    color: #999;
+}
+
+[data-theme="light"] .pg-search-input {
+    color: #333;
+}
+
+[data-theme="light"] .pg-search-input::placeholder {
+    color: #aaa;
+}
+
+[data-theme="light"] .pg-section-label {
+    color: #999;
+}
+
+[data-theme="light"] .pg-select {
+    background: #f5f5f5;
+    border-color: #e5e5e5;
+    color: #333;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="light"] .pg-select:focus {
+    border-color: #ccc;
+}
+
+[data-theme="light"] .pg-select option {
+    background: #fff;
+    color: #333;
+}
+
+[data-theme="light"] .pg-bucket-item {
+    color: #666;
+}
+
+[data-theme="light"] .pg-bucket-item:hover {
+    background: #f5f5f5;
+    color: #222;
+}
+
+[data-theme="light"] .pg-bucket-active {
+    background: rgba(0, 0, 0, 0.05) !important;
+    color: #111 !important;
+}
+
+[data-theme="light"] .pg-bucket-count {
+    color: #aaa;
+}
+
+[data-theme="light"] .pg-bucket-active .pg-bucket-count {
+    color: #555;
+}
+
+[data-theme="light"] .pg-empty-hint {
+    color: #bbb;
+}
+
+[data-theme="light"] .pg-history-section {
+    border-top-color: #e5e5e5;
+}
+
+[data-theme="light"] .pg-session-item {
+    color: #666;
+}
+
+[data-theme="light"] .pg-session-item:hover {
+    background: #f5f5f5;
+}
+
+[data-theme="light"] .pg-session-active {
+    background: #f0f0f0 !important;
+    color: #111 !important;
+}
+
+[data-theme="light"] .pg-session-time {
+    color: #bbb;
+}
+
+[data-theme="light"] .pg-session-del {
+    color: #bbb;
+}
+
+[data-theme="light"] .pg-session-del:hover {
+    color: #ef4444;
+}
+
+[data-theme="light"] .pg-sidebar-footer {
+    border-top-color: #e5e5e5;
+}
+
+[data-theme="light"] .pg-new-chat-box {
+    background: #f5f5f5;
+    border-color: #e5e5e5;
+    color: #666;
+}
+
+[data-theme="light"] .pg-new-chat-box:hover {
+    background: #eee;
+    color: #222;
+    border-color: #ccc;
+}
+
+[data-theme="light"] .pg-foot-stat {
+    color: #bbb;
+}
+
+/* Main area — light */
+[data-theme="light"] .pg-main {
+    background: #fafafa;
+}
+
+[data-theme="light"] .pg-messages {
+    scrollbar-color: #ddd transparent;
+}
+
+[data-theme="light"] .pg-messages::-webkit-scrollbar-thumb {
+    background: #ddd;
+}
+
+[data-theme="light"] .pg-messages::-webkit-scrollbar-thumb:hover {
+    background: #bbb;
+}
+
+[data-theme="light"] .pg-greeting-text {
+    color: #111;
+}
+
+[data-theme="light"] .pg-typewriter {
+    color: #777;
+}
+
+[data-theme="light"] .pg-typewriter-cursor {
+    color: #aaa;
+}
+
+/* Messages — light */
+[data-theme="light"] .pg-user-bubble {
+    background: #f0f0f0;
+    color: #111;
+    border-color: #e0e0e0;
+}
+
+[data-theme="light"] .pg-no-mem {
+    background: #f0f0f0;
+    border-color: #e0e0e0;
+    color: #555;
+}
+
+[data-theme="light"] .pg-retrieved-label {
+    color: #555;
+}
+
+[data-theme="light"] .pg-score-card {
+    border-color: rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .pg-score-card:hover {
+    border-color: rgba(0, 0, 0, 0.2);
+    background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .pg-score-title {
+    color: #444;
+}
+
+[data-theme="light"] .pg-reasoning {
+    color: #555;
+    border-top-color: #e5e5e5;
+}
+
+[data-theme="light"] .pg-assistant-text {
+    color: #555;
+}
+
+[data-theme="light"] .pg-typing span {
+    background: #aaa;
+}
+
+/* Input — light */
+[data-theme="light"] .pg-input-box {
+    background: #ffffff;
+    border-color: #e5e5e5;
+}
+
+[data-theme="light"] .pg-input-box:focus-within {
+    border-color: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] .pg-textarea {
+    color: #222;
+}
+
+[data-theme="light"] .pg-textarea::placeholder {
+    color: #aaa;
+}
+
+[data-theme="light"] .pg-send {
+    background: #111;
+    color: #fff;
+}
+
+[data-theme="light"] .pg-send:hover:not(:disabled) {
+    background: #333;
+}
+
+/* Score level colors — light */
+[data-theme="light"] .pg-score-high { color: #111; }
+[data-theme="light"] .pg-score-good { color: #333; }
+[data-theme="light"] .pg-score-mid  { color: #666; }
+[data-theme="light"] .pg-score-low  { color: #999; }
