@@ -19,11 +19,11 @@ export async function POST(request: NextRequest) {
     if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     // Rate limit sharing to 10 requests per minute
-    const rl = checkRateLimit(clerkId, 'buckets', { ...CACHE_PROFILES.buckets, maxRequests: 10 });
+    const rl = checkRateLimit(clerkId, 'buckets', { ...CACHE_PROFILES.buckets, rateLimit: 10 });
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfter / 1000)) } },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter ?? 0) / 1000)) } },
       );
     }
 
@@ -330,7 +330,7 @@ export async function GET() {
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfter / 1000)) } },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter ?? 0) / 1000)) } },
       );
     }
 
