@@ -43,7 +43,6 @@ export function getFirebaseAdmin(): { app: App; db: Firestore } | null {
                 }),
                 projectId,
             });
-            console.log('[Firebase] Admin SDK initialized successfully');
         } else {
             firebaseApp = getApps()[0];
         }

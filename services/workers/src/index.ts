@@ -6,15 +6,13 @@ import { contextRotWorker } from './context-rot-worker';
  * Background Workers — Async jobs for the Memron platform.
  */
 async function main() {
-  console.log('⚙️  Starting Memron background workers...');
-
   await Promise.all([
     forensicSnapshotWorker.start(),
     trustScoringWorker.start(),
     contextRotWorker.start(),
   ]);
 
-  console.log('✅ All workers running');
+  console.log('  Workers       >> 3 background jobs active');
 }
 
 main().catch(console.error);

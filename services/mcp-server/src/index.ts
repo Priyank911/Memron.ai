@@ -253,7 +253,7 @@ app.get('/authorize', async (req, res) => {
         // Verify user still exists and is active
         const user = await db.getUserById(session.userId);
         if (user) {
-          console.log(`[Auth] Auto-approving OAuth for user ${session.userId} (${session.email}) via session cookie`);
+          // auto-approving OAuth via session cookie
 
           // Create auth code directly (skip login page)
           const authCode = tokens.generateAuthCode();
@@ -356,7 +356,7 @@ app.post('/auth/complete', async (req, res) => {
       return;
     }
 
-    console.log(`[Auth] API key verified for user ${keyResult.user.id} (${keyResult.user.email})`);
+    // API key verified
 
     const pending = await db.getPendingAuth(request_id);
     if (!pending) {
@@ -510,7 +510,7 @@ app.post('/mcp', universalAuth, async (req, res) => {
           lastActivity: Date.now(),
           userId,
         });
-        console.log(`[MCP] Session created: ${newSessionId.slice(0, 8)}... (user: ${userId ?? 'unknown'})`);
+        // session created
       },
     });
 
@@ -520,7 +520,7 @@ app.post('/mcp', universalAuth, async (req, res) => {
       const sid = transport.sessionId;
       if (sid) {
         sessions.delete(sid);
-        console.log(`[MCP] Session closed: ${sid.slice(0, 8)}...`);
+        // session closed
       }
     };
 
@@ -811,13 +811,6 @@ let sweepTimer: ReturnType<typeof setInterval> | null = null;
 // ─────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('┌─────────────────────────────────────────┐');
-  console.log('│      Memron MCP Server v1.0.0           │');
-  console.log('└─────────────────────────────────────────┘');
-  console.log();
-  console.log(`Environment: ${config.isRailway ? `Railway (${process.env.RAILWAY_ENVIRONMENT})` : config.nodeEnv}`);
-  console.log(`Server URL:  ${config.serverUrl}`);
-  console.log();
 
   const dbOk = await testConnection();
   if (!dbOk) {
@@ -826,13 +819,11 @@ async function main() {
   }
   await runMigrations();
   await warmPool();
-  console.log('[OK] Connection pool warmed');
 
   if (!testEncryption()) {
     console.error('[FATAL] Encryption self-test failed. Check ENCRYPTION_SECRET.');
     process.exit(1);
   }
-  console.log('[OK] Encryption self-test passed');
 
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
 
@@ -840,22 +831,7 @@ async function main() {
   const host = config.isRailway ? '0.0.0.0' : '127.0.0.1';
 
   const server = app.listen(config.port, host, () => {
-    console.log();
-    console.log(`[OK] MCP Server listening on ${host ?? 'localhost'}:${config.port}`);
-    console.log(`     HTTP endpoint: ${config.serverUrl}/mcp`);
-    console.log(`     Health:        ${config.serverUrl}/health`);
-    console.log(`     OAuth:         ${config.serverUrl}/.well-known/oauth-authorization-server`);
-    console.log(`     PRM:           ${config.serverUrl}/.well-known/oauth-protected-resource/mcp`);
-    console.log();
-    console.log('Auth modes:');
-    console.log('  • OAuth 2.1 + PKCE   (VS Code, Cursor, Windsurf)');
-    console.log('  • Direct API key      (all agents via Bearer mm_live_xxx)');
-    console.log('  • stdio bridge        (node dist/stdio.js — Claude Desktop, Cline)');
-    console.log();
-    console.log('Tools: memory_store, memory_search, memory_update, memory_delete,');
-    console.log('       profile_get, profile_update, context_build,');
-    console.log('       system_health, system_stats');
-    console.log();
+    console.log(`  MCP Server   >> ${config.serverUrl}/mcp`);
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {

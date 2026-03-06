@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { supaQuery, resolveSupabaseUser } from '@/lib/supabase-read';
+import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
 
 /**
  * GET /api/dashboard/webhooks — List user's webhook endpoints
@@ -13,29 +14,40 @@ export async function GET() {
     const { userId: clerkId } = await auth();
     if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supaUser = await resolveSupabaseUser(clerkId);
-    if (!supaUser) return NextResponse.json({ webhooks: [] });
+    const rl = checkRateLimit(clerkId, 'webhooks', CACHE_PROFILES.webhooks);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter || 60_000) / 1000)) } },
+      );
+    }
 
-    const { id: uid } = supaUser;
+    const cacheKey = `webhooks:${clerkId}`;
+    const data = await cachedQuery(cacheKey, async () => {
+      const supaUser = await resolveSupabaseUser(clerkId);
+      if (!supaUser) return { webhooks: [] };
 
-    const res = await supaQuery(
-      `SELECT id, url, events, is_active, secret, created_at, last_triggered_at
-       FROM webhooks WHERE user_id = $1 ORDER BY created_at DESC`,
-      [uid],
-    );
+      const { id: uid } = supaUser;
+      const res = await supaQuery(
+        `SELECT id, url, events, is_active, secret, created_at, last_triggered_at
+         FROM webhooks WHERE user_id = $1 ORDER BY created_at DESC`,
+        [uid],
+      );
 
-    return NextResponse.json({
-      webhooks: res.rows.map((w: any) => ({
-        id: w.id,
-        url: w.url,
-        events: w.events || [],
-        isActive: w.is_active,
-        createdAt: w.created_at,
-        lastTriggeredAt: w.last_triggered_at,
-      })),
-    });
+      return {
+        webhooks: res.rows.map((w: any) => ({
+          id: w.id,
+          url: w.url,
+          events: w.events || [],
+          isActive: w.is_active,
+          createdAt: w.created_at,
+          lastTriggeredAt: w.last_triggered_at,
+        })),
+      };
+    }, CACHE_PROFILES.webhooks);
+
+    return NextResponse.json(data);
   } catch (e: any) {
-    // If table doesn't exist yet, return empty
     if (e.message?.includes('relation') || e.message?.includes('does not exist')) {
       return NextResponse.json({ webhooks: [] });
     }
@@ -96,6 +108,10 @@ export async function POST(request: Request) {
     );
 
     const w = res.rows[0];
+
+    // Invalidate cache
+    invalidateEndpoint(clerkId, 'webhooks');
+
     return NextResponse.json({
       webhook: {
         id: w.id,
@@ -134,6 +150,7 @@ export async function DELETE(request: Request) {
       [webhookId, uid],
     );
 
+    invalidateEndpoint(clerkId, 'webhooks');
     return NextResponse.json({ success: true });
   } catch (e: any) {
     console.error('[Webhooks DELETE]', e.message);
@@ -163,6 +180,7 @@ export async function PATCH(request: Request) {
       [isActive, webhookId, uid],
     );
 
+    invalidateEndpoint(clerkId, 'webhooks');
     return NextResponse.json({ success: true });
   } catch (e: any) {
     console.error('[Webhooks PATCH]', e.message);

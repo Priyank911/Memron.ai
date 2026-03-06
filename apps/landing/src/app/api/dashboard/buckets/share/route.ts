@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { supaQuery, resolveSupabaseUser } from '@/lib/supabase-read';
 import { getUserFromPostgres, createNotification } from '@/lib/postgres';
+import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
 
 /**
  * POST /api/dashboard/buckets/share — Share a sub-bucket with another user
@@ -16,6 +17,15 @@ export async function POST(request: NextRequest) {
   try {
     const { userId: clerkId } = await auth();
     if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // Rate limit sharing to 10 requests per minute
+    const rl = checkRateLimit(clerkId, 'buckets', { ...CACHE_PROFILES.buckets, maxRequests: 10 });
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfter / 1000)) } },
+      );
+    }
 
     // Resolve sender in SUPABASE (same DB the bucket list comes from)
     const supaSender = await resolveSupabaseUser(clerkId);
@@ -290,6 +300,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    invalidateEndpoint(clerkId, 'buckets');
+
     return NextResponse.json({
       success: true,
       share: {
@@ -314,8 +326,19 @@ export async function GET() {
     const { userId: clerkId } = await auth();
     if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supaUser = await resolveSupabaseUser(clerkId);
-    if (!supaUser) return NextResponse.json({ sent: [], received: [] });
+    const rl = checkRateLimit(clerkId, 'buckets', CACHE_PROFILES.buckets);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfter / 1000)) } },
+      );
+    }
+
+    const data = await cachedQuery(
+      `bucket-shares:${clerkId}`,
+      async () => {
+        const supaUser = await resolveSupabaseUser(clerkId);
+        if (!supaUser) return { sent: [], received: [] };
 
     const [sentRes, receivedRes] = await Promise.all([
       supaQuery(
@@ -340,26 +363,31 @@ export async function GET() {
       ).catch(() => ({ rows: [] } as any)),
     ]);
 
-    return NextResponse.json({
-      sent: sentRes.rows.map((s: any) => ({
-        shareId: s.share_id,
-        bucketName: s.bucket_name,
-        bucketSlug: s.bucket_slug,
-        targetEmail: s.target_email,
-        targetName: s.target_user_name,
-        status: s.status,
-        createdAt: s.created_at,
-      })),
-      received: receivedRes.rows.map((r: any) => ({
-        shareId: r.share_id,
-        bucketName: r.bucket_name,
-        bucketSlug: r.bucket_slug,
-        senderEmail: r.source_user_email,
-        senderName: r.source_user_name,
-        status: r.status,
-        createdAt: r.created_at,
-      })),
-    });
+        return {
+          sent: sentRes.rows.map((s: any) => ({
+            shareId: s.share_id,
+            bucketName: s.bucket_name,
+            bucketSlug: s.bucket_slug,
+            targetEmail: s.target_email,
+            targetName: s.target_user_name,
+            status: s.status,
+            createdAt: s.created_at,
+          })),
+          received: receivedRes.rows.map((r: any) => ({
+            shareId: r.share_id,
+            bucketName: r.bucket_name,
+            bucketSlug: r.bucket_slug,
+            senderEmail: r.source_user_email,
+            senderName: r.source_user_name,
+            status: r.status,
+            createdAt: r.created_at,
+          })),
+        };
+      },
+      CACHE_PROFILES.buckets,
+    );
+
+    return NextResponse.json(data);
   } catch (error: any) {
     console.error('[BucketShare API] List error:', error.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

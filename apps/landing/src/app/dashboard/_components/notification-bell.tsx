@@ -1,45 +1,17 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Bell, X, CheckCheck, Share2, Info } from 'lucide-react';
-
-interface Notification {
-  id: string;
-  type: string;
-  title: string;
-  body: string | null;
-  metadata: Record<string, any>;
-  isRead: boolean;
-  createdAt: string;
-}
+import { useNotifications } from '../_hooks/use-notifications';
 
 interface NotificationBellProps {
   enabled?: boolean;
 }
 
 export function NotificationBell({ enabled = true }: NotificationBellProps) {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const { notifications, unreadCount, markAllRead } = useNotifications();
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-
-  const fetchNotifications = useCallback(async () => {
-    if (!enabled) return;
-    try {
-      const res = await fetch('/api/dashboard/notifications', { credentials: 'include' });
-      if (!res.ok) return;
-      const data = await res.json();
-      setNotifications(data.notifications || []);
-      setUnreadCount(data.unreadCount || 0);
-    } catch { /* ignore */ }
-  }, [enabled]);
-
-  // Initial fetch + poll every 30s
-  useEffect(() => {
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchNotifications]);
 
   // Close panel when clicking outside
   useEffect(() => {
@@ -51,19 +23,6 @@ export function NotificationBell({ enabled = true }: NotificationBellProps) {
     if (open) document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
-
-  const markAllRead = async () => {
-    try {
-      await fetch('/api/dashboard/notifications', {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-      setUnreadCount(0);
-    } catch { /* ignore */ }
-  };
 
   const getIcon = (type: string) => {
     switch (type) {

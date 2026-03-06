@@ -9,30 +9,46 @@ import {
 } from '@/lib/postgres';
 import { generateApiKey, hashApiKey } from '@/lib/api-key';
 import { syncApiKeyToSupabase, revokeApiKeyInSupabase } from '@/lib/supabase-sync';
+import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
 
 /**
  * GET /api/dashboard/keys — List all API keys for the current user
  */
 export async function GET() {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { userId: clerkId } = await auth();
+    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const dbUser = await getUserFromPostgres(userId);
-    if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    const rl = checkRateLimit(clerkId, 'keys', CACHE_PROFILES.keys);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfter / 1000)) } },
+      );
+    }
 
-    const keys = await getApiKeysByUserId(dbUser.id);
+    const data = await cachedQuery(
+      `keys:${clerkId}`,
+      async () => {
+        const dbUser = await getUserFromPostgres(clerkId);
+        if (!dbUser) return { keys: [] };
 
-    return NextResponse.json({
-      keys: keys.map((k: any) => ({
-        id: k.key_id,
-        prefix: k.key_prefix,
-        name: k.name,
-        scopes: k.scopes || ['memory:read', 'memory:write'],
-        lastUsedAt: k.last_used_at,
-        createdAt: k.created_at,
-      })),
-    });
+        const keys = await getApiKeysByUserId(dbUser.id);
+        return {
+          keys: keys.map((k: any) => ({
+            id: k.key_id,
+            prefix: k.key_prefix,
+            name: k.name,
+            scopes: k.scopes || ['memory:read', 'memory:write'],
+            lastUsedAt: k.last_used_at,
+            createdAt: k.created_at,
+          })),
+        };
+      },
+      CACHE_PROFILES.keys,
+    );
+
+    return NextResponse.json(data);
   } catch (error: any) {
     console.error('[Dashboard API] Keys list error:', error.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -105,6 +121,8 @@ export async function POST(request: NextRequest) {
       console.warn('[Dashboard API] Supabase sync error (key saved to primary):', syncResult.error);
     }
 
+    invalidateEndpoint(userId, 'keys');
+
     return NextResponse.json({
       success: true,
       key: {
@@ -150,6 +168,7 @@ export async function DELETE(request: NextRequest) {
     revokeApiKeyInSupabase(keyId, userId)
       .catch((e: any) => console.warn('[Dashboard API] Supabase key revoke (non-fatal):', e.message));
 
+    invalidateEndpoint(userId, 'keys');
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('[Dashboard API] Key revoke error:', error.message);

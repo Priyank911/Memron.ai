@@ -70,9 +70,7 @@ if (isConfigured) {
   });
 
   if (isSameDatabase) {
-    console.log('[SupaSync] Supabase host === primary PG host — sync writes will be skipped (same DB).');
-  } else {
-    console.log(`[SupaSync] Configured — mirroring writes to ${SUPABASE_HOST}:${SUPABASE_PORT}/${SUPABASE_DB}`);
+    // Same DB — sync writes skipped
   }
 } else {
   console.warn('[SupaSync] Not configured — Supabase sync disabled. Set SUPABASE_PG_HOST to enable.');
@@ -85,8 +83,8 @@ async function exec(sql: string, params?: unknown[]) {
   return supaPool.query(sql, params);
 }
 
-function logOk(entity: string, id: string | number) {
-  console.log(`[SupaSync] ✅ ${entity} synced (${id})`);
+function logOk(_entity: string, _id: string | number) {
+  // silent in production — success is the expected case
 }
 
 function logFail(entity: string, err: unknown) {

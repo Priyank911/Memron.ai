@@ -21,7 +21,7 @@ const app = new Hono()
 
 const port = parseInt(process.env.PLATFORM_API_PORT ?? '4000', 10);
 const server = serve({ fetch: app.fetch, port }, () => {
-  console.log(`🌐 Gateway running on http://localhost:${port}`);
+  console.log(`  Gateway       >> http://localhost:${port}`);
 });
 
 server.on('error', (err: NodeJS.ErrnoException) => {

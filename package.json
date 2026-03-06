@@ -11,7 +11,7 @@
   },
   "packageManager": "pnpm@9.15.4",
   "scripts": {
-    "dev": "turbo dev",
+    "dev": "node scripts/dev-banner.mjs && turbo dev",
     "dev:landing": "turbo dev --filter=@memron/landing",
     "dev:mcp": "turbo dev --filter=@memron/mcp-server",
     "dev:all": "turbo dev --filter=@memron/landing --filter=@memron/mcp-server",

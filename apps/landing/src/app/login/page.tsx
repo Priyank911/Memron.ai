@@ -159,9 +159,13 @@ export default function LoginPage() {
     redirectingRef.current = true;
     setLoginPhase('syncing');
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
     (async () => {
       // Fast path: cookie present
       if (document.cookie.includes('memron_onboarded=true')) {
+        clearTimeout(timeout);
         setLoginPhase('ready');
         await delay(600);
         router.replace('/dashboard');
@@ -170,7 +174,11 @@ export default function LoginPage() {
 
       // Cookie absent — check the API before deciding
       try {
-        const res = await fetch('/api/onboarding', { credentials: 'include' });
+        const res = await fetch('/api/onboarding', {
+          credentials: 'include',
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
         if (res.ok) {
           const ct = res.headers.get('content-type') || '';
           if (ct.includes('application/json')) {
@@ -184,9 +192,15 @@ export default function LoginPage() {
             }
           }
         }
-      } catch { /* fall through */ }
+      } catch {
+        clearTimeout(timeout);
+        // Timeout or network error — assume onboarded if cookie check failed,
+        // dashboard will re-check anyway
+      }
       router.replace('/onboarding');
     })();
+
+    return () => { clearTimeout(timeout); controller.abort(); };
   }, [isSignedIn, router]);
 
   /**
@@ -201,17 +215,25 @@ export default function LoginPage() {
 
     setLoginPhase('syncing');
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
     try {
       // Sync user record
       await fetch('/api/user/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        signal: controller.signal,
       });
 
       // Check onboarding status — the /api/onboarding response also sets
       // the cookie via Set-Cookie header, and we double-set client-side
-      const res = await fetch('/api/onboarding', { credentials: 'include' });
+      const res = await fetch('/api/onboarding', {
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
       if (res.ok) {
         const ct = res.headers.get('content-type') || '';
         if (ct.includes('application/json')) {
@@ -222,7 +244,13 @@ export default function LoginPage() {
           }
         }
       }
-    } catch { /* Network error — fall through */ }
+    } catch {
+      clearTimeout(timeout);
+      // Timeout or network error — try dashboard anyway, middleware will redirect if needed
+      if (document.cookie.includes('memron_onboarded=true')) {
+        return '/dashboard';
+      }
+    }
 
     return '/onboarding';
   };
@@ -236,10 +264,25 @@ export default function LoginPage() {
       setError('');
       setLoginPhase('authenticating');
 
-      const result = await signIn.create({
+      let result = await signIn.create({
         identifier: email,
         password,
       });
+
+      // Handle multi-step auth — Clerk may require explicit first-factor verification
+      if (result.status === 'needs_first_factor') {
+        result = await signIn.attemptFirstFactor({
+          strategy: 'password',
+          password,
+        });
+      }
+
+      if (result.status === 'needs_second_factor') {
+        // MFA required — bail back to form with message
+        setLoginPhase('form');
+        setError('Two-factor authentication is required but not yet supported in this flow.');
+        return;
+      }
 
       if (result.status === 'complete') {
         redirectingRef.current = true;
@@ -253,6 +296,10 @@ export default function LoginPage() {
 
         // Navigate — cookie is already set, middleware will pass through
         router.replace(dest);
+      } else {
+        // Unexpected status — don't leave the user stuck
+        setLoginPhase('form');
+        setError('Sign-in could not be completed. Please try again.');
       }
     } catch (err: any) {
       setLoginPhase('form');

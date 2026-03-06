@@ -51,8 +51,6 @@ if (isConfigured) {
   pool.on('error', (err) => {
     console.error('[SupaRead] Pool error:', err.message);
   });
-
-  console.log(`[SupaRead] Configured — reading MCP data from ${SUPA_HOST}:${SUPA_PORT}/${SUPA_DB}`);
 } else {
   console.warn('[SupaRead] Not configured — dashboard will show no MCP data. Set SUPABASE_PG_* env vars.');
 }
