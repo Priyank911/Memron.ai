@@ -74,11 +74,8 @@ export async function query(text: string, params?: any[]) {
     if (!pool) {
         throw new Error('PostgreSQL not configured');
     }
-    const start = Date.now();
     try {
         const result = await pool.query(text, params);
-        const duration = Date.now() - start;
-        console.log(`[PostgreSQL] Query executed in ${duration}ms — rows: ${result.rowCount}`);
         return result;
     } catch (error: any) {
         console.error('[PostgreSQL] Query failed:', error.message);

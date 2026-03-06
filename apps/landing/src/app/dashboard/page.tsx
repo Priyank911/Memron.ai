@@ -25,10 +25,11 @@ import {
   CreateBucketModal,
   Playground,
 } from './_components';
-import { DonutChart } from './_components/charts';
+import { DonutChart, Sparkline } from './_components/charts';
 import { Topbar } from './_components/topbar';
 import type { OrgInfo, UserInfo, ApiKeyInfo } from './_components';
 import { useDashboardData } from './_hooks/use-dashboard-data';
+import { useNotifications } from './_hooks/use-notifications';
 
 /* ── Time filter configs ── */
 const TIME_FILTERS = [
@@ -61,8 +62,8 @@ export default function DashboardPage() {
   const [trendHover, setTrendHover] = useState<{ idx: number; x: number; y: number } | null>(null);
   const trendRef = useRef<HTMLDivElement>(null);
   const [notifTab, setNotifTab] = useState<'all' | 'unread' | 'archived'>('all');
-  const [notifData, setNotifData] = useState<{ id: string; type: string; title: string; body: string | null; isRead: boolean; createdAt: string; archived?: boolean }[]>([]);
-  const [notifLoading, setNotifLoading] = useState(true);
+  const [archivedIds, setArchivedIds] = useState<Set<string>>(new Set());
+  const { notifications: globalNotifs, unreadCount: _notifUnread, loading: notifLoading, markAllRead: globalMarkAllRead, refetch: refetchNotifs } = useNotifications();
 
   /* ── Settings page state ── */
   const [settingsTab, setSettingsTab] = useState<'general' | 'appearance' | 'security' | 'integrations'>('general');
@@ -152,21 +153,6 @@ export default function DashboardPage() {
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, []);
-
-  /* ── Notifications fetch ── */
-  useEffect(() => {
-    if (active !== 'notifications') return;
-    (async () => {
-      try {
-        setNotifLoading(true);
-        const res = await fetch('/api/dashboard/notifications', { credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          setNotifData((data.notifications || []).map((n: any) => ({ ...n, archived: false })));
-        }
-      } catch { /* ignore */ } finally { setNotifLoading(false); }
-    })();
-  }, [active]);
 
   /* ── Webhooks fetch ── */
   const fetchWebhooks = useCallback(async () => {
@@ -487,7 +473,7 @@ export default function DashboardPage() {
       {dataError && (
         <div className="mm-error-bar">
           <AlertTriangle size={13} /> {dataError}
-          <button onClick={refreshData}>Retry</button>
+          <button onClick={() => refreshData()}>Retry</button>
         </div>
       )}
 
@@ -625,38 +611,76 @@ export default function DashboardPage() {
           <div className="mm-stat-card">
             <div className="mm-stat-top">
               <span className="mm-stat-label">Total Memories</span>
-              <Brain size={16} strokeWidth={1.5} className="mm-stat-icon" />
+              <Brain size={15} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
-            <span className="mm-stat-value">{stats.totalMemories.toLocaleString()}</span>
-            <span className={`mm-stat-delta ${stats.memoryDelta >= 0 ? 'mm-green' : 'mm-red'}`}>
-              {memoryDeltaStr} vs prev period
-            </span>
+            <div className="mm-stat-body">
+              <span className="mm-stat-value">{stats.totalMemories.toLocaleString()}</span>
+              <div className="mm-stat-spark">
+                <Sparkline data={stats.sparkMemories.length > 1 ? stats.sparkMemories : [0, 0]} width={64} height={20} color="#7c3aed" strokeWidth={1.5} />
+              </div>
+            </div>
+            <div className="mm-stat-footer">
+              <span className={`mm-stat-delta ${stats.memoryDelta >= 0 ? 'mm-green' : 'mm-red'}`}>
+                {memoryDeltaStr}
+              </span>
+              <span className="mm-stat-sub">vs prev period</span>
+            </div>
           </div>
           <div className="mm-stat-card">
             <div className="mm-stat-top">
-              <span className="mm-stat-label">Tokens processed</span>
-              <Zap size={16} strokeWidth={1.5} className="mm-stat-icon" />
+              <span className="mm-stat-label">Tokens Processed</span>
+              <Zap size={15} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
-            <span className="mm-stat-value">{stats.totalTokens.toLocaleString()}</span>
-            <span className="mm-stat-delta mm-muted">avg value: {avgTokensPerMem.toLocaleString()} tok/mem</span>
+            <div className="mm-stat-body">
+              <span className="mm-stat-value">{stats.totalTokens.toLocaleString()}</span>
+              <div className="mm-stat-ring">
+                <svg width="28" height="28" viewBox="0 0 28 28">
+                  <circle cx="14" cy="14" r="11" fill="none" stroke="var(--mm-bg-3)" strokeWidth="3" />
+                  <circle cx="14" cy="14" r="11" fill="none" stroke="var(--mm-violet-3)" strokeWidth="3" strokeLinecap="round"
+                    strokeDasharray={`${Math.min(avgTokensPerMem / 100, 1) * 69.1} 69.1`}
+                    style={{ transform: 'rotate(-90deg)', transformOrigin: 'center' }} />
+                </svg>
+              </div>
+            </div>
+            <div className="mm-stat-footer">
+              <span className="mm-stat-delta mm-muted">{avgTokensPerMem.toLocaleString()}</span>
+              <span className="mm-stat-sub">avg tok/mem</span>
+            </div>
           </div>
           <div className="mm-stat-card">
             <div className="mm-stat-top">
-              <span className="mm-stat-label">Compression rate</span>
-              <Gauge size={16} strokeWidth={1.5} className="mm-stat-icon" />
+              <span className="mm-stat-label">Compression Rate</span>
+              <Gauge size={15} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
-            <span className="mm-stat-value">{compressionRatio}</span>
-            <span className="mm-stat-delta mm-green">optimized</span>
+            <div className="mm-stat-body">
+              <span className="mm-stat-value">{compressionRatio}</span>
+              <div className="mm-stat-bar-wrap">
+                <div className="mm-stat-bar-track">
+                  <div className="mm-stat-bar-fill" style={{ width: compressionRatio }} />
+                </div>
+              </div>
+            </div>
+            <div className="mm-stat-footer">
+              <span className="mm-stat-delta mm-green">optimized</span>
+              <span className="mm-stat-sub">{stats.originalTokens > 0 ? `${stats.originalTokens.toLocaleString()} original` : 'efficient'}</span>
+            </div>
           </div>
           <div className="mm-stat-card">
             <div className="mm-stat-top">
-              <span className="mm-stat-label">Active sessions</span>
-              <Users size={16} strokeWidth={1.5} className="mm-stat-icon" />
+              <span className="mm-stat-label">Active Sessions</span>
+              <Users size={15} strokeWidth={1.5} className="mm-stat-icon" />
             </div>
-            <span className="mm-stat-value">{stats.activeSessions}</span>
-            <span className="mm-stat-delta">
-              real time <span className="mm-live-dot" />
-            </span>
+            <div className="mm-stat-body">
+              <span className="mm-stat-value">{stats.activeSessions}</span>
+              <span className="mm-stat-live">
+                <span className="mm-live-dot" />
+                <span className="mm-stat-live-text">LIVE</span>
+              </span>
+            </div>
+            <div className="mm-stat-footer">
+              <span className="mm-stat-delta mm-muted">{stats.buckets.length}</span>
+              <span className="mm-stat-sub">active buckets</span>
+            </div>
           </div>
         </div>
 
@@ -666,13 +690,17 @@ export default function DashboardPage() {
           <div className="mm-panel mm-heatmap-panel">
             <div className="mm-panel-head">
               <h2>Memory Heatmap</h2>
-              <div className="mm-legend-row">
-                {distribution.map((d, i) => (
-                  <span key={i} className="mm-legend-item">
-                    <span className="mm-legend-dot" style={{ background: d.color }} />
-                    {d.label}
-                  </span>
-                ))}
+              <div className="mm-heatmap-meta">
+                <span className="mm-heatmap-total">{stats.totalMemories} total</span>
+                <div className="mm-heatmap-scale">
+                  <span className="mm-heatmap-scale-label">Less</span>
+                  <span className="mm-hm-cell lv-0" style={{ width: 10, height: 10 }} />
+                  <span className="mm-hm-cell lv-1" style={{ width: 10, height: 10 }} />
+                  <span className="mm-hm-cell lv-2" style={{ width: 10, height: 10 }} />
+                  <span className="mm-hm-cell lv-3" style={{ width: 10, height: 10 }} />
+                  <span className="mm-hm-cell lv-4" style={{ width: 10, height: 10 }} />
+                  <span className="mm-heatmap-scale-label">More</span>
+                </div>
               </div>
             </div>
             <div className="mm-heatmap-wrap">
@@ -695,7 +723,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Bucket Distribution — Enhanced */}
+          {/* Bucket Distribution — Compact Horizontal */}
           <div className="mm-panel mm-dist-panel">
             <div className="mm-panel-head">
               <h2>Bucket Distribution</h2>
@@ -703,30 +731,25 @@ export default function DashboardPage() {
             </div>
             <div className="mm-dist-body">
               {stats.buckets.length > 0 ? (
-                <div className="mm-dist-layout">
-                  <DonutChart
-                    segments={distribution.map(d => ({ value: d.pct, color: d.color, label: d.label }))}
-                    size={140}
-                    thickness={16}
-                    centerValue={stats.totalMemories}
-                    centerLabel="memories"
-                  />
-                  <div className="mm-dist-details">
+                <div className="mm-dist-compact">
+                  <div className="mm-dist-chart-col">
+                    <DonutChart
+                      segments={distribution.map(d => ({ value: d.pct, color: d.color, label: d.label }))}
+                      size={110}
+                      thickness={14}
+                      centerValue={stats.totalMemories}
+                      centerLabel="memories"
+                    />
+                  </div>
+                  <div className="mm-dist-list-col">
                     {distribution.map((d, i) => {
                       const count = stats.buckets[i]?.count ?? 0;
                       return (
                         <div key={i} className="mm-dist-row">
-                          <div className="mm-dist-row-left">
-                            <span className="mm-dist-color" style={{ background: d.color }} />
-                            <span className="mm-dist-name">{d.label}</span>
-                          </div>
-                          <div className="mm-dist-row-right">
-                            <span className="mm-dist-count">{count.toLocaleString()}</span>
-                            <div className="mm-dist-bar-track">
-                              <div className="mm-dist-bar-fill" style={{ width: `${d.pct}%`, background: d.color }} />
-                            </div>
-                            <span className="mm-dist-pct">{d.pct}%</span>
-                          </div>
+                          <span className="mm-dist-color" style={{ background: d.color }} />
+                          <span className="mm-dist-name" title={d.label}>{d.label}</span>
+                          <span className="mm-dist-count">{count.toLocaleString()}</span>
+                          <span className="mm-dist-pct">{d.pct}%</span>
                         </div>
                       );
                     })}
@@ -1644,30 +1667,25 @@ export default function DashboardPage() {
   );
 
   /* ══════════ Notifications Page ══════════ */
+  const notifData = globalNotifs.map(n => ({ ...n, archived: archivedIds.has(n.id) }));
+
   const markNotifRead = async (id: string) => {
-    setNotifData(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
     try {
       await fetch('/api/dashboard/notifications', {
         method: 'PATCH', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ notifIds: [id] }),
       });
+      refetchNotifs();
     } catch { /* ignore */ }
   };
 
   const markAllNotifRead = async () => {
-    setNotifData(prev => prev.map(n => ({ ...n, isRead: true })));
-    try {
-      await fetch('/api/dashboard/notifications', {
-        method: 'PATCH', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-    } catch { /* ignore */ }
+    await globalMarkAllRead();
   };
 
   const archiveNotif = (id: string) => {
-    setNotifData(prev => prev.map(n => n.id === id ? { ...n, archived: true } : n));
+    setArchivedIds(prev => new Set(prev).add(id));
   };
 
   const filteredNotifs = notifData.filter(n => {

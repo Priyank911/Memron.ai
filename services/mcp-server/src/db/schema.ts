@@ -318,7 +318,7 @@ const MIGRATIONS = [
  * Run all migrations. Idempotent — safe to call on every startup.
  */
 export async function runMigrations(): Promise<void> {
-  console.log('[DB] Running schema migrations...');
+  // migrations run silently
 
   let failures = 0;
   for (const sql of MIGRATIONS) {
@@ -339,5 +339,5 @@ export async function runMigrations(): Promise<void> {
     }
   }
 
-  console.log('[DB] Migrations complete');
+  // migrations complete
 }

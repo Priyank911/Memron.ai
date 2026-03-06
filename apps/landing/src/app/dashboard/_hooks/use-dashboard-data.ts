@@ -64,15 +64,16 @@ export function useDashboardData(enabled = true, timeRange = '30d') {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
       setLoading(true);
       setError(null);
 
+      const opts: RequestInit = { credentials: 'include', signal };
       const [statsRes, memoriesRes, bucketsRes] = await Promise.all([
-        fetch(`/api/dashboard/stats?range=${timeRange}`, { credentials: 'include' }),
-        fetch('/api/dashboard/memories', { credentials: 'include' }),
-        fetch('/api/dashboard/buckets', { credentials: 'include' }),
+        fetch(`/api/dashboard/stats?range=${timeRange}`, opts),
+        fetch('/api/dashboard/memories', opts),
+        fetch('/api/dashboard/buckets', opts),
       ]);
 
       // Stats
@@ -103,6 +104,7 @@ export function useDashboardData(enabled = true, timeRange = '30d') {
         console.warn('[useDashboardData] Buckets API error:', bucketsRes.status);
       }
     } catch (err: any) {
+      if (err.name === 'AbortError') return;
       console.error('[useDashboardData] Fetch error:', err);
       setError(err.message);
     } finally {
@@ -110,7 +112,12 @@ export function useDashboardData(enabled = true, timeRange = '30d') {
     }
   }, [timeRange]);
 
-  useEffect(() => { if (enabled) refresh(); }, [enabled, refresh, timeRange]);
+  useEffect(() => {
+    if (!enabled) return;
+    const ac = new AbortController();
+    refresh(ac.signal).catch(() => {});
+    return () => ac.abort();
+  }, [enabled, refresh, timeRange]);
 
   /* ── Transform for components ── */
   const memoryRows: MemoryRow[] = memories.map((m) => ({

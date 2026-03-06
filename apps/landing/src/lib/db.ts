@@ -86,7 +86,7 @@ export async function syncUser(userData: UserData): Promise<SyncResult> {
 
     // Log sync status for monitoring
     if (source === 'both') {
-        console.log(`[DualDB] ✅ User ${userData.clerkId} synced to BOTH databases`);
+        // success — silent
     } else if (source !== 'none') {
         console.warn(`[DualDB] ⚠️ User ${userData.clerkId} synced to ${source} only`);
         if (!postgres.success) console.warn(`[DualDB] PostgreSQL error: ${postgres.error}`);

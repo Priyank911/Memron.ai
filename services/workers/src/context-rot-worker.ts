@@ -4,7 +4,7 @@
  */
 export const contextRotWorker = {
   async start(): Promise<void> {
-    console.log('  🧹 Context rot worker started');
+    // started
     // TODO: Scheduled scan of memory freshness scores
   },
 };

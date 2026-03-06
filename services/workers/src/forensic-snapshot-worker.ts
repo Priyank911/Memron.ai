@@ -4,7 +4,7 @@
  */
 export const forensicSnapshotWorker = {
   async start(): Promise<void> {
-    console.log('  📸 Forensic snapshot worker started');
+    // started
     // TODO: Process BullMQ jobs for scheduled snapshot creation
   },
 };

@@ -10,6 +10,31 @@ import {
 } from 'lucide-react';
 import type { OrgInfo } from './types';
 
+/* ── Animated role ticker ── */
+const ROLES = ['Developer', 'AI Engineer', 'Data Engineer', 'Full Stack Dev', 'Cloud Architect'];
+
+function RoleTicker() {
+  const [index, setIndex] = useState(0);
+  const [fade, setFade] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setFade(false);
+      setTimeout(() => {
+        setIndex(i => (i + 1) % ROLES.length);
+        setFade(true);
+      }, 300);
+    }, 2800);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <span className={`mm-sb-user-role mm-role-ticker${fade ? ' mm-role-visible' : ''}`}>
+      {ROLES[index]}
+    </span>
+  );
+}
+
 /* ── Navigation definitions ── */
 const NAV_SECTIONS = [
   {
@@ -166,7 +191,7 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
           </div>
           <div className="mm-sb-user-info">
             <span className="mm-sb-user-name">{displayName}</span>
-            <span className="mm-sb-user-role">Manager</span>
+            <RoleTicker />
           </div>
         </button>
 

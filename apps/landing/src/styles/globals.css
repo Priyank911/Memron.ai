@@ -5671,7 +5671,6 @@ body {
 .db-keys-empty span { font-size: 12px; }
 
 /* ── Key row ── */
-.db-keys-table { }
 .db-keys-row {
   display: flex;
   align-items: center;

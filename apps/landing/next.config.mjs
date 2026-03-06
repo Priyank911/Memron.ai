@@ -3,6 +3,11 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   compress: true,
+  logging: {
+    fetches: {
+      fullUrl: false,
+    },
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.memron.ai' },

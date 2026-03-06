@@ -5,8 +5,7 @@ import { logger } from './lib/logger';
 const port = parseInt(process.env.MEMORY_TUNNEL_PORT ?? '5200', 10);
 
 const server = serve({ fetch: app.fetch, port }, () => {
-  logger.info(`🧠 Memory Tunnel API running on http://localhost:${port}`);
-  logger.info(`📡 MCP Bridge endpoint: http://localhost:${port}/mcp`);
+  console.log(`  Tunnel API    >> http://localhost:${port}`);
 });
 
 server.on('error', (err: NodeJS.ErrnoException) => {

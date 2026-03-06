@@ -99,7 +99,7 @@ export async function transaction<T>(
 export async function testConnection(): Promise<boolean> {
   try {
     const result = await pool.query('SELECT NOW() as now');
-    console.log('[DB] Connected:', result.rows[0].now);
+    // connected
     return true;
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -113,5 +113,5 @@ export async function testConnection(): Promise<boolean> {
  */
 export async function close(): Promise<void> {
   await pool.end();
-  console.log('[DB] Pool closed');
+  // pool closed
 }

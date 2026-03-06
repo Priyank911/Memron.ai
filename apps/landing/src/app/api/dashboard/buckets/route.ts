@@ -8,79 +8,91 @@ import {
 } from '@/lib/postgres';
 import { syncBucketToSupabase } from '@/lib/supabase-sync';
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
+import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
 
 /**
  * GET /api/dashboard/buckets — List all buckets for the current user
- *
- * Reads from Supabase (MCP database) to get buckets with live memory counts.
+ * Protected by: auth + rate limiter + server-side cache (30s TTL).
  */
 export async function GET() {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supaUser = await resolveSupabaseUser(userId);
-    if (!supaUser) return NextResponse.json({ buckets: [] });
-
-    const { id: uid, orgId } = supaUser;
-    const { where: whereUser, params } = buildUserWhereClause(uid, orgId);
-
-    // Get buckets from Supabase, plus live memory_count from memories table
-    let buckets: any[] = [];
-    try {
-      const res = await supaQuery(
-        `SELECT b.bucket_id, b.name, b.slug, b.description, b.is_default, b.created_at,
-                COALESCE(m.cnt, 0) as memory_count
-         FROM buckets b
-         LEFT JOIN (
-           SELECT bucket, COUNT(*) as cnt FROM memories
-           WHERE (${whereUser}) AND is_active = true
-           GROUP BY bucket
-         ) m ON m.bucket = b.slug
-         WHERE b.user_id = $${params.length + 1} AND b.is_active = true
-         ORDER BY b.is_default DESC, b.created_at ASC`,
-        [...params, uid],
+    const rl = checkRateLimit(userId, 'buckets', CACHE_PROFILES.buckets);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter || 60_000) / 1000)) } },
       );
-      buckets = res.rows;
-    } catch (e: any) {
-      // buckets table might not exist — derive from memories
-      console.warn('[Dashboard Buckets] Table query failed, deriving from memories:', e.message);
-      try {
-        const res = await supaQuery(
-          `SELECT bucket as slug, bucket as name, COUNT(*) as memory_count
-           FROM memories
-           WHERE (${whereUser}) AND is_active = true
-           GROUP BY bucket
-           ORDER BY memory_count DESC`,
-          params,
-        );
-        buckets = res.rows.map((r: any) => ({
-          bucket_id: r.slug,
-          name: r.name,
-          slug: r.slug,
-          description: null,
-          is_default: r.slug === 'main',
-          memory_count: parseInt(r.memory_count, 10),
-          created_at: new Date().toISOString(),
-        }));
-      } catch { /* no memories either */ }
     }
 
-    return NextResponse.json({
-      buckets: buckets.map((b: any) => ({
-        id: b.bucket_id,
-        name: b.name,
-        slug: b.slug,
-        description: b.description,
-        isDefault: b.is_default,
-        memoryCount: parseInt(b.memory_count) || 0,
-        createdAt: b.created_at,
-      })),
-    });
-  } catch (error: any) {
-    console.error('[Dashboard API] Buckets list error:', error.message);
+    const cacheKey = `buckets:${userId}`;
+    const data = await cachedQuery(cacheKey, () => fetchBuckets(userId), CACHE_PROFILES.buckets);
+    return NextResponse.json(data);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Unknown';
+    console.error('[Dashboard API] Buckets error:', msg);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
+}
+
+async function fetchBuckets(clerkId: string) {
+  const supaUser = await resolveSupabaseUser(clerkId);
+  if (!supaUser) return { buckets: [] };
+
+  const { id: uid, orgId } = supaUser;
+  const { where: whereUser, params } = buildUserWhereClause(uid, orgId);
+
+  let buckets: any[] = [];
+  try {
+    const res = await supaQuery(
+      `SELECT b.bucket_id, b.name, b.slug, b.description, b.is_default, b.created_at,
+              COALESCE(m.cnt, 0) as memory_count
+       FROM buckets b
+       LEFT JOIN (
+         SELECT bucket, COUNT(*) as cnt FROM memories
+         WHERE (${whereUser}) AND is_active = true
+         GROUP BY bucket
+       ) m ON m.bucket = b.slug
+       WHERE b.user_id = $${params.length + 1} AND b.is_active = true
+       ORDER BY b.is_default DESC, b.created_at ASC`,
+      [...params, uid],
+    );
+    buckets = res.rows;
+  } catch {
+    try {
+      const res = await supaQuery(
+        `SELECT bucket as slug, bucket as name, COUNT(*) as memory_count
+         FROM memories
+         WHERE (${whereUser}) AND is_active = true
+         GROUP BY bucket
+         ORDER BY memory_count DESC`,
+        params,
+      );
+      buckets = res.rows.map((r: any) => ({
+        bucket_id: r.slug,
+        name: r.name,
+        slug: r.slug,
+        description: null,
+        is_default: r.slug === 'main',
+        memory_count: parseInt(r.memory_count, 10),
+        created_at: new Date().toISOString(),
+      }));
+    } catch { /* no data */ }
+  }
+
+  return {
+    buckets: buckets.map((b: any) => ({
+      id: b.bucket_id,
+      name: b.name,
+      slug: b.slug,
+      description: b.description,
+      isDefault: b.is_default,
+      memoryCount: parseInt(b.memory_count) || 0,
+      createdAt: b.created_at,
+    })),
+  };
 }
 
 /**
@@ -145,6 +157,9 @@ export async function POST(request: NextRequest) {
       isDefault: false,
     }).catch((e: any) => console.warn('[Dashboard API] Supabase bucket sync (non-fatal):', e.message));
 
+    // Invalidate cache so next GET returns fresh data
+    invalidateEndpoint(userId, 'buckets');
+
     return NextResponse.json({
       success: true,
       bucket: {
@@ -189,6 +204,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
+    invalidateEndpoint(userId, 'buckets');
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('[Dashboard API] Bucket delete error:', error.message);
