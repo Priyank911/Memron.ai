@@ -2,7 +2,7 @@ import { serve } from '@hono/node-server';
 import { app } from './app';
 import { logger } from './lib/logger';
 
-const port = parseInt(process.env.MEMORY_TUNNEL_PORT ?? '4200', 10);
+const port = parseInt(process.env.MEMORY_TUNNEL_PORT ?? '5200', 10);
 
 const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`  Tunnel API    >> http://localhost:${port}`);
