@@ -150,11 +150,6 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loginPhase, setLoginPhase] = useState<LoginPhase>('form');
-  const [mfaRequired, setMfaRequired] = useState(false);
-  const [mfaCode, setMfaCode] = useState('');
-  const [mfaStrategy, setMfaStrategy] = useState<'totp' | 'backup_code'>('totp');
-  const [mfaAttempts, setMfaAttempts] = useState(0);
-  const [resettingMfa, setResettingMfa] = useState(false);
   const [emailOtpMode, setEmailOtpMode] = useState(false);
   const [emailOtpCode, setEmailOtpCode] = useState('');
   const router = useRouter();
@@ -285,9 +280,26 @@ export default function LoginPage() {
       }
 
       if (result.status === 'needs_second_factor') {
+        // Skip MFA — fall back to email OTP which bypasses TOTP
+        const freshSignIn = await signIn.create({ identifier: email });
+        const emailFactor = freshSignIn.supportedFirstFactors?.find(
+          (f: any) => f.strategy === 'email_code',
+        ) as any;
+
+        if (!emailFactor?.emailAddressId) {
+          setLoginPhase('form');
+          setError('Email verification is not available. Please contact support.');
+          return;
+        }
+
+        await signIn.prepareFirstFactor({
+          strategy: 'email_code',
+          emailAddressId: emailFactor.emailAddressId,
+        });
+
         setLoginPhase('form');
-        setMfaRequired(true);
-        setMfaCode('');
+        setEmailOtpMode(true);
+        setEmailOtpCode('');
         setError('');
         return;
       }
@@ -333,118 +345,9 @@ export default function LoginPage() {
     }
   };
 
-  const handleMfaSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isLoaded || !signIn) return;
 
-    try {
-      setIsLoading(true);
-      setError('');
-      setLoginPhase('authenticating');
 
-      const result = await signIn.attemptSecondFactor({
-        strategy: mfaStrategy,
-        code: mfaCode.trim(),
-      });
 
-      if (result.status === 'complete') {
-        redirectingRef.current = true;
-        await setActive({ session: result.createdSessionId });
-
-        const dest = await resolveAndNavigate();
-        setLoginPhase('ready');
-        await delay(700);
-        router.replace(dest);
-      } else {
-        setLoginPhase('form');
-        setError('Verification could not be completed. Please try again.');
-      }
-    } catch (err: any) {
-      setLoginPhase('form');
-      const msg = err.errors?.[0]?.message || 'Invalid verification code.';
-      setMfaAttempts((p) => p + 1);
-      setError(msg);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleResetMfa = async () => {
-    if (!isLoaded || !signIn) return;
-    try {
-      setResettingMfa(true);
-      setError('');
-
-      // Try to remove TOTP via backend
-      const res = await fetch('/api/auth/reset-mfa', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok && data.success) {
-        // TOTP removed — restart sign-in from scratch
-        setMfaRequired(false);
-        setMfaCode('');
-        setMfaAttempts(0);
-        setMfaStrategy('totp');
-        setLoginPhase('authenticating');
-
-        let result = await signIn.create({ identifier: email, password });
-        if (result.status === 'needs_first_factor') {
-          result = await signIn.attemptFirstFactor({ strategy: 'password', password });
-        }
-
-        if (result.status === 'complete') {
-          redirectingRef.current = true;
-          await setActive({ session: result.createdSessionId });
-          const dest = await resolveAndNavigate();
-          setLoginPhase('ready');
-          await delay(700);
-          router.replace(dest);
-          return;
-        }
-      }
-
-      // TOTP removal failed (Pro restriction) — use email OTP as fallback
-      // This starts a completely fresh sign-in using email_code strategy
-      // which doesn't trigger MFA at all
-      setMfaRequired(false);
-      setMfaCode('');
-      setMfaAttempts(0);
-      setLoginPhase('authenticating');
-
-      const freshSignIn = await signIn.create({ identifier: email });
-
-      // Find the email address ID for preparing the email code
-      const emailFactor = freshSignIn.supportedFirstFactors?.find(
-        (f: any) => f.strategy === 'email_code',
-      ) as any;
-
-      if (!emailFactor?.emailAddressId) {
-        throw new Error('Email code sign-in is not available. Please contact support.');
-      }
-
-      await signIn.prepareFirstFactor({
-        strategy: 'email_code',
-        emailAddressId: emailFactor.emailAddressId,
-      });
-
-      // Switch to email OTP mode
-      setLoginPhase('form');
-      setMfaRequired(false);
-      setEmailOtpMode(true);
-      setEmailOtpCode('');
-      setError('');
-      setResettingMfa(false);
-    } catch (err: any) {
-      setLoginPhase('form');
-      setResettingMfa(false);
-      setError(err.message || 'Something went wrong. Please try again.');
-    }
-  };
 
   const handleEmailOtpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -467,13 +370,6 @@ export default function LoginPage() {
         setLoginPhase('ready');
         await delay(700);
         router.replace(dest);
-      } else if (result.status === 'needs_second_factor') {
-        // Even email OTP triggered 2FA — this shouldn't happen usually
-        // but handle it by completing the sign-in directly
-        setLoginPhase('form');
-        setEmailOtpMode(false);
-        setMfaRequired(true);
-        setError('');
       } else {
         setLoginPhase('form');
         setError('Verification could not be completed. Please try again.');
@@ -508,13 +404,9 @@ export default function LoginPage() {
   };
 
   const handleBackToLogin = () => {
-    setMfaRequired(false);
-    setMfaCode('');
-    setError('');
-    setMfaStrategy('totp');
-    setMfaAttempts(0);
     setEmailOtpMode(false);
     setEmailOtpCode('');
+    setError('');
   };
 
   // Show transition overlay when not in form phase
@@ -575,206 +467,7 @@ export default function LoginPage() {
           </div>
 
           {/* Heading */}
-          {mfaRequired ? (
-            <>
-              <h1 style={{
-                fontFamily: "'Space Grotesk', sans-serif",
-                fontSize: '1.85rem',
-                fontWeight: 700,
-                color: '#09090b',
-                letterSpacing: '-0.03em',
-                marginBottom: '0.4rem',
-              }}>Two-factor verification</h1>
-              <p style={{
-                fontSize: '0.92rem',
-                color: '#71717a',
-                lineHeight: 1.55,
-                marginBottom: '2rem',
-                fontFamily: "'Inter', sans-serif",
-              }}>
-                {mfaStrategy === 'totp'
-                  ? 'Enter the 6-digit code from your authenticator app.'
-                  : 'Enter one of your backup codes.'}
-              </p>
-
-              {/* Error message */}
-              {error && (
-                <div style={{
-                  padding: '10px 14px',
-                  marginBottom: '1rem',
-                  background: '#fef2f2',
-                  border: '1px solid #fecaca',
-                  borderRadius: '10px',
-                  color: '#dc2626',
-                  fontSize: '0.85rem',
-                  fontFamily: "'Inter', sans-serif",
-                }}>{error}</div>
-              )}
-
-              {mfaAttempts >= 1 && (
-                <div style={{
-                  padding: '12px 14px',
-                  marginBottom: '0.5rem',
-                  background: '#fffbeb',
-                  border: '1px solid #fde68a',
-                  borderRadius: '10px',
-                  color: '#92400e',
-                  fontSize: '0.82rem',
-                  lineHeight: 1.5,
-                  fontFamily: "'Inter', sans-serif",
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px',
-                }}>
-                  <span>2FA isn&apos;t working? Sign in with an email verification code instead.</span>
-                  <button
-                    type="button"
-                    onClick={handleResetMfa}
-                    disabled={resettingMfa}
-                    style={{
-                      width: '100%',
-                      height: '40px',
-                      border: '1.5px solid #f59e0b',
-                      borderRadius: '8px',
-                      background: '#fffbeb',
-                      color: '#92400e',
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: '0.84rem',
-                      fontWeight: 600,
-                      cursor: resettingMfa ? 'not-allowed' : 'pointer',
-                      opacity: resettingMfa ? 0.6 : 1,
-                      outline: 'none',
-                    }}
-                  >
-                    {resettingMfa ? 'Setting up...' : 'Sign in with email code'}
-                  </button>
-                </div>
-              )}
-
-              <form onSubmit={handleMfaSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <label htmlFor="mfa-code" style={{
-                    fontSize: '0.78rem',
-                    fontWeight: 600,
-                    color: '#3f3f46',
-                    letterSpacing: '0.02em',
-                    fontFamily: "'Inter', sans-serif",
-                  }}>{mfaStrategy === 'totp' ? 'Verification code' : 'Backup code'}</label>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    background: '#fafafa',
-                    border: '1.5px solid #e4e4e7',
-                    borderRadius: '10px',
-                    padding: '0 14px',
-                    height: '48px',
-                    transition: 'border-color 0.2s, box-shadow 0.2s',
-                  }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                      <path d="M7 11V7a5 5 0 0110 0v4" />
-                    </svg>
-                    <input
-                      id="mfa-code"
-                      type="text"
-                      inputMode={mfaStrategy === 'totp' ? 'numeric' : undefined}
-                      autoComplete="one-time-code"
-                      autoFocus
-                      maxLength={mfaStrategy === 'totp' ? 6 : 24}
-                      value={mfaCode}
-                      onChange={(e) => setMfaCode(e.target.value.replace(mfaStrategy === 'totp' ? /\D/g : /\s/g, ''))}
-                      placeholder={mfaStrategy === 'totp' ? '000000' : 'xxxx-xxxx-xxxx'}
-                      required
-                      style={{
-                        flex: 1,
-                        border: 'none',
-                        background: 'transparent',
-                        fontSize: mfaStrategy === 'totp' ? '1.2rem' : '0.9rem',
-                        color: '#09090b',
-                        outline: 'none',
-                        fontFamily: mfaStrategy === 'totp' ? "'JetBrains Mono', 'Fira Code', monospace" : "'Inter', sans-serif",
-                        letterSpacing: mfaStrategy === 'totp' ? '0.35em' : 'normal',
-                        textAlign: mfaStrategy === 'totp' ? 'center' : 'left',
-                        boxShadow: 'none',
-                      }}
-                      onFocus={(e) => e.target.style.boxShadow = 'none'}
-                    />
-                  </div>
-                </div>
-
-                {/* Verify button */}
-                <button
-                  type="submit"
-                  disabled={isLoading || (mfaStrategy === 'totp' ? mfaCode.length !== 6 : mfaCode.length < 4)}
-                  style={{
-                    width: '100%',
-                    height: '48px',
-                    border: 'none',
-                    borderRadius: '10px',
-                    background: '#09090b',
-                    color: '#fff',
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: '0.92rem',
-                    fontWeight: 600,
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    letterSpacing: '0.01em',
-                    opacity: isLoading || (mfaStrategy === 'totp' ? mfaCode.length !== 6 : mfaCode.length < 4) ? 0.6 : 1,
-                    outline: 'none',
-                  }}
-                  onMouseOver={(e) => { if (!isLoading) { (e.target as HTMLElement).style.background = '#18181b'; } }}
-                  onMouseOut={(e) => { (e.target as HTMLElement).style.background = '#09090b'; }}
-                  onFocus={(e) => { (e.target as HTMLElement).style.outline = 'none'; (e.target as HTMLElement).style.boxShadow = 'none'; }}
-                >
-                  {isLoading ? 'Verifying...' : 'Verify'}
-                </button>
-
-                {/* Toggle TOTP / backup code */}
-                <div style={{ display: 'flex', justifyContent: 'center' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMfaStrategy(mfaStrategy === 'totp' ? 'backup_code' : 'totp');
-                      setMfaCode('');
-                      setError('');
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#6366f1',
-                      fontSize: '0.84rem',
-                      fontWeight: 500,
-                      cursor: 'pointer',
-                      fontFamily: "'Inter', sans-serif",
-                      padding: '4px 0',
-                    }}
-                  >
-                    {mfaStrategy === 'totp' ? 'Use a backup code instead' : 'Use authenticator app instead'}
-                  </button>
-                </div>
-              </form>
-
-              {/* Back link */}
-              <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-                <button
-                  type="button"
-                  onClick={handleBackToLogin}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#6366f1',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    fontFamily: "'Inter', sans-serif",
-                    padding: 0,
-                  }}
-                >
-                  ← Back to sign in
-                </button>
-              </div>
-            </>
-          ) : emailOtpMode ? (
+          {emailOtpMode ? (
             <>
               <h1 style={{
                 fontFamily: "'Space Grotesk', sans-serif",
