@@ -26,7 +26,7 @@ const pool = isPgConfigured ? new Pool({
     ssl: sslConfig,
     max: 10, // Maximum connections in pool
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000, // Reduced from 10s — fail fast
+    connectionTimeoutMillis: 2000, // Fail fast — Supabase is the primary; PG is fallback
 }) : null;
 
 // Schema initialization state - use global to persist across hot reloads
@@ -133,10 +133,13 @@ export async function query(text: string, params?: any[]) {
         const result = await pool.query(text, params);
         return result;
     } catch (error: any) {
-        console.error('[PostgreSQL] Query failed:', error.message);
-        if (error.message?.includes('timeout') || error.message?.includes('terminated')) {
+        const isConnIssue = error.message?.includes('timeout') || error.message?.includes('terminated') || error.message?.includes('ECONNREFUSED');
+        if (isConnIssue) {
+            console.warn('[PostgreSQL] Unavailable (fallback to Supabase):', error.message);
             globalForSchema.pgConnectionOk = false;
             globalForSchema.pgCheckedAt = Date.now();
+        } else {
+            console.error('[PostgreSQL] Query failed:', error.message);
         }
         throw error;
     }
@@ -625,7 +628,12 @@ export async function getUserFromPostgres(
         globalForSchema.pgCheckedAt = Date.now();
         return result.rows.length > 0 ? (result.rows[0] as PgUser) : null;
     } catch (error: any) {
-        console.error('[PostgreSQL] Failed to get user:', error.message);
+        const isConnIssue = error.message?.includes('timeout') || error.message?.includes('terminated') || error.message?.includes('ECONNREFUSED');
+        if (isConnIssue) {
+            console.warn('[PostgreSQL] Unavailable (fallback to Supabase):', error.message);
+        } else {
+            console.error('[PostgreSQL] Failed to get user:', error.message);
+        }
         globalForSchema.pgConnectionOk = false;
         globalForSchema.pgCheckedAt = Date.now();
         return null;
@@ -655,7 +663,12 @@ export async function getUserByEmailFromPostgres(
         globalForSchema.pgCheckedAt = Date.now();
         return result.rows.length > 0 ? (result.rows[0] as PgUser) : null;
     } catch (error: any) {
-        console.error('[PostgreSQL] Failed to get user by email:', error.message);
+        const isConnIssue = error.message?.includes('timeout') || error.message?.includes('terminated') || error.message?.includes('ECONNREFUSED');
+        if (isConnIssue) {
+            console.warn('[PostgreSQL] Unavailable (fallback to Supabase):', error.message);
+        } else {
+            console.error('[PostgreSQL] Failed to get user by email:', error.message);
+        }
         globalForSchema.pgConnectionOk = false;
         globalForSchema.pgCheckedAt = Date.now();
         return null;
@@ -716,7 +729,8 @@ export async function getOrganizationByUserId(userId: number): Promise<PgOrganiz
         );
         return result.rows.length > 0 ? (result.rows[0] as PgOrganization) : null;
     } catch (error: any) {
-        console.error('[PostgreSQL] Failed to get organization:', error.message);
+        const isConnIssue = error.message?.includes('timeout') || error.message?.includes('terminated') || error.message?.includes('ECONNREFUSED');
+        if (!isConnIssue) console.error('[PostgreSQL] Failed to get organization:', error.message);
         return null;
     }
 }

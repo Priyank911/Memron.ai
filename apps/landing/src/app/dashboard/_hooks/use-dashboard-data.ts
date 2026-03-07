@@ -60,12 +60,21 @@ const EMPTY_STATS: DashboardStats = {
   mcpFetchChart: [],
 };
 
-export function useDashboardData(enabled = true, timeRange = '30d', orgId: string | null = null) {
+export function useDashboardData(
+  enabled = true,
+  timeRange = '30d',
+  orgId: string | null = null,
+  memoriesEnabled = true,  // when false, skip the /memories fetch (e.g. on settings page)
+) {
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [memories, setMemories] = useState<DashboardMemory[]>([]);
   const [buckets, setBuckets] = useState<DashboardBucket[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Keep a stable ref so doFetch ([] deps) always reads the latest value.
+  const memoriesEnabledRef = useRef(memoriesEnabled);
+  memoriesEnabledRef.current = memoriesEnabled;
 
   // Stable fetch — receives all params as arguments so it never needs to be recreated.
   // Empty deps [] means this callback reference is the same for the component lifetime.
@@ -78,6 +87,7 @@ export function useDashboardData(enabled = true, timeRange = '30d', orgId: strin
     const opts: RequestInit = { credentials: 'include', signal };
     const orgParam = currentOrgId ? `&orgId=${encodeURIComponent(currentOrgId)}` : '';
     const orgQuery = currentOrgId ? `?orgId=${encodeURIComponent(currentOrgId)}` : '';
+    const withMemories = memoriesEnabledRef.current;
 
     try {
       setLoading(true);
@@ -91,6 +101,20 @@ export function useDashboardData(enabled = true, timeRange = '30d', orgId: strin
             const e = await sRes.json().catch(() => ({}));
             setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
           }
+        }
+      } else if (!withMemories) {
+        // Settings / lightweight views: stats + buckets only
+        const [sRes, bRes] = await Promise.all([
+          fetch(`/api/dashboard/stats?range=${currentTimeRange}${orgParam}`, opts),
+          fetch(`/api/dashboard/buckets${orgQuery}`, opts),
+        ]);
+        if (!signal.aborted) {
+          if (sRes.ok) setStats(await sRes.json());
+          else {
+            const e = await sRes.json().catch(() => ({}));
+            setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
+          }
+          if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
         }
       } else {
         const [sRes, mRes, bRes] = await Promise.all([
@@ -166,6 +190,25 @@ export function useDashboardData(enabled = true, timeRange = '30d', orgId: strin
     };
   // doFetch is stable ([] deps), so effect only re-runs when enabled/orgId/timeRange change.
   }, [enabled, orgId, timeRange, doFetch]);
+
+  // Lazy memories load — fires ONLY when memoriesEnabled transitions false → true and
+  // memories haven't been loaded yet (e.g. user navigates from settings → dashboard).
+  const prevMemoriesEnabledRef = useRef(memoriesEnabled);
+  useEffect(() => {
+    const wasDisabled = prevMemoriesEnabledRef.current === false;
+    prevMemoriesEnabledRef.current = memoriesEnabled;
+
+    if (!enabled || !memoriesEnabled || !wasDisabled) return;
+    // memories might already be in state from a prior full fetch — skip if so
+    // (state reads inside an effect are always current at execution time)
+    const ac = new AbortController();
+    const orgQuery = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
+    fetch(`/api/dashboard/memories${orgQuery}`, { credentials: 'include', signal: ac.signal })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setMemories(d.memories || []); })
+      .catch(() => {});
+    return () => ac.abort();
+  }, [enabled, memoriesEnabled, orgId]);
 
   // Manual refresh exposed to the Topbar button — always does a full refresh.
   const refresh = useCallback(async (signal?: AbortSignal) => {
