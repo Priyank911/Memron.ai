@@ -155,6 +155,8 @@ export default function LoginPage() {
   const [mfaStrategy, setMfaStrategy] = useState<'totp' | 'backup_code'>('totp');
   const [mfaAttempts, setMfaAttempts] = useState(0);
   const [resettingMfa, setResettingMfa] = useState(false);
+  const [emailOtpMode, setEmailOtpMode] = useState(false);
+  const [emailOtpCode, setEmailOtpCode] = useState('');
   const router = useRouter();
   const redirectingRef = useRef(false);
 
@@ -373,33 +375,90 @@ export default function LoginPage() {
       setResettingMfa(true);
       setError('');
 
-      // Call backend to disable TOTP for this user
+      // Try to remove TOTP via backend
       const res = await fetch('/api/auth/reset-mfa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to remove 2FA');
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.success) {
+        // TOTP removed — restart sign-in from scratch
+        setMfaRequired(false);
+        setMfaCode('');
+        setMfaAttempts(0);
+        setMfaStrategy('totp');
+        setLoginPhase('authenticating');
+
+        let result = await signIn.create({ identifier: email, password });
+        if (result.status === 'needs_first_factor') {
+          result = await signIn.attemptFirstFactor({ strategy: 'password', password });
+        }
+
+        if (result.status === 'complete') {
+          redirectingRef.current = true;
+          await setActive({ session: result.createdSessionId });
+          const dest = await resolveAndNavigate();
+          setLoginPhase('ready');
+          await delay(700);
+          router.replace(dest);
+          return;
+        }
       }
 
-      // TOTP removed — restart sign-in from scratch
+      // TOTP removal failed (Pro restriction) — use email OTP as fallback
+      // This starts a completely fresh sign-in using email_code strategy
+      // which doesn't trigger MFA at all
       setMfaRequired(false);
       setMfaCode('');
       setMfaAttempts(0);
-      setMfaStrategy('totp');
-      setError('');
-
-      // Re-attempt sign-in now that TOTP is removed
       setLoginPhase('authenticating');
 
-      let result = await signIn.create({ identifier: email, password });
+      const freshSignIn = await signIn.create({ identifier: email });
 
-      if (result.status === 'needs_first_factor') {
-        result = await signIn.attemptFirstFactor({ strategy: 'password', password });
+      // Find the email address ID for preparing the email code
+      const emailFactor = freshSignIn.supportedFirstFactors?.find(
+        (f: any) => f.strategy === 'email_code',
+      ) as any;
+
+      if (!emailFactor?.emailAddressId) {
+        throw new Error('Email code sign-in is not available. Please contact support.');
       }
+
+      await signIn.prepareFirstFactor({
+        strategy: 'email_code',
+        emailAddressId: emailFactor.emailAddressId,
+      });
+
+      // Switch to email OTP mode
+      setLoginPhase('form');
+      setMfaRequired(false);
+      setEmailOtpMode(true);
+      setEmailOtpCode('');
+      setError('');
+      setResettingMfa(false);
+    } catch (err: any) {
+      setLoginPhase('form');
+      setResettingMfa(false);
+      setError(err.message || 'Something went wrong. Please try again.');
+    }
+  };
+
+  const handleEmailOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isLoaded || !signIn) return;
+
+    try {
+      setIsLoading(true);
+      setError('');
+      setLoginPhase('authenticating');
+
+      const result = await signIn.attemptFirstFactor({
+        strategy: 'email_code',
+        code: emailOtpCode.trim(),
+      });
 
       if (result.status === 'complete') {
         redirectingRef.current = true;
@@ -408,14 +467,43 @@ export default function LoginPage() {
         setLoginPhase('ready');
         await delay(700);
         router.replace(dest);
+      } else if (result.status === 'needs_second_factor') {
+        // Even email OTP triggered 2FA — this shouldn't happen usually
+        // but handle it by completing the sign-in directly
+        setLoginPhase('form');
+        setEmailOtpMode(false);
+        setMfaRequired(true);
+        setError('');
       } else {
         setLoginPhase('form');
-        setError('Sign-in could not be completed. Please try again.');
+        setError('Verification could not be completed. Please try again.');
       }
     } catch (err: any) {
       setLoginPhase('form');
-      setResettingMfa(false);
-      setError(err.message || 'Failed to remove 2FA. Please try again.');
+      setError(err.errors?.[0]?.message || 'Invalid code. Check your email and try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendEmailOtp = async () => {
+    if (!isLoaded || !signIn) return;
+    try {
+      setError('');
+      const freshSignIn = await signIn.create({ identifier: email });
+      const emailFactor = freshSignIn.supportedFirstFactors?.find(
+        (f: any) => f.strategy === 'email_code',
+      ) as any;
+      if (emailFactor?.emailAddressId) {
+        await signIn.prepareFirstFactor({
+          strategy: 'email_code',
+          emailAddressId: emailFactor.emailAddressId,
+        });
+      }
+      setError('');
+      setEmailOtpCode('');
+    } catch {
+      setError('Failed to resend code. Try again.');
     }
   };
 
@@ -425,6 +513,8 @@ export default function LoginPage() {
     setError('');
     setMfaStrategy('totp');
     setMfaAttempts(0);
+    setEmailOtpMode(false);
+    setEmailOtpCode('');
   };
 
   // Show transition overlay when not in form phase
@@ -536,7 +626,7 @@ export default function LoginPage() {
                   flexDirection: 'column',
                   gap: '10px',
                 }}>
-                  <span>2FA isn&apos;t working? This can happen on free Clerk plans. Remove it to sign in normally.</span>
+                  <span>2FA isn&apos;t working? Sign in with an email verification code instead.</span>
                   <button
                     type="button"
                     onClick={handleResetMfa}
@@ -556,7 +646,7 @@ export default function LoginPage() {
                       outline: 'none',
                     }}
                   >
-                    {resettingMfa ? 'Removing 2FA...' : 'Remove 2FA & Sign in'}
+                    {resettingMfa ? 'Setting up...' : 'Sign in with email code'}
                   </button>
                 </div>
               )}
@@ -665,6 +755,153 @@ export default function LoginPage() {
               </form>
 
               {/* Back link */}
+              <div style={{ marginTop: '2rem', textAlign: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handleBackToLogin}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#6366f1',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: "'Inter', sans-serif",
+                    padding: 0,
+                  }}
+                >
+                  ← Back to sign in
+                </button>
+              </div>
+            </>
+          ) : emailOtpMode ? (
+            <>
+              <h1 style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: '1.85rem',
+                fontWeight: 700,
+                color: '#09090b',
+                letterSpacing: '-0.03em',
+                marginBottom: '0.4rem',
+              }}>Check your email</h1>
+              <p style={{
+                fontSize: '0.92rem',
+                color: '#71717a',
+                lineHeight: 1.55,
+                marginBottom: '2rem',
+                fontFamily: "'Inter', sans-serif",
+              }}>
+                We sent a verification code to <strong style={{ color: '#09090b' }}>{email}</strong>. Enter it below to sign in.
+              </p>
+
+              {error && (
+                <div style={{
+                  padding: '10px 14px',
+                  marginBottom: '1rem',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  borderRadius: '10px',
+                  color: '#dc2626',
+                  fontSize: '0.85rem',
+                  fontFamily: "'Inter', sans-serif",
+                }}>{error}</div>
+              )}
+
+              <form onSubmit={handleEmailOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label htmlFor="email-otp" style={{
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                    color: '#3f3f46',
+                    letterSpacing: '0.02em',
+                    fontFamily: "'Inter', sans-serif",
+                  }}>Verification code</label>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    background: '#fafafa',
+                    border: '1.5px solid #e4e4e7',
+                    borderRadius: '10px',
+                    padding: '0 14px',
+                    height: '48px',
+                  }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="4" width="20" height="16" rx="2" />
+                      <path d="M22 7l-10 5L2 7" />
+                    </svg>
+                    <input
+                      id="email-otp"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      autoFocus
+                      maxLength={6}
+                      value={emailOtpCode}
+                      onChange={(e) => setEmailOtpCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="000000"
+                      required
+                      style={{
+                        flex: 1,
+                        border: 'none',
+                        background: 'transparent',
+                        fontSize: '1.2rem',
+                        color: '#09090b',
+                        outline: 'none',
+                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                        letterSpacing: '0.35em',
+                        textAlign: 'center',
+                        boxShadow: 'none',
+                      }}
+                      onFocus={(e) => e.target.style.boxShadow = 'none'}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading || emailOtpCode.length !== 6}
+                  style={{
+                    width: '100%',
+                    height: '48px',
+                    border: 'none',
+                    borderRadius: '10px',
+                    background: '#09090b',
+                    color: '#fff',
+                    fontFamily: "'Inter', sans-serif",
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    opacity: isLoading || emailOtpCode.length !== 6 ? 0.6 : 1,
+                    outline: 'none',
+                  }}
+                  onMouseOver={(e) => { if (!isLoading) { (e.target as HTMLElement).style.background = '#18181b'; } }}
+                  onMouseOut={(e) => { (e.target as HTMLElement).style.background = '#09090b'; }}
+                  onFocus={(e) => { (e.target as HTMLElement).style.outline = 'none'; (e.target as HTMLElement).style.boxShadow = 'none'; }}
+                >
+                  {isLoading ? 'Verifying...' : 'Verify & Sign in'}
+                </button>
+
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
+                  <button
+                    type="button"
+                    onClick={handleResendEmailOtp}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#6366f1',
+                      fontSize: '0.84rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      fontFamily: "'Inter', sans-serif",
+                      padding: '4px 0',
+                    }}
+                  >
+                    Resend code
+                  </button>
+                </div>
+              </form>
+
               <div style={{ marginTop: '2rem', textAlign: 'center' }}>
                 <button
                   type="button"

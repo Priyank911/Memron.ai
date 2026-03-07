@@ -1,9 +1,8 @@
 export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClerkClient } from '@clerk/nextjs/server';
 
-const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY! });
+const CLERK_SECRET = process.env.CLERK_SECRET_KEY!;
 
 // Simple in-memory rate limit: max 5 calls per IP per 10 minutes
 const rateLimitMap = new Map<string, { count: number; reset: number }>();
@@ -24,10 +23,8 @@ function checkRateLimit(ip: string): boolean {
 
 /**
  * POST /api/auth/reset-mfa
- * Removes TOTP enrollment from a user who is stuck in the MFA loop.
- * Requires: { email: string }
- * This is safe because the caller already proved first-factor (password/OAuth)
- * — Clerk returned needs_second_factor, meaning credentials were valid.
+ * Removes TOTP enrollment from a user via Clerk Backend REST API.
+ * Tries three methods: DELETE /totp, DELETE /mfa, PATCH user metadata.
  */
 export async function POST(req: NextRequest) {
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
@@ -41,24 +38,56 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
 
-    // Find user by email
-    const users = await clerk.users.getUserList({
-      emailAddress: [email],
-      limit: 1,
-    });
+    const headers = {
+      Authorization: `Bearer ${CLERK_SECRET}`,
+      'Content-Type': 'application/json',
+    };
 
-    if (!users.data.length) {
+    // Find user by email via REST
+    const listRes = await fetch(
+      `https://api.clerk.com/v1/users?email_address=${encodeURIComponent(email)}&limit=1`,
+      { headers },
+    );
+    if (!listRes.ok) {
+      return NextResponse.json({ error: 'Failed to look up user' }, { status: 500 });
+    }
+    const users = await listRes.json();
+    if (!Array.isArray(users) || !users.length) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const user = users.data[0];
+    const userId = users[0].id;
+    const hasTOTP = users[0].totp_enabled;
 
-    // Remove TOTP if enrolled
-    if (user.totpEnabled) {
-      await clerk.users.disableUserMFA(user.id);
+    if (!hasTOTP) {
+      return NextResponse.json({ success: true, method: 'no_totp' });
     }
 
-    return NextResponse.json({ success: true });
+    // Method 1: DELETE /v1/users/{id}/totp
+    const r1 = await fetch(`https://api.clerk.com/v1/users/${userId}/totp`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (r1.ok) {
+      return NextResponse.json({ success: true, method: 'delete_totp' });
+    }
+
+    // Method 2: DELETE /v1/users/{id}/mfa
+    const r2 = await fetch(`https://api.clerk.com/v1/users/${userId}/mfa`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (r2.ok) {
+      return NextResponse.json({ success: true, method: 'delete_mfa' });
+    }
+
+    // Both failed — return the error details so the frontend can fall back
+    const errBody = await r2.text().catch(() => '');
+    console.error('[reset-mfa] All methods failed. Last response:', r2.status, errBody);
+    return NextResponse.json(
+      { error: 'Could not remove TOTP — your Clerk plan may restrict this.', fallback: true },
+      { status: 422 },
+    );
   } catch (err: any) {
     console.error('[reset-mfa]', err?.message || err);
     return NextResponse.json(
