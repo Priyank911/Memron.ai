@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks(.*)',
   '/api/health(.*)',
   '/api/db(.*)',
+  '/api/auth/reset-mfa',
 ])
 
 const isAuthRoute = createRouteMatcher([

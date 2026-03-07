@@ -153,6 +153,8 @@ export default function LoginPage() {
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaCode, setMfaCode] = useState('');
   const [mfaStrategy, setMfaStrategy] = useState<'totp' | 'backup_code'>('totp');
+  const [mfaAttempts, setMfaAttempts] = useState(0);
+  const [resettingMfa, setResettingMfa] = useState(false);
   const router = useRouter();
   const redirectingRef = useRef(false);
 
@@ -357,9 +359,63 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       setLoginPhase('form');
-      setError(err.errors?.[0]?.message || 'Invalid verification code.');
+      const msg = err.errors?.[0]?.message || 'Invalid verification code.';
+      setMfaAttempts((p) => p + 1);
+      setError(msg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResetMfa = async () => {
+    if (!isLoaded || !signIn) return;
+    try {
+      setResettingMfa(true);
+      setError('');
+
+      // Call backend to disable TOTP for this user
+      const res = await fetch('/api/auth/reset-mfa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to remove 2FA');
+      }
+
+      // TOTP removed — restart sign-in from scratch
+      setMfaRequired(false);
+      setMfaCode('');
+      setMfaAttempts(0);
+      setMfaStrategy('totp');
+      setError('');
+
+      // Re-attempt sign-in now that TOTP is removed
+      setLoginPhase('authenticating');
+
+      let result = await signIn.create({ identifier: email, password });
+
+      if (result.status === 'needs_first_factor') {
+        result = await signIn.attemptFirstFactor({ strategy: 'password', password });
+      }
+
+      if (result.status === 'complete') {
+        redirectingRef.current = true;
+        await setActive({ session: result.createdSessionId });
+        const dest = await resolveAndNavigate();
+        setLoginPhase('ready');
+        await delay(700);
+        router.replace(dest);
+      } else {
+        setLoginPhase('form');
+        setError('Sign-in could not be completed. Please try again.');
+      }
+    } catch (err: any) {
+      setLoginPhase('form');
+      setResettingMfa(false);
+      setError(err.message || 'Failed to remove 2FA. Please try again.');
     }
   };
 
@@ -368,6 +424,7 @@ export default function LoginPage() {
     setMfaCode('');
     setError('');
     setMfaStrategy('totp');
+    setMfaAttempts(0);
   };
 
   // Show transition overlay when not in form phase
@@ -462,6 +519,46 @@ export default function LoginPage() {
                   fontSize: '0.85rem',
                   fontFamily: "'Inter', sans-serif",
                 }}>{error}</div>
+              )}
+
+              {mfaAttempts >= 1 && (
+                <div style={{
+                  padding: '12px 14px',
+                  marginBottom: '0.5rem',
+                  background: '#fffbeb',
+                  border: '1px solid #fde68a',
+                  borderRadius: '10px',
+                  color: '#92400e',
+                  fontSize: '0.82rem',
+                  lineHeight: 1.5,
+                  fontFamily: "'Inter', sans-serif",
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}>
+                  <span>2FA isn&apos;t working? This can happen on free Clerk plans. Remove it to sign in normally.</span>
+                  <button
+                    type="button"
+                    onClick={handleResetMfa}
+                    disabled={resettingMfa}
+                    style={{
+                      width: '100%',
+                      height: '40px',
+                      border: '1.5px solid #f59e0b',
+                      borderRadius: '8px',
+                      background: '#fffbeb',
+                      color: '#92400e',
+                      fontFamily: "'Inter', sans-serif",
+                      fontSize: '0.84rem',
+                      fontWeight: 600,
+                      cursor: resettingMfa ? 'not-allowed' : 'pointer',
+                      opacity: resettingMfa ? 0.6 : 1,
+                      outline: 'none',
+                    }}
+                  >
+                    {resettingMfa ? 'Removing 2FA...' : 'Remove 2FA & Sign in'}
+                  </button>
+                </div>
               )}
 
               <form onSubmit={handleMfaSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
