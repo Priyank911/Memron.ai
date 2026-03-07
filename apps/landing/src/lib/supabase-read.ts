@@ -35,6 +35,9 @@ const sslConfig: any =
 
 let pool: Pool | null = null;
 
+// Health state (cached to avoid hammering)
+const healthState = { ok: true, checkedAt: 0 };
+
 if (isConfigured) {
   pool = new Pool({
     host: SUPA_HOST,
@@ -45,11 +48,12 @@ if (isConfigured) {
     ssl: sslConfig,
     max: 5,
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 5_000, // Reduced from 10s — fail fast
   });
 
   pool.on('error', (err) => {
     console.error('[SupaRead] Pool error:', err.message);
+    healthState.ok = false;
   });
 } else {
   console.warn('[SupaRead] Not configured — dashboard will show no MCP data. Set SUPABASE_PG_* env vars.');
@@ -57,19 +61,46 @@ if (isConfigured) {
 
 // ─── Query helper ────────────────────────────────────────────
 
+/**
+ * Query with a hard timeout to prevent hanging.
+ * Returns empty result if not configured or on timeout.
+ */
 export async function supaQuery<T extends Record<string, any> = any>(
   sql: string,
   params?: unknown[],
 ): Promise<QueryResult<T>> {
   if (!pool) {
-    // Return empty result if not configured
     return { rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as any;
   }
-  return pool.query<T>(sql, params);
+  // Wrap with 6s hard timeout — catches leaked/hung connections
+  return Promise.race([
+    pool.query<T>(sql, params),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Supabase query timed out (6s)')), 6_000)
+    ),
+  ]);
 }
 
 export function isSupabaseConfigured(): boolean {
   return isConfigured && pool !== null;
+}
+
+/**
+ * Lightweight health check — can caller trust results from supaQuery?
+ * Cached for 30s to avoid spamming.
+ */
+export async function isSupabaseHealthy(): Promise<boolean> {
+  if (!pool) return false;
+  const now = Date.now();
+  if (now - healthState.checkedAt < 30_000) return healthState.ok;
+  try {
+    await pool.query('SELECT 1');
+    healthState.ok = true;
+  } catch {
+    healthState.ok = false;
+  }
+  healthState.checkedAt = now;
+  return healthState.ok;
 }
 
 // ─── User resolution ─────────────────────────────────────────

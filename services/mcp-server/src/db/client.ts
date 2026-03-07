@@ -23,7 +23,7 @@ export const pool = new Pool({
   ssl: sslConfig as any,
   max: config.db.maxConnections,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
 });
 
 pool.on('error', (err) => {
@@ -54,7 +54,9 @@ export async function query<T extends pg.QueryResultRow = any>(
   try {
     const result = await pool.query<T>(text, params);
     const duration = Date.now() - start;
-    if (duration > 500) {
+    // Skip slow-query warnings for DDL (schema migrations) — they run once on startup
+    const isDDL = /^\s*(CREATE|ALTER|DROP|DO \$\$)/i.test(text);
+    if (duration > 500 && !isDDL) {
       console.warn(`[DB] Slow query (${duration}ms): ${text.slice(0, 100)}`);
     }
     return result;

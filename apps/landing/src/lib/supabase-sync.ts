@@ -62,7 +62,7 @@ if (isConfigured) {
     ssl: sslConfig,
     max: 5,
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 5_000, // Reduced from 10s — fail fast
   });
 
   supaPool.on('error', (err) => {

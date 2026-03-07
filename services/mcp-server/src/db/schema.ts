@@ -318,26 +318,55 @@ const MIGRATIONS = [
  * Run all migrations. Idempotent — safe to call on every startup.
  */
 export async function runMigrations(): Promise<void> {
-  // migrations run silently
+  const start = Date.now();
 
-  let failures = 0;
+  // Separate cleanup statements (DELETE) from DDL — DELETE can't be in same
+  // transaction as CREATE TABLE in some edge cases with FK constraints.
+  const ddlStatements: string[] = [];
+  const cleanupStatements: string[] = [];
+
   for (const sql of MIGRATIONS) {
-    try {
-      await query(sql);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown';
-      const isCleanup = sql.startsWith('DELETE FROM');
-      const isOptional = sql.includes('DO $$ BEGIN') || sql.includes('IF EXISTS');
-      if (isCleanup || isOptional) {
-        console.warn(`[DB] Skipped (non-critical): ${msg}`);
-      } else {
-        failures++;
-        console.error(`[DB] Migration failed: ${msg}`);
-        console.error(`[DB] SQL: ${sql.slice(0, 120)}`);
-        throw error;
+    if (sql.trimStart().startsWith('DELETE FROM')) {
+      cleanupStatements.push(sql);
+    } else {
+      ddlStatements.push(sql);
+    }
+  }
+
+  // Run all DDL in a single transaction — 1 round-trip instead of 30+
+  try {
+    const batch = ['BEGIN', ...ddlStatements, 'COMMIT'].join(';\n');
+    await query(batch);
+  } catch (batchError) {
+    // If batch fails, fall back to sequential execution so we get
+    // granular error reporting on which statement failed.
+    try { await query('ROLLBACK'); } catch { /* ignore */ }
+
+    for (const sql of ddlStatements) {
+      try {
+        await query(sql);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown';
+        const isOptional = sql.includes('DO $$ BEGIN') || sql.includes('IF EXISTS');
+        if (isOptional) {
+          console.warn(`[DB] Skipped (non-critical): ${msg}`);
+        } else {
+          console.error(`[DB] Migration failed: ${msg}`);
+          console.error(`[DB] SQL: ${sql.slice(0, 120)}`);
+          throw error;
+        }
       }
     }
   }
 
-  // migrations complete
+  // Run cleanup (DELETE expired rows) — non-critical, ignore failures
+  for (const sql of cleanupStatements) {
+    try {
+      await query(sql);
+    } catch {
+      // Cleanup is best-effort
+    }
+  }
+
+  console.log(`[DB] Schema ready (${Date.now() - start}ms)`);
 }

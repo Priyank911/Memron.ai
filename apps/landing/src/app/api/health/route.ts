@@ -49,10 +49,11 @@ export async function GET() {
             },
         });
     } catch (error: any) {
+        console.error('[Health API] Error:', error instanceof Error ? error.message : 'Unknown');
         return NextResponse.json(
             {
                 status: 'error',
-                message: error.message,
+                message: 'Health check failed',
                 timestamp: new Date().toISOString(),
             },
             { status: 500 }

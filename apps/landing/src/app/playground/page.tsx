@@ -24,27 +24,35 @@ export default function PlaygroundPage() {
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
-    try {
-      const opts: RequestInit = { credentials: 'include' };
-      const [bucketsRes, statsRes] = await Promise.all([
-        fetch('/api/dashboard/buckets', opts),
-        fetch('/api/dashboard/stats?range=30d', opts),
-      ]);
+    const opts: RequestInit = { credentials: 'include' };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
 
-      if (bucketsRes.ok) {
-        const data = await bucketsRes.json();
-        setBuckets(data.buckets || []);
-      }
-      if (statsRes.ok) {
-        const data = await statsRes.json();
-        setTotalMemories(data.totalMemories || 0);
-        setTotalTokens(data.totalTokens || 0);
-      }
-    } catch {
-      // Silently handle — playground still works
-    } finally {
-      setLoading(false);
-    }
+    const fetchOpts = { ...opts, signal: controller.signal };
+
+    // Fire both independently — neither blocks the other
+    const bucketsP = fetch('/api/dashboard/buckets', fetchOpts)
+      .then(async (r) => {
+        if (r.ok) {
+          const data = await r.json();
+          setBuckets(data.buckets || []);
+        }
+      })
+      .catch(() => { /* buckets unavailable — playground still works */ });
+
+    const statsP = fetch('/api/dashboard/stats?range=30d', fetchOpts)
+      .then(async (r) => {
+        if (r.ok) {
+          const data = await r.json();
+          setTotalMemories(data.totalMemories || 0);
+          setTotalTokens(data.totalTokens || 0);
+        }
+      })
+      .catch(() => { /* stats unavailable — playground still works */ });
+
+    await Promise.allSettled([bucketsP, statsP]);
+    clearTimeout(timeout);
+    setLoading(false);
   }, []);
 
   useEffect(() => {

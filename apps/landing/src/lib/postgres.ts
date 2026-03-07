@@ -26,31 +26,69 @@ const pool = isPgConfigured ? new Pool({
     ssl: sslConfig,
     max: 10, // Maximum connections in pool
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000, // Reduced from 10s — fail fast
 }) : null;
 
 // Schema initialization state - use global to persist across hot reloads
 const globalForSchema = globalThis as unknown as {
     pgSchemaInitialized?: boolean;
     pgSchemaInitPromise?: Promise<void> | null;
+    pgConnectionOk?: boolean;
+    pgCheckedAt?: number;
 };
 
 // Test connection on startup
 if (pool) {
     pool.on('error', (err) => {
         console.error('[PostgreSQL] Unexpected error on idle client:', err);
+        globalForSchema.pgConnectionOk = false;
     });
 } else if (isPgConfigured === false) {
     console.warn('[PostgreSQL] Not configured - PostgreSQL sync disabled');
 }
 
 /**
- * Ensure schema is initialized before any user operations
- * This is called automatically and only runs once
+ * Fast connectivity check — validates the pool can actually reach the database.
+ * Caches result for 60s to avoid hammering the server.
+ */
+async function isPoolHealthy(): Promise<boolean> {
+    if (!pool) return false;
+    const now = Date.now();
+    if (globalForSchema.pgCheckedAt && now - globalForSchema.pgCheckedAt < 30_000) {
+        return globalForSchema.pgConnectionOk ?? false;
+    }
+    try {
+        const timer = setTimeout(() => {}, 3000);
+        const result = await Promise.race([
+            pool.query('SELECT 1'),
+            new Promise<null>((_, reject) => {
+                const t = setTimeout(() => reject(new Error('Health check timeout')), 3000);
+                // Allow the timer to be cleaned up
+                if (typeof t === 'object' && 'unref' in t) (t as any).unref();
+            }),
+        ]);
+        clearTimeout(timer);
+        globalForSchema.pgConnectionOk = true;
+        globalForSchema.pgCheckedAt = now;
+        return true;
+    } catch {
+        globalForSchema.pgConnectionOk = false;
+        globalForSchema.pgCheckedAt = now;
+        return false;
+    }
+}
+
+/**
+ * Ensure schema is initialized before any user operations.
+ * Non-blocking: if schema init is already running, reads can proceed
+ * without waiting (tables likely exist from previous runs).
  */
 async function ensureSchema(): Promise<void> {
     if (!pool) return;
     if (globalForSchema.pgSchemaInitialized) return;
+    
+    // Skip if pool is known unhealthy — don't waste time trying
+    if (globalForSchema.pgCheckedAt && globalForSchema.pgConnectionOk === false) return;
     
     // Use a singleton promise to prevent multiple concurrent initializations
     if (!globalForSchema.pgSchemaInitPromise) {
@@ -64,7 +102,20 @@ async function ensureSchema(): Promise<void> {
             });
     }
     
-    await globalForSchema.pgSchemaInitPromise;
+    // Wait at most 4s for schema init — don't block forever on cold starts
+    await Promise.race([
+        globalForSchema.pgSchemaInitPromise,
+        new Promise<void>(resolve => setTimeout(resolve, 4000)),
+    ]);
+}
+
+/**
+ * Ensure schema for write operations — these MUST wait for schema.
+ */
+async function ensureSchemaForWrite(): Promise<void> {
+    if (!pool) return;
+    if (globalForSchema.pgSchemaInitialized) return;
+    await ensureSchema();
 }
 
 /**
@@ -74,14 +125,27 @@ export async function query(text: string, params?: any[]) {
     if (!pool) {
         throw new Error('PostgreSQL not configured');
     }
+    // Fast-fail if pool is known unhealthy
+    if (globalForSchema.pgCheckedAt && globalForSchema.pgConnectionOk === false) {
+        throw new Error('PostgreSQL connection unavailable');
+    }
     try {
         const result = await pool.query(text, params);
         return result;
     } catch (error: any) {
         console.error('[PostgreSQL] Query failed:', error.message);
+        if (error.message?.includes('timeout') || error.message?.includes('terminated')) {
+            globalForSchema.pgConnectionOk = false;
+            globalForSchema.pgCheckedAt = Date.now();
+        }
         throw error;
     }
 }
+
+/**
+ * Check if PostgreSQL is reachable right now (cached 60s).
+ */
+export { isPoolHealthy as testPoolHealth };
 
 /**
  * Get a client from the pool for transactions
@@ -507,7 +571,7 @@ export async function saveUserToPostgres(userData: {
 
     try {
         // Ensure schema exists before first write
-        await ensureSchema();
+        await ensureSchemaForWrite();
 
         const result = await pool.query(
             `INSERT INTO users (clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
@@ -544,7 +608,10 @@ export async function saveUserToPostgres(userData: {
 export async function getUserFromPostgres(
     clerkId: string
 ): Promise<PgUser | null> {
-    if (!pool) {
+    if (!pool) return null;
+
+    // Fast-fail if pool is known unhealthy (cached 30s)
+    if (globalForSchema.pgCheckedAt && globalForSchema.pgConnectionOk === false) {
         return null;
     }
 
@@ -554,9 +621,13 @@ export async function getUserFromPostgres(
             'SELECT * FROM users WHERE clerk_id = $1',
             [clerkId]
         );
+        globalForSchema.pgConnectionOk = true;
+        globalForSchema.pgCheckedAt = Date.now();
         return result.rows.length > 0 ? (result.rows[0] as PgUser) : null;
     } catch (error: any) {
         console.error('[PostgreSQL] Failed to get user:', error.message);
+        globalForSchema.pgConnectionOk = false;
+        globalForSchema.pgCheckedAt = Date.now();
         return null;
     }
 }
@@ -567,7 +638,10 @@ export async function getUserFromPostgres(
 export async function getUserByEmailFromPostgres(
     email: string
 ): Promise<PgUser | null> {
-    if (!pool) {
+    if (!pool) return null;
+
+    // Fast-fail if pool is known unhealthy (cached 30s)
+    if (globalForSchema.pgCheckedAt && globalForSchema.pgConnectionOk === false) {
         return null;
     }
 
@@ -577,9 +651,13 @@ export async function getUserByEmailFromPostgres(
             'SELECT * FROM users WHERE email = $1',
             [email]
         );
+        globalForSchema.pgConnectionOk = true;
+        globalForSchema.pgCheckedAt = Date.now();
         return result.rows.length > 0 ? (result.rows[0] as PgUser) : null;
     } catch (error: any) {
         console.error('[PostgreSQL] Failed to get user by email:', error.message);
+        globalForSchema.pgConnectionOk = false;
+        globalForSchema.pgCheckedAt = Date.now();
         return null;
     }
 }
@@ -628,6 +706,7 @@ export async function createOrganization(data: {
  */
 export async function getOrganizationByUserId(userId: number): Promise<PgOrganization | null> {
     if (!pool) return null;
+    if (globalForSchema.pgCheckedAt && globalForSchema.pgConnectionOk === false) return null;
 
     try {
         await ensureSchema();

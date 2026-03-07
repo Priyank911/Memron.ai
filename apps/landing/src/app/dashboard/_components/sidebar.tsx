@@ -7,7 +7,7 @@ import {
   LayoutDashboard, MessageSquare, Key, Settings, Database,
   ChevronDown, ChevronRight, FolderPlus, Share2,
   GitBranch, Bell, Webhook, CreditCard, HelpCircle,
-  LogOut, Sun, Moon, Monitor, Laptop,
+  LogOut, Sun, Moon, Monitor, Laptop, Sparkles,
 } from 'lucide-react';
 import type { OrgInfo } from './types';
 
@@ -98,6 +98,7 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
     return map;
   });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [comingSoonToast, setComingSoonToast] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const toggleSection = (id: string) => {
@@ -146,16 +147,32 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
             </button>
             {openSections[section.id] && (
               <div className="mm-sb-section-items">
-                {section.items.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`mm-sb-item${active === item.id ? ' active' : ''}`}
-                    onClick={() => item.id === 'playground' ? router.push('/playground') : onNav(item.id)}
-                  >
-                    <item.icon size={15} strokeWidth={1.7} />
-                    <span>{item.label}</span>
-                  </button>
-                ))}
+                {section.items.map((item) => {
+                  const isComingSoon = item.id === 'graph-memory' || item.id === 'webhooks';
+                  return isComingSoon ? (
+                    <button
+                      key={item.id}
+                      className="mm-sb-item mm-sb-item-coming-soon"
+                      onClick={() => {
+                        setComingSoonToast(true);
+                        setTimeout(() => setComingSoonToast(false), 3000);
+                      }}
+                    >
+                      <item.icon size={15} strokeWidth={1.7} />
+                      <span>{item.label}</span>
+                      <span className="mm-sb-coming-badge">Soon</span>
+                    </button>
+                  ) : (
+                    <button
+                      key={item.id}
+                      className={`mm-sb-item${active === item.id ? ' active' : ''}`}
+                      onClick={() => item.id === 'playground' ? router.push('/playground') : onNav(item.id)}
+                    >
+                      <item.icon size={15} strokeWidth={1.7} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -241,6 +258,14 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
           </div>
         )}
       </div>
+
+      {/* Coming Soon Toast */}
+      {comingSoonToast && (
+        <div className="mm-coming-soon-toast">
+          <Sparkles size={14} strokeWidth={1.8} />
+          <span>Something great is cooking! Our devs are crafting Graph Memory for you.</span>
+        </div>
+      )}
     </aside>
   );
 }
