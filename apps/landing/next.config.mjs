@@ -16,6 +16,7 @@ const nextConfig = {
       { protocol: 'https', hostname: 'img.clerkusercontent.com' },
     ],
     formats: ['image/avif', 'image/webp'],
+    minimumCacheTTL: 86400,
   },
   // Exclude Node.js-only packages from Edge/Middleware bundling
   serverExternalPackages: ['pg', 'firebase', 'firebase-admin'],
