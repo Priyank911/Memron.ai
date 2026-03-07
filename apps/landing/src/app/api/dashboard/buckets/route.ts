@@ -5,14 +5,16 @@ import {
   getOrganizationByUserId,
   createBucket,
   deleteBucket,
+  query as pgQuery,
 } from '@/lib/postgres';
 import { syncBucketToSupabase } from '@/lib/supabase-sync';
-import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
+import { supaQuery, resolveSupabaseUser, buildUserWhereClause, isSupabaseConfigured } from '@/lib/supabase-read';
 import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
 
 /**
  * GET /api/dashboard/buckets — List all buckets for the current user
  * Protected by: auth + rate limiter + server-side cache (30s TTL).
+ * Reads from Supabase (primary), falls back to primary PG if Supabase is unavailable.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -23,7 +25,7 @@ export async function GET(request: NextRequest) {
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter || 60_000) / 1000)) } },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter ?? 60_000) / 1000)) } },
       );
     }
 
@@ -32,15 +34,32 @@ export async function GET(request: NextRequest) {
     const data = await cachedQuery(cacheKey, () => fetchBuckets(userId, orgId), CACHE_PROFILES.buckets);
     return NextResponse.json(data);
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Unknown';
-    console.error('[Dashboard API] Buckets error:', msg);
+    console.error('[Dashboard API] Buckets error:', error instanceof Error ? error.message : 'Unknown');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
+/**
+ * Primary bucket fetcher — tries Supabase first, falls back to primary PG.
+ */
 async function fetchBuckets(clerkId: string, targetOrgId: string | null = null) {
+  // Try Supabase first (canonical source for MCP-written data)
+  if (isSupabaseConfigured()) {
+    try {
+      const result = await fetchBucketsFromSupabase(clerkId, targetOrgId);
+      if (result) return result;
+    } catch (err: any) {
+      console.warn('[Buckets] Supabase read failed, trying primary PG:', err.message);
+    }
+  }
+
+  // Fallback: read from primary PG (buckets table exists there too)
+  return fetchBucketsFromPrimaryPG(clerkId);
+}
+
+async function fetchBucketsFromSupabase(clerkId: string, targetOrgId: string | null) {
   const supaUser = await resolveSupabaseUser(clerkId, targetOrgId);
-  if (!supaUser) return { buckets: [] };
+  if (!supaUser) return null; // User not synced to Supabase yet
 
   const { id: uid, orgId } = supaUser;
   const { where: whereUser, params } = buildUserWhereClause(uid, orgId);
@@ -62,6 +81,7 @@ async function fetchBuckets(clerkId: string, targetOrgId: string | null = null) 
     );
     buckets = res.rows;
   } catch {
+    // Fallback: aggregate from memories table directly
     try {
       const res = await supaQuery(
         `SELECT bucket as slug, bucket as name, COUNT(*) as memory_count
@@ -83,6 +103,8 @@ async function fetchBuckets(clerkId: string, targetOrgId: string | null = null) 
     } catch { /* no data */ }
   }
 
+  if (buckets.length === 0) return null; // Signal: try fallback
+
   return {
     buckets: buckets.map((b: any) => ({
       id: b.bucket_id,
@@ -94,6 +116,56 @@ async function fetchBuckets(clerkId: string, targetOrgId: string | null = null) 
       createdAt: b.created_at,
     })),
   };
+}
+
+/**
+ * Fallback: read buckets from primary Aiven PG.
+ * This handles the case where Supabase is down or user hasn't been synced.
+ */
+async function fetchBucketsFromPrimaryPG(clerkId: string) {
+  try {
+    const dbUser = await getUserFromPostgres(clerkId);
+    if (!dbUser) return { buckets: [] };
+
+    const org = await getOrganizationByUserId(dbUser.id);
+
+    let whereClause = 'b.user_id = $1 AND b.is_active = true';
+    const params: (number)[] = [dbUser.id];
+
+    if (org) {
+      whereClause = 'b.user_id = $1 AND b.is_active = true AND (b.org_id = $2 OR b.org_id IS NULL)';
+      params.push(org.id);
+    }
+
+    const res = await pgQuery(
+      `SELECT b.bucket_id, b.name, b.slug, b.description, b.is_default, b.created_at,
+              COALESCE(m.cnt, 0) as memory_count
+       FROM buckets b
+       LEFT JOIN (
+         SELECT bucket, COUNT(*) as cnt FROM memories
+         WHERE user_id = $1 AND is_active = true
+         GROUP BY bucket
+       ) m ON m.bucket = b.slug
+       WHERE ${whereClause}
+       ORDER BY b.is_default DESC, b.created_at ASC`,
+      params,
+    );
+
+    return {
+      buckets: (res.rows || []).map((b: any) => ({
+        id: b.bucket_id,
+        name: b.name,
+        slug: b.slug,
+        description: b.description,
+        isDefault: b.is_default,
+        memoryCount: parseInt(b.memory_count) || 0,
+        createdAt: b.created_at,
+      })),
+    };
+  } catch (err: any) {
+    console.error('[Buckets] Primary PG fallback also failed:', err.message);
+    return { buckets: [] };
+  }
 }
 
 /**

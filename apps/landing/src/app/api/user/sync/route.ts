@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     } catch (error: any) {
         console.error('[API] User sync failed:', error.message);
         return NextResponse.json(
-            { error: 'Sync failed', message: error.message },
+            { error: 'Sync failed' },
             { status: 500 }
         );
     }

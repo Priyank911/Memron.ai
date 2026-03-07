@@ -29,7 +29,7 @@ export interface SyncResult {
 // ─── Config ─────────────────────────────────────────────────
 
 /** Timeout for individual DB operations (ms). Prevents one slow DB from blocking the entire sync. */
-const DB_TIMEOUT_MS = 8000;
+const DB_TIMEOUT_MS = 5000;
 
 // ─── Helpers ────────────────────────────────────────────────
 

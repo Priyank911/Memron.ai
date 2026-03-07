@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
+import { checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
 
 /**
  * POST /api/dashboard/playground — Search memories with optional bucket filter
@@ -38,8 +39,16 @@ export async function POST(req: NextRequest) {
     const { userId: clerkId } = await auth();
     if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    const rl = checkRateLimit(clerkId, 'playground', CACHE_PROFILES.memories);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((rl.retryAfter ?? 60_000) / 1000)) } },
+      );
+    }
+
     const body = await req.json();
-    const query = typeof body.query === 'string' ? body.query.trim() : '';
+    const query = typeof body.query === 'string' ? body.query.trim().slice(0, 500) : '';
     const bucket = typeof body.bucket === 'string' ? body.bucket.trim() : null;
     const limit = Math.min(Math.max(parseInt(String(body.limit), 10) || 10, 1), 50);
 
@@ -132,12 +141,12 @@ export async function POST(req: NextRequest) {
     // Sort by score descending
     memories.sort((a: any, b: any) => b.score - a.score);
 
-    console.log(`[Playground] query="${query}" bucket=${bucket || 'all'} results=${memories.length}`);
+    console.log(`[Playground] bucket=${bucket || 'all'} results=${memories.length}`);
     return NextResponse.json({ memories, query, bucket });
-  } catch (error: any) {
-    console.error('[Playground API] Error:', error.message);
+  } catch (error: unknown) {
+    console.error('[Playground API] Error:', error instanceof Error ? error.message : 'Unknown');
     return NextResponse.json(
-      { error: 'Internal server error', details: error.message },
+      { error: 'Internal server error' },
       { status: 500 },
     );
   }

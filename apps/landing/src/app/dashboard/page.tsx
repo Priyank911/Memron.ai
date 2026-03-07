@@ -1262,7 +1262,7 @@ export default function DashboardPage() {
 
   /* ══════════ Settings Page ══════════ */
   const settingsCopyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+    if (text) navigator.clipboard.writeText(text);
   };
 
   const renderConfig = () => (
@@ -1276,16 +1276,16 @@ export default function DashboardPage() {
       </div>
       <div className="mm-content">
         {/* Tabs */}
-        <div className="mm-settings-tabs">
+        <div className="mm-stabs">
           {([
-            { key: 'general', label: 'General', icon: <Globe size={14} /> },
-            { key: 'appearance', label: 'Appearance', icon: <Palette size={14} /> },
-            { key: 'security', label: 'Security', icon: <Shield size={14} /> },
-            { key: 'integrations', label: 'Integrations', icon: <GitBranch size={14} /> },
+            { key: 'general', label: 'General', icon: <Globe size={14} strokeWidth={1.6} /> },
+            { key: 'appearance', label: 'Appearance', icon: <Palette size={14} strokeWidth={1.6} /> },
+            { key: 'security', label: 'Security', icon: <Shield size={14} strokeWidth={1.6} /> },
+            { key: 'integrations', label: 'Integrations', icon: <GitBranch size={14} strokeWidth={1.6} /> },
           ] as const).map(tab => (
             <button
               key={tab.key}
-              className={`mm-settings-tab${settingsTab === tab.key ? ' active' : ''}`}
+              className={`mm-stab${settingsTab === tab.key ? ' active' : ''}`}
               onClick={() => setSettingsTab(tab.key)}
             >
               {tab.icon} {tab.label}
@@ -1293,273 +1293,423 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* General Tab */}
+        {/* ── General Tab ── */}
         {settingsTab === 'general' && (
-          <>
-            {/* Organization Details */}
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Organization Details</h2>
-                <button className="mm-btn-icon-sm" title="Edit" onClick={() => { setEditingField('org-name'); setEditValue(organization?.name || ''); }}>
-                  <Pencil size={13} />
+          <div className="mm-stab-content">
+            {/* Workspace Profile Card */}
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Settings size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Workspace</h2>
+                    <p className="mm-spanel-desc">Your workspace identity and configuration</p>
+                  </div>
+                </div>
+                <button className="mm-sbtn-icon" title="Edit" onClick={() => { setEditingField('org-name'); setEditValue(organization?.name || ''); }}>
+                  <Pencil size={12} strokeWidth={1.8} />
                 </button>
               </div>
-              <div className="mm-settings-grid">
-                <div className="mm-settings-field">
-                  <label>Workspace Name</label>
+              <div className="mm-sgrid">
+                <div className="mm-sfield">
+                  <span className="mm-sfield-label">Workspace Name</span>
                   {editingField === 'org-name' ? (
-                    <div className="mm-settings-edit-row">
-                      <input className="mm-settings-input" value={editValue} onChange={e => setEditValue(e.target.value)} autoFocus />
-                      <button className="mm-btn-icon-sm mm-green" onClick={() => setEditingField(null)}><Check size={13} /></button>
-                      <button className="mm-btn-icon-sm" onClick={() => setEditingField(null)}><X size={13} /></button>
+                    <div className="mm-sfield-edit">
+                      <input className="mm-sinput" value={editValue} onChange={e => setEditValue(e.target.value)} autoFocus />
+                      <button className="mm-sbtn-icon mm-scheck" onClick={() => setEditingField(null)}><Check size={12} /></button>
+                      <button className="mm-sbtn-icon" onClick={() => setEditingField(null)}><X size={12} /></button>
                     </div>
                   ) : (
-                    <span className="mm-settings-val">{organization?.name || 'Default Workspace'}</span>
+                    <span className="mm-sfield-val">{organization?.name || 'Default Workspace'}</span>
                   )}
                 </div>
-                <div className="mm-settings-field">
-                  <label>Slug</label>
-                  <span className="mm-settings-val mono">{organization?.slug || '—'}</span>
+                <div className="mm-sfield">
+                  <span className="mm-sfield-label">Slug</span>
+                  <span className="mm-sfield-val mm-sfield-mono">{organization?.slug || '—'}</span>
                 </div>
-                <div className="mm-settings-field">
-                  <label>Plan</label>
-                  <span className="mm-settings-val"><span className="mm-badge-beta">Beta</span> Free</span>
+                <div className="mm-sfield">
+                  <span className="mm-sfield-label">Plan</span>
+                  <span className="mm-sfield-val"><span className="mm-sbadge">Beta</span> Free</span>
+                </div>
+                <div className="mm-sfield">
+                  <span className="mm-sfield-label">Created</span>
+                  <span className="mm-sfield-val">{new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>
                 </div>
               </div>
             </div>
 
-            {/* Personal Information */}
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Personal Information</h2>
-              </div>
-              <div className="mm-settings-grid mm-settings-grid-3">
-                <div className="mm-settings-field">
-                  <label>Email</label>
-                  <span className="mm-settings-val">{userInfo?.email || '—'}</span>
-                </div>
-                <div className="mm-settings-field">
-                  <label>User ID</label>
-                  <div className="mm-settings-copy-row">
-                    <span className="mm-settings-val mono">{(userInfo?.universalId || '—').slice(0, 16)}...</span>
-                    <button className="mm-btn-icon-sm" onClick={() => settingsCopyToClipboard(userInfo?.universalId || '')} title="Copy"><Copy size={11} /></button>
+            {/* User Profile */}
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><User size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Profile</h2>
+                    <p className="mm-spanel-desc">Your personal account details</p>
                   </div>
                 </div>
-                <div className="mm-settings-field">
-                  <label>Role</label>
-                  <span className="mm-settings-val">Owner</span>
+              </div>
+              <div className="mm-sgrid mm-sgrid-3">
+                <div className="mm-sfield">
+                  <span className="mm-sfield-label">Email</span>
+                  <span className="mm-sfield-val">{userInfo?.email || '—'}</span>
                 </div>
-                <div className="mm-settings-field">
-                  <label>Total Memories</label>
-                  <span className="mm-settings-val">{stats.totalMemories.toLocaleString()}</span>
+                <div className="mm-sfield">
+                  <span className="mm-sfield-label">User ID</span>
+                  <div className="mm-sfield-copy">
+                    <span className="mm-sfield-val mm-sfield-mono">{(userInfo?.universalId || '—').slice(0, 16)}…</span>
+                    <button className="mm-sbtn-icon" onClick={() => settingsCopyToClipboard(userInfo?.universalId || '')} title="Copy"><Copy size={10} /></button>
+                  </div>
                 </div>
-                <div className="mm-settings-field">
-                  <label>Buckets</label>
-                  <span className="mm-settings-val">{buckets.length}</span>
+                <div className="mm-sfield">
+                  <span className="mm-sfield-label">Role</span>
+                  <span className="mm-sfield-val">Owner</span>
                 </div>
-                <div className="mm-settings-field">
-                  <label>Tokens Processed</label>
-                  <span className="mm-settings-val">{stats.totalTokens.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Usage Overview */}
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><BarChart3 size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Usage</h2>
+                    <p className="mm-spanel-desc">Resource consumption overview</p>
+                  </div>
+                </div>
+              </div>
+              <div className="mm-susage-grid">
+                <div className="mm-susage-card">
+                  <div className="mm-susage-top">
+                    <span className="mm-susage-num">{stats.totalMemories.toLocaleString()}</span>
+                    <Brain size={16} strokeWidth={1.4} className="mm-susage-ico" />
+                  </div>
+                  <span className="mm-susage-label">Total Memories</span>
+                  <div className="mm-susage-bar"><div className="mm-susage-fill" style={{ width: `${Math.min((stats.totalMemories / 10000) * 100, 100)}%` }} /></div>
+                </div>
+                <div className="mm-susage-card">
+                  <div className="mm-susage-top">
+                    <span className="mm-susage-num">{buckets.length}</span>
+                    <Archive size={16} strokeWidth={1.4} className="mm-susage-ico" />
+                  </div>
+                  <span className="mm-susage-label">Buckets</span>
+                  <div className="mm-susage-bar"><div className="mm-susage-fill" style={{ width: `${Math.min((buckets.length / 50) * 100, 100)}%` }} /></div>
+                </div>
+                <div className="mm-susage-card">
+                  <div className="mm-susage-top">
+                    <span className="mm-susage-num">{stats.totalTokens.toLocaleString()}</span>
+                    <Zap size={16} strokeWidth={1.4} className="mm-susage-ico" />
+                  </div>
+                  <span className="mm-susage-label">Tokens Processed</span>
+                  <div className="mm-susage-bar"><div className="mm-susage-fill" style={{ width: `${Math.min((stats.totalTokens / 1000000) * 100, 100)}%` }} /></div>
                 </div>
               </div>
             </div>
 
             {/* Danger Zone */}
-            <div className="mm-panel mm-panel-danger">
-              <div className="mm-panel-head">
-                <h2><AlertTriangle size={14} strokeWidth={1.6} /> Danger Zone</h2>
-              </div>
-              <div className="mm-config-list">
-                <div className="mm-config-row">
+            <div className="mm-spanel mm-spanel-danger">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon mm-spanel-icon-danger"><AlertTriangle size={15} strokeWidth={1.6} /></div>
                   <div>
-                    <span className="mm-config-label">Delete all memories</span>
-                    <span className="mm-config-hint">This action cannot be undone. All memories across all buckets will be permanently removed.</span>
+                    <h2>Danger Zone</h2>
+                    <p className="mm-spanel-desc">Irreversible actions — proceed with caution</p>
                   </div>
-                  <button className="mm-btn-danger" disabled>Delete All</button>
                 </div>
-                <div className="mm-config-row">
+              </div>
+              <div className="mm-srows">
+                <div className="mm-srow">
                   <div>
-                    <span className="mm-config-label">Delete workspace</span>
-                    <span className="mm-config-hint">Permanently delete this workspace and all associated data.</span>
+                    <span className="mm-srow-label">Delete all memories</span>
+                    <span className="mm-srow-hint">Permanently remove all memories across every bucket. This cannot be undone.</span>
                   </div>
-                  <button className="mm-btn-danger" disabled>Delete</button>
+                  <button className="mm-sbtn-danger" disabled>Delete All</button>
+                </div>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Delete workspace</span>
+                    <span className="mm-srow-hint">Permanently delete this workspace and all associated data.</span>
+                  </div>
+                  <button className="mm-sbtn-danger" disabled>Delete</button>
                 </div>
               </div>
             </div>
-          </>
+          </div>
         )}
 
-        {/* Appearance Tab */}
+        {/* ── Appearance Tab ── */}
         {settingsTab === 'appearance' && (
-          <>
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Theme</h2>
+          <div className="mm-stab-content">
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Palette size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Theme</h2>
+                    <p className="mm-spanel-desc">Choose how Memron looks for you</p>
+                  </div>
+                </div>
               </div>
-              <div className="mm-settings-theme-grid">
+              <div className="mm-stheme-grid">
                 {([
-                  { key: 'dark', label: 'Dark', icon: <Moon size={18} />, desc: 'Easy on the eyes' },
-                  { key: 'light', label: 'Light', icon: <Sun size={18} />, desc: 'Classic bright mode' },
-                  { key: 'system', label: 'System', icon: <Monitor size={18} />, desc: 'Match OS preference' },
+                  { key: 'dark', label: 'Dark', icon: <Moon size={20} strokeWidth={1.4} />, desc: 'Easy on the eyes' },
+                  { key: 'light', label: 'Light', icon: <Sun size={20} strokeWidth={1.4} />, desc: 'Classic bright mode' },
+                  { key: 'system', label: 'System', icon: <Monitor size={20} strokeWidth={1.4} />, desc: 'Match OS preference' },
                 ] as const).map(t => (
                   <button
                     key={t.key}
-                    className={`mm-settings-theme-card${theme === t.key ? ' active' : ''}`}
+                    className={`mm-stheme-card${theme === t.key ? ' active' : ''}`}
                     onClick={() => setTheme(t.key)}
                   >
-                    <div className="mm-settings-theme-icon">{t.icon}</div>
-                    <span className="mm-settings-theme-label">{t.label}</span>
-                    <span className="mm-settings-theme-desc">{t.desc}</span>
-                    {theme === t.key && <div className="mm-settings-theme-check"><Check size={14} /></div>}
+                    <div className="mm-stheme-icon">{t.icon}</div>
+                    <span className="mm-stheme-label">{t.label}</span>
+                    <span className="mm-stheme-desc">{t.desc}</span>
+                    {theme === t.key && <div className="mm-stheme-check"><Check size={12} /></div>}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Display</h2>
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Eye size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Display</h2>
+                    <p className="mm-spanel-desc">Typography and density preferences</p>
+                  </div>
+                </div>
               </div>
-              <div className="mm-config-list">
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Language</span>
-                  <span className="mm-config-value">English (US)</span>
+              <div className="mm-srows">
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Language</span>
+                    <span className="mm-srow-hint">Interface language</span>
+                  </div>
+                  <span className="mm-srow-val">English (US)</span>
                 </div>
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Font</span>
-                  <span className="mm-config-value" style={{ fontFamily: 'var(--mm-mono)', fontSize: '0.78rem' }}>JetBrains Mono</span>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Heading Font</span>
+                    <span className="mm-srow-hint">Used for titles and section headers</span>
+                  </div>
+                  <span className="mm-srow-val" style={{ fontFamily: 'var(--mm-heading)', fontWeight: 600 }}>Bricolage Grotesque</span>
                 </div>
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Density</span>
-                  <span className="mm-config-value">Comfortable</span>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Body Font</span>
+                    <span className="mm-srow-hint">Used for body text and labels</span>
+                  </div>
+                  <span className="mm-srow-val">Inter</span>
+                </div>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Mono Font</span>
+                    <span className="mm-srow-hint">Used for code and IDs</span>
+                  </div>
+                  <span className="mm-srow-val" style={{ fontFamily: 'var(--mm-mono)', fontSize: '0.76rem' }}>JetBrains Mono</span>
+                </div>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Density</span>
+                    <span className="mm-srow-hint">Controls spacing and padding</span>
+                  </div>
+                  <span className="mm-srow-val">Comfortable</span>
                 </div>
               </div>
             </div>
-          </>
+          </div>
         )}
 
-        {/* Security Tab */}
+        {/* ── Security Tab ── */}
         {settingsTab === 'security' && (
-          <>
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Authentication</h2>
-              </div>
-              <div className="mm-config-list">
-                <div className="mm-config-row">
+          <div className="mm-stab-content">
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Lock size={15} strokeWidth={1.6} /></div>
                   <div>
-                    <span className="mm-config-label">Provider</span>
-                    <span className="mm-config-hint">Managed by Clerk</span>
+                    <h2>Authentication</h2>
+                    <p className="mm-spanel-desc">Identity provider and login methods</p>
                   </div>
-                  <span className="mm-config-value">
-                    <span className="mm-settings-status-badge mm-green-bg"><Lock size={10} /> SSO Active</span>
-                  </span>
                 </div>
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Two-Factor Authentication</span>
-                  <span className="mm-config-value mm-text-muted">Managed via Clerk</span>
+              </div>
+              <div className="mm-srows">
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Provider</span>
+                    <span className="mm-srow-hint">Managed by Clerk — SSO, OAuth, Passkeys</span>
+                  </div>
+                  <span className="mm-sstatus mm-sstatus-ok"><Circle size={6} /> SSO Active</span>
+                </div>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Two-Factor Authentication</span>
+                    <span className="mm-srow-hint">Configure 2FA through your Clerk profile</span>
+                  </div>
+                  <span className="mm-srow-val mm-srow-muted">Managed via Clerk</span>
                 </div>
               </div>
             </div>
 
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>API Keys</h2>
-                <button className="mm-btn-secondary" onClick={() => setActive('api-keys')}>
-                  Manage Keys <ExternalLink size={11} />
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Shield size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>API Keys</h2>
+                    <p className="mm-spanel-desc">Manage programmatic access tokens</p>
+                  </div>
+                </div>
+                <button className="mm-sbtn-secondary" onClick={() => setActive('api-keys')}>
+                  Manage Keys <ExternalLink size={10} />
                 </button>
               </div>
-              <div className="mm-config-list">
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Active Keys</span>
-                  <span className="mm-config-value">{stats.activeSessions || 0} / 5</span>
+              <div className="mm-srows">
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Active Keys</span>
+                    <span className="mm-srow-hint">Currently active API keys</span>
+                  </div>
+                  <span className="mm-srow-val">{stats.activeSessions || 0} / 5</span>
                 </div>
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Key Prefix</span>
-                  <span className="mm-config-value mono">mm_live_*</span>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Key Prefix</span>
+                    <span className="mm-srow-hint">All keys start with this prefix</span>
+                  </div>
+                  <span className="mm-srow-val mm-srow-mono">mm_live_*</span>
                 </div>
               </div>
             </div>
 
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Sessions</h2>
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Activity size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Sessions</h2>
+                    <p className="mm-spanel-desc">Active sessions and devices</p>
+                  </div>
+                </div>
               </div>
-              <div className="mm-config-list">
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Current Session</span>
-                  <span className="mm-config-value"><span className="mm-settings-status-badge mm-green-bg"><Circle size={8} /> Active</span></span>
+              <div className="mm-srows">
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Current Session</span>
+                    <span className="mm-srow-hint">This browser session</span>
+                  </div>
+                  <span className="mm-sstatus mm-sstatus-ok"><Circle size={6} /> Active</span>
                 </div>
               </div>
             </div>
-          </>
+          </div>
         )}
 
-        {/* Integrations Tab */}
+        {/* ── Integrations Tab ── */}
         {settingsTab === 'integrations' && (
-          <>
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>MCP Server</h2>
-              </div>
-              <div className="mm-config-list">
-                <div className="mm-config-row">
+          <div className="mm-stab-content">
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><GitBranch size={15} strokeWidth={1.6} /></div>
                   <div>
-                    <span className="mm-config-label">Status</span>
-                    <span className="mm-config-hint">Model Context Protocol server for AI agent integration</span>
+                    <h2>MCP Server</h2>
+                    <p className="mm-spanel-desc">Model Context Protocol for AI agent integration</p>
                   </div>
-                  <span className="mm-config-value"><span className="mm-settings-status-badge mm-green-bg"><Activity size={10} /> Connected</span></span>
                 </div>
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Endpoint</span>
-                  <span className="mm-config-value mono" style={{ fontSize: '0.72rem' }}>mcp.memron.ai</span>
+              </div>
+              <div className="mm-srows">
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Status</span>
+                    <span className="mm-srow-hint">Real-time connection to MCP bridge</span>
+                  </div>
+                  <span className="mm-sstatus mm-sstatus-ok"><Circle size={6} /> Connected</span>
+                </div>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Endpoint</span>
+                    <span className="mm-srow-hint">Your MCP server address</span>
+                  </div>
+                  <div className="mm-sfield-copy">
+                    <span className="mm-srow-val mm-srow-mono">mcp.memron.ai</span>
+                    <button className="mm-sbtn-icon" onClick={() => settingsCopyToClipboard('mcp.memron.ai')} title="Copy"><Copy size={10} /></button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Webhooks</h2>
-                <button className="mm-btn-secondary" onClick={() => setActive('webhooks')}>
-                  Manage <ExternalLink size={11} />
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Webhook size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Webhooks</h2>
+                    <p className="mm-spanel-desc">Event-driven notifications to your endpoints</p>
+                  </div>
+                </div>
+                <button className="mm-sbtn-secondary" onClick={() => setActive('webhooks')}>
+                  Manage <ExternalLink size={10} />
                 </button>
               </div>
-              <div className="mm-config-list">
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Active Endpoints</span>
-                  <span className="mm-config-value">{webhooksData.filter(w => w.isActive).length}</span>
+              <div className="mm-srows">
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Active Endpoints</span>
+                    <span className="mm-srow-hint">Webhooks currently receiving events</span>
+                  </div>
+                  <span className="mm-srow-val">{webhooksData.filter(w => w.isActive).length}</span>
                 </div>
-                <div className="mm-config-row">
-                  <span className="mm-config-label">Available Events</span>
-                  <span className="mm-config-value">5 event types</span>
+                <div className="mm-srow">
+                  <div>
+                    <span className="mm-srow-label">Available Events</span>
+                    <span className="mm-srow-hint">Event types you can subscribe to</span>
+                  </div>
+                  <span className="mm-srow-val">5 event types</span>
                 </div>
               </div>
             </div>
 
-            <div className="mm-panel">
-              <div className="mm-panel-head">
-                <h2>Connected Services</h2>
-              </div>
-              <div className="mm-settings-integrations-list">
-                <div className="mm-settings-integration-row">
-                  <div className="mm-settings-integration-icon"><Brain size={16} /></div>
-                  <div className="mm-settings-integration-info">
-                    <span className="mm-settings-integration-name">Cursor IDE</span>
-                    <span className="mm-settings-integration-desc">MCP memory layer for Cursor</span>
+            <div className="mm-spanel">
+              <div className="mm-spanel-head">
+                <div className="mm-spanel-title-row">
+                  <div className="mm-spanel-icon"><Terminal size={15} strokeWidth={1.6} /></div>
+                  <div>
+                    <h2>Connected Services</h2>
+                    <p className="mm-spanel-desc">IDE and tool integrations</p>
                   </div>
-                  <span className="mm-settings-status-badge mm-green-bg">Connected</span>
                 </div>
-                <div className="mm-settings-integration-row">
-                  <div className="mm-settings-integration-icon"><Terminal size={16} /></div>
-                  <div className="mm-settings-integration-info">
-                    <span className="mm-settings-integration-name">Windsurf</span>
-                    <span className="mm-settings-integration-desc">MCP memory layer for Windsurf</span>
+              </div>
+              <div className="mm-sint-list">
+                <div className="mm-sint-row">
+                  <div className="mm-sint-icon"><Brain size={16} strokeWidth={1.4} /></div>
+                  <div className="mm-sint-info">
+                    <span className="mm-sint-name">Cursor IDE</span>
+                    <span className="mm-sint-desc">MCP memory layer for Cursor</span>
                   </div>
-                  <span className="mm-settings-status-badge">Available</span>
+                  <span className="mm-sstatus mm-sstatus-ok"><Circle size={6} /> Connected</span>
+                </div>
+                <div className="mm-sint-row">
+                  <div className="mm-sint-icon"><Terminal size={16} strokeWidth={1.4} /></div>
+                  <div className="mm-sint-info">
+                    <span className="mm-sint-name">Windsurf</span>
+                    <span className="mm-sint-desc">MCP memory layer for Windsurf</span>
+                  </div>
+                  <span className="mm-sstatus mm-sstatus-avail">Available</span>
+                </div>
+                <div className="mm-sint-row">
+                  <div className="mm-sint-icon"><MessageSquare size={16} strokeWidth={1.4} /></div>
+                  <div className="mm-sint-info">
+                    <span className="mm-sint-name">VS Code</span>
+                    <span className="mm-sint-desc">Copilot memory bridge</span>
+                  </div>
+                  <span className="mm-sstatus mm-sstatus-avail">Available</span>
                 </div>
               </div>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -2065,8 +2215,8 @@ export default function DashboardPage() {
       case 'memories': return renderMemories();
       case 'playground': { router.push('/playground'); return null; }
       case 'config': return renderConfig();
-      case 'graph-memory': return renderGraphMemory();
-      case 'webhooks': return renderWebhooks();
+      case 'graph-memory': return renderDashboard(); /* Coming Soon — redirect to dashboard */
+      case 'webhooks': return renderDashboard(); /* Coming Soon — redirect to dashboard */
       case 'usage': return renderUsage();
       case 'notifications': return renderNotifications();
       case 'dashboard': default: return renderDashboard();
