@@ -23,7 +23,6 @@ import {
   ApiKeysPage,
   ShareBucketModal,
   CreateBucketModal,
-  Playground,
 } from './_components';
 import { DonutChart, Sparkline } from './_components/charts';
 import { Topbar } from './_components/topbar';
@@ -73,11 +72,6 @@ export default function DashboardPage() {
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
-  /* ── Playground state ── */
-  const [pgMessages, setPgMessages] = useState<{ role: 'user' | 'system'; content: string; ts: number }[]>([]);
-  const [pgInput, setPgInput] = useState('');
-  const [pgLoading, setPgLoading] = useState(false);
-
   /* ── Webhooks state ── */
   const [webhooksData, setWebhooksData] = useState<{ id: string; url: string; events: string[]; isActive: boolean; secret?: string; createdAt: string; lastTriggeredAt?: string }[]>([]);
   const [whLoading, setWhLoading] = useState(false);
@@ -90,9 +84,6 @@ export default function DashboardPage() {
   /* ── Graph Memory state ── */
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphSelectedNode, setGraphSelectedNode] = useState<string | null>(null);
-
-  /* ── Playground ref ── */
-  const pgRef = useRef<HTMLDivElement>(null);
 
   /* ── Theme management ── */
   useEffect(() => {
@@ -120,7 +111,12 @@ export default function DashboardPage() {
   const {
     stats, memories, buckets, memoryRows, activityItems, sparkTokens, sparkMemories,
     loading: dataLoading, error: dataError, refresh: refreshData,
-  } = useDashboardData(isLoaded && !!user && orgResolved, timeRange, organization?.id || null);
+  } = useDashboardData(
+    isLoaded && !!user && orgResolved,
+    timeRange,
+    organization?.id || null,
+    active !== 'config',  // skip memories fetch on settings page
+  );
 
   /* ── Prevent back ── */
   useEffect(() => {
@@ -245,39 +241,6 @@ export default function DashboardPage() {
         body: JSON.stringify({ webhookId: id, isActive }),
       });
     } catch { /* ignore */ }
-  };
-
-  /* ── Playground send ── */
-  const pgSend = async () => {
-    const msg = pgInput.trim();
-    if (!msg || pgLoading) return;
-    setPgMessages(prev => [...prev, { role: 'user', content: msg, ts: Date.now() }]);
-    setPgInput('');
-    setPgLoading(true);
-    try {
-      const res = await fetch('/api/dashboard/memories', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        const memories = data.memories || [];
-        const q = msg.toLowerCase();
-        const matched = memories.filter((m: any) =>
-          (m.content || '').toLowerCase().includes(q) ||
-          (m.bucket_name || '').toLowerCase().includes(q)
-        ).slice(0, 5);
-        if (matched.length > 0) {
-          const lines = matched.map((m: any, i: number) =>
-            `${i + 1}. [${m.bucket_name || 'default'}] ${(m.content || '').slice(0, 120)}${(m.content || '').length > 120 ? '...' : ''}`
-          ).join('\n');
-          setPgMessages(prev => [...prev, { role: 'system', content: `Found ${matched.length} matching memories:\n${lines}`, ts: Date.now() }]);
-        } else {
-          setPgMessages(prev => [...prev, { role: 'system', content: `No memories found matching "${msg}". Try a different query or check your buckets.`, ts: Date.now() }]);
-        }
-      } else {
-        setPgMessages(prev => [...prev, { role: 'system', content: 'Failed to query memories. Please try again.', ts: Date.now() }]);
-      }
-    } catch {
-      setPgMessages(prev => [...prev, { role: 'system', content: 'Connection error. Check your network.', ts: Date.now() }]);
-    } finally { setPgLoading(false); }
   };
 
   const doSignOut = useCallback(async () => {
@@ -500,9 +463,6 @@ export default function DashboardPage() {
     const growth = first > 0 ? `${last >= first ? '+' : ''}${(((last - first) / first) * 100).toFixed(0)}%` : '0%';
     return { peak, peakLabel: trendData[peakIdx]?.label || '—', avg, total, growth };
   }, [trendData]);
-
-  /* ── Playground scroll-to-bottom ── */
-  useEffect(() => { pgRef.current?.scrollTo(0, pgRef.current.scrollHeight); }, [pgMessages]);
 
   /* ── Graph memory nodes ── */
   const graphNodes = useMemo(() => {
@@ -1247,17 +1207,6 @@ export default function DashboardPage() {
         </div>
       </div>
     </div>
-  );
-
-  /* ══════════ Playground Page ══════════ */
-  const renderPlayground = () => (
-    <Playground
-      buckets={buckets}
-      totalMemories={stats.totalMemories}
-      totalTokens={stats.totalTokens}
-      userName={user?.firstName || 'there'}
-      onBack={() => setActive('dashboard')}
-    />
   );
 
   /* ══════════ Settings Page ══════════ */
