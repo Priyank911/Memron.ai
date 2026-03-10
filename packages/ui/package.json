@@ -6,7 +6,6 @@
   "types": "./src/index.ts",
   "scripts": {
     "build": "tsc -b",
-    "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
