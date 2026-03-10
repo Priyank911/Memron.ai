@@ -4,8 +4,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, Search, MessageSquare,
   Plus, Loader2, X, FolderClosed, FolderOpen, ChevronRight,
-  Copy, Check, Trash2,
+  Trash2,
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { ThemeToggle } from '@/components/theme-toggle';
 
 /* ── Custom SVG Icons ── */
@@ -99,16 +100,6 @@ const SUGGESTIONS = [
 ];
 
 /* ── Types ── */
-interface MemoryResult {
-  id: string;
-  bucket: string;
-  title: string;
-  tags: string[];
-  tokenCount: number;
-  score: number;
-  createdAt: string;
-}
-
 interface MemoryPreview {
   id: string;
   title: string;
@@ -122,8 +113,8 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
-  memories?: MemoryResult[];
-  reasoning?: string;
+  bucket?: string | null;
+  memoryCount?: number;
 }
 
 interface ChatSession {
@@ -150,28 +141,6 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-function scoreLevel(score: number): string {
-  if (score >= 0.85) return 'pg-score-high';
-  if (score >= 0.7)  return 'pg-score-good';
-  if (score >= 0.5)  return 'pg-score-mid';
-  return 'pg-score-low';
-}
-
-function buildReasoning(memories: MemoryResult[], query: string): string {
-  if (memories.length === 0) return '';
-  const top = memories[0];
-  const avgScore = memories.reduce((a, m) => a + m.score, 0) / memories.length;
-  const bucketSet = [...new Set(memories.map(m => m.bucket))];
-  let text = `Based on your query "${query}", I retrieved ${memories.length} memor${memories.length === 1 ? 'y' : 'ies'}`;
-  if (bucketSet.length === 1) text += ` from the "${bucketSet[0]}" bucket`;
-  else text += ` across ${bucketSet.length} buckets`;
-  text += `. The highest relevance score is ${top.score.toFixed(2)} for "${top.title}".`;
-  if (avgScore >= 0.8) text += ' These results are highly relevant to your query.';
-  else if (avgScore >= 0.6) text += ' These results show moderate relevance.';
-  else text += ' These results have low confidence — try refining your query.';
-  return text;
-}
-
 export function Playground({ buckets, totalMemories, totalTokens, userName, onBack }: PlaygroundProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -182,7 +151,11 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [folderMemories, setFolderMemories] = useState<Record<string, MemoryPreview[]>>({});
   const [folderLoading, setFolderLoading] = useState<Set<string>>(new Set());
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Prompt history (up-arrow navigation)
+  const [promptHistory, setPromptHistory] = useState<string[]>([]);
+  const [historyIdx, setHistoryIdx] = useState(-1);
+  const savedInputRef = useRef('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -233,14 +206,6 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
     setSelectedBucket(prev => prev === slug ? null : slug);
   }, []);
 
-  /* ── Copy text to clipboard ── */
-  const copyToClipboard = useCallback((text: string, id: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1500);
-    });
-  }, []);
-
   const createSession = useCallback(() => {
     const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const session: ChatSession = {
@@ -271,7 +236,19 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
     const text = (overrideText ?? input).trim();
     if (!text || loading || !activeSessionId) return;
 
+    // Add to prompt history
+    setPromptHistory(prev => {
+      const filtered = prev.filter(p => p !== text);
+      return [...filtered, text];
+    });
+    setHistoryIdx(-1);
+    savedInputRef.current = '';
+
     const userMsg: ChatMessage = { id: `m_${Date.now()}`, role: 'user', content: text, timestamp: Date.now() };
+
+    // Get current session messages for chat history
+    const currentSession = sessions.find(s => s.id === activeSessionId);
+    const currentMessages = currentSession?.messages || [];
 
     setSessions(prev => prev.map(s => {
       if (s.id !== activeSessionId) return s;
@@ -287,33 +264,38 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
     setLoading(true);
 
     try {
+      // Build chat history from session messages (exclude current message)
+      const chatHistory = currentMessages.map(m => ({
+        role: m.role,
+        content: m.content,
+      }));
+
       const res = await fetch('/api/dashboard/playground', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: text, bucket: selectedBucket, limit: 10 }),
+        body: JSON.stringify({ query: text, bucket: selectedBucket, chatHistory }),
       });
 
       let assistantMsg: ChatMessage;
+      let matchedMemoryCount = 0;
 
       if (res.ok) {
         const data = await res.json();
-        const memories: MemoryResult[] = data.memories || [];
+        const llmAnswer: string = data.answer || '';
+        matchedMemoryCount = data.memories?.length || 0;
 
-        if (memories.length > 0) {
-          assistantMsg = {
-            id: `m_${Date.now()}`, role: 'assistant',
-            content: 'Retrieved',
-            timestamp: Date.now(),
-            memories,
-            reasoning: buildReasoning(memories, text),
-          };
-        } else {
-          assistantMsg = {
-            id: `m_${Date.now()}`, role: 'assistant',
-            content: 'No memories found for this query.',
-            timestamp: Date.now(),
-          };
-        }
+        assistantMsg = {
+          id: `m_${Date.now()}`, role: 'assistant',
+          content: llmAnswer || 'No response generated. Please try again.',
+          timestamp: Date.now(),
+        };
+      } else if (res.status === 400) {
+        const data = await res.json().catch(() => null);
+        assistantMsg = {
+          id: `m_${Date.now()}`, role: 'assistant',
+          content: data?.rejection || 'Invalid query. Please try a different question.',
+          timestamp: Date.now(),
+        };
       } else {
         assistantMsg = {
           id: `m_${Date.now()}`, role: 'assistant',
@@ -322,11 +304,17 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
         };
       }
 
-      setSessions(prev => prev.map(s =>
-        s.id === activeSessionId
-          ? { ...s, lastMessage: assistantMsg.content.slice(0, 60), messages: [...s.messages, assistantMsg] }
-          : s
-      ));
+      setSessions(prev => prev.map(s => {
+        if (s.id !== activeSessionId) return s;
+        const updatedMessages = s.messages.map(m =>
+          m.id === userMsg.id ? { ...m, bucket: selectedBucket, memoryCount: matchedMemoryCount } : m
+        );
+        return {
+          ...s,
+          lastMessage: assistantMsg.content.slice(0, 60),
+          messages: [...updatedMessages, assistantMsg],
+        };
+      }));
     } catch {
       setSessions(prev => prev.map(s =>
         s.id === activeSessionId
@@ -337,10 +325,41 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [input, loading, activeSessionId, selectedBucket]);
+  }, [input, loading, activeSessionId, selectedBucket, sessions]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); return; }
+
+    // Up arrow: cycle through prompt history
+    if (e.key === 'ArrowUp' && promptHistory.length > 0) {
+      e.preventDefault();
+      if (historyIdx === -1) {
+        // Save current input before navigating history
+        savedInputRef.current = input;
+        const newIdx = promptHistory.length - 1;
+        setHistoryIdx(newIdx);
+        setInput(promptHistory[newIdx]);
+      } else if (historyIdx > 0) {
+        const newIdx = historyIdx - 1;
+        setHistoryIdx(newIdx);
+        setInput(promptHistory[newIdx]);
+      }
+      return;
+    }
+
+    // Down arrow: navigate forward in history or restore saved input
+    if (e.key === 'ArrowDown' && historyIdx !== -1) {
+      e.preventDefault();
+      if (historyIdx < promptHistory.length - 1) {
+        const newIdx = historyIdx + 1;
+        setHistoryIdx(newIdx);
+        setInput(promptHistory[newIdx]);
+      } else {
+        setHistoryIdx(-1);
+        setInput(savedInputRef.current);
+      }
+      return;
+    }
   };
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -454,46 +473,30 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
               {activeSession.messages.map(msg => (
                 <div key={msg.id} className={`pg-msg pg-msg-${msg.role}`}>
                   {msg.role === 'user' ? (
-                    <div className="pg-user-bubble">{msg.content}</div>
+                    <>
+                      <div className="pg-user-bubble">{msg.content}</div>
+                      {(msg.bucket || (msg.memoryCount != null && msg.memoryCount > 0)) && (
+                        <div className="pg-user-context-tag">
+                          {msg.bucket && (
+                            <span className="pg-ctx-pill">
+                              <FolderOpen size={10} />
+                              {buckets.find(b => b.slug === msg.bucket)?.name || msg.bucket}
+                            </span>
+                          )}
+                          {msg.memoryCount != null && msg.memoryCount > 0 && (
+                            <span className="pg-ctx-pill">
+                              <IconMemory size={10} />
+                              Used {msg.memoryCount} {msg.memoryCount === 1 ? 'memory' : 'memories'}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="pg-assistant-block">
-                      {!msg.memories || msg.memories.length === 0 ? (
-                        <div className="pg-no-mem">{msg.content}</div>
-                      ) : (
-                        <>
-                          <div className="pg-retrieved-label">{msg.memories.length} memor{msg.memories.length === 1 ? 'y' : 'ies'} found</div>
-                          <div className="pg-score-row">
-                            {msg.memories.map(m => (
-                              <div key={m.id} className="pg-score-card">
-                                <div className="pg-score-card-top">
-                                  <span className={`pg-score-badge ${scoreLevel(m.score)}`}>
-                                    {m.score.toFixed(2)}
-                                  </span>
-                                  <button
-                                    className="pg-copy-btn"
-                                    onClick={() => copyToClipboard(m.title, m.id)}
-                                    title="Copy title"
-                                  >
-                                    {copiedId === m.id ? <Check size={11} /> : <Copy size={11} />}
-                                  </button>
-                                </div>
-                                <span className="pg-score-title">{m.title}</span>
-                                {m.tags.length > 0 && (
-                                  <div className="pg-score-tags">
-                                    {m.tags.slice(0, 3).map(t => (
-                                      <span key={t} className="pg-tag">{t}</span>
-                                    ))}
-                                  </div>
-                                )}
-                                <span className="pg-score-meta">{m.tokenCount} tokens &middot; {m.bucket}</span>
-                              </div>
-                            ))}
-                          </div>
-                          {msg.reasoning && (
-                            <div className="pg-reasoning">{msg.reasoning}</div>
-                          )}
-                        </>
-                      )}
+                      <div className="pg-llm-answer">
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
                     </div>
                   )}
                 </div>

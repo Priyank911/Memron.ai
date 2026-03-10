@@ -37,6 +37,7 @@ export interface MemoryRow {
   importance: number;
   access_count: number;
   last_accessed_at: Date | null;
+  embedding: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -58,33 +59,44 @@ export async function insertMemory(params: {
   apiKeyId?: number;
   subPath?: string;
   importance?: number;
+  embedding?: string;  // pgvector string '[0.1,0.2,...]' or null
 }): Promise<MemoryRow> {
+  const hasEmbedding = !!params.embedding;
+  const columns = [
+    'pointer_id', 'user_id', 'org_id', 'bucket', 'title',
+    'content_encrypted', 'content_iv', 'content_tag', 'content_hash',
+    'tags', 'token_count', 'original_tokens', 'metadata',
+    'api_key_id', 'sub_path', 'importance',
+    ...(hasEmbedding ? ['embedding'] : []),
+  ];
+  const paramCount = columns.length;
+  const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+
+  const values: unknown[] = [
+    params.pointerId,
+    params.userId,
+    params.orgId ?? null,
+    params.bucket,
+    params.title,
+    params.contentEncrypted,
+    params.contentIv,
+    params.contentTag,
+    params.contentHash,
+    params.tags,
+    params.tokenCount,
+    params.originalTokens,
+    JSON.stringify(params.metadata ?? {}),
+    params.apiKeyId ?? null,
+    params.subPath ?? '',
+    params.importance ?? 0.5,
+    ...(hasEmbedding ? [params.embedding] : []),
+  ];
+
   const result = await query<MemoryRow>(
-    `INSERT INTO memories (
-      pointer_id, user_id, org_id, bucket, title,
-      content_encrypted, content_iv, content_tag, content_hash,
-      tags, token_count, original_tokens, metadata,
-      api_key_id, sub_path, importance
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-    RETURNING *`,
-    [
-      params.pointerId,
-      params.userId,
-      params.orgId ?? null,
-      params.bucket,
-      params.title,
-      params.contentEncrypted,
-      params.contentIv,
-      params.contentTag,
-      params.contentHash,
-      params.tags,
-      params.tokenCount,
-      params.originalTokens,
-      JSON.stringify(params.metadata ?? {}),
-      params.apiKeyId ?? null,
-      params.subPath ?? '',
-      params.importance ?? 0.5,
-    ],
+    `INSERT INTO memories (${columns.join(', ')})
+     VALUES (${placeholders})
+     RETURNING *`,
+    values,
   );
 
   // Increment bucket memory_count (non-blocking, best-effort)
@@ -95,6 +107,13 @@ export async function insertMemory(params: {
   ).catch(() => { /* bucket table may not exist yet */ });
 
   return result.rows[0];
+}
+
+export async function updateMemoryEmbedding(memoryId: number, embedding: string): Promise<void> {
+  await query(
+    `UPDATE memories SET embedding = $1, updated_at = NOW() WHERE id = $2`,
+    [embedding, memoryId],
+  );
 }
 
 export async function getMemoryByPointer(pointerId: string, userId: number): Promise<MemoryRow | null> {
