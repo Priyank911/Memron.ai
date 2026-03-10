@@ -312,6 +312,28 @@ const MIGRATIONS = [
 
   // Clean up stale duplicate unique index (if exists from earlier migration)
   `DROP INDEX IF EXISTS idx_api_keys_hash_unique`,
+
+  // ─── pgvector: Semantic Search (v3) ────────────────────────
+  // Enable the pgvector extension (Supabase has it pre-installed, just needs enabling)
+  `CREATE EXTENSION IF NOT EXISTS vector`,
+
+  // Add embedding column (768 dimensions for Groq nomic-embed-text-v1.5)
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding vector(768);
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  // HNSW index for fast approximate nearest-neighbor search (cosine distance)
+  // HNSW is better than IVFFlat for datasets under ~100k rows
+  `DO $$ BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_indexes WHERE indexname = 'idx_memories_embedding_hnsw'
+     ) THEN
+       CREATE INDEX idx_memories_embedding_hnsw ON memories
+         USING hnsw (embedding vector_cosine_ops)
+         WITH (m = 16, ef_construction = 64);
+     END IF;
+   END $$`,
 ];
 
 /**

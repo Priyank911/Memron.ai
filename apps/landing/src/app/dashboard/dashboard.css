@@ -5826,7 +5826,8 @@
 
 .pg-msg-user {
     display: flex;
-    justify-content: flex-end;
+    flex-direction: column;
+    align-items: flex-end;
 }
 
 .pg-user-bubble {
@@ -5840,6 +5841,31 @@
     word-break: break-word;
     border: 1px solid #1e1e1e;
     font-family: var(--mm-font);
+}
+
+/* ── Context tag below user messages (bucket + memory count) ── */
+.pg-user-context-tag {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+    padding-right: 4px;
+    animation: pgTagIn 0.25s ease;
+}
+
+.pg-ctx-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.65rem;
+    color: #555;
+    font-family: var(--mm-font);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+.pg-ctx-pill svg {
+    opacity: 0.7;
 }
 
 /* ── Assistant block — left aligned ── */
@@ -5982,6 +6008,78 @@
     border-top: 1px solid #151515;
     margin-top: 4px;
     font-family: var(--mm-font);
+}
+
+/* LLM Answer block */
+.pg-llm-answer {
+    font-size: 0.88rem;
+    color: #ccc;
+    line-height: 1.75;
+    padding: 14px 18px;
+    background: #0a0a0a;
+    border: 1px solid #1a1a1a;
+    border-radius: 14px;
+    margin-bottom: 10px;
+    font-family: var(--mm-font);
+    word-break: break-word;
+}
+
+/* Markdown rendering inside LLM answer */
+.pg-llm-answer p {
+    margin: 0 0 8px 0;
+}
+.pg-llm-answer p:last-child {
+    margin-bottom: 0;
+}
+.pg-llm-answer ul, .pg-llm-answer ol {
+    margin: 4px 0 8px 0;
+    padding-left: 20px;
+}
+.pg-llm-answer li {
+    margin-bottom: 3px;
+}
+.pg-llm-answer strong {
+    color: #fff;
+    font-weight: 600;
+}
+.pg-llm-answer em {
+    color: #bbb;
+    font-style: italic;
+}
+.pg-llm-answer code {
+    background: #161616;
+    border: 1px solid #222;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: var(--mm-mono);
+    font-size: 0.82rem;
+}
+.pg-llm-answer pre {
+    background: #111;
+    border: 1px solid #222;
+    border-radius: 8px;
+    padding: 10px 14px;
+    overflow-x: auto;
+    margin: 6px 0;
+}
+.pg-llm-answer pre code {
+    background: none;
+    border: none;
+    padding: 0;
+}
+.pg-llm-answer h1, .pg-llm-answer h2, .pg-llm-answer h3 {
+    color: #eee;
+    margin: 10px 0 6px 0;
+    font-weight: 600;
+}
+.pg-llm-answer h1 { font-size: 1.1rem; }
+.pg-llm-answer h2 { font-size: 1rem; }
+.pg-llm-answer h3 { font-size: 0.92rem; }
+.pg-llm-answer blockquote {
+    border-left: 3px solid #333;
+    margin: 6px 0;
+    padding: 4px 12px;
+    color: #999;
 }
 
 /* Plain assistant text */
@@ -6621,6 +6719,10 @@
     border-color: #e0e0e0;
 }
 
+[data-theme="light"] .pg-ctx-pill {
+    color: #999;
+}
+
 [data-theme="light"] .pg-no-mem {
     background: #f0f0f0;
     border-color: #e0e0e0;
@@ -6677,6 +6779,35 @@
 [data-theme="light"] .pg-reasoning {
     color: #666;
     border-top-color: #eee;
+}
+
+[data-theme="light"] .pg-llm-answer {
+    color: #333;
+    background: #f9f9f9;
+    border-color: #e5e5e5;
+}
+[data-theme="light"] .pg-llm-answer strong {
+    color: #111;
+}
+[data-theme="light"] .pg-llm-answer em {
+    color: #555;
+}
+[data-theme="light"] .pg-llm-answer code {
+    background: #f0f0f0;
+    border-color: #ddd;
+}
+[data-theme="light"] .pg-llm-answer pre {
+    background: #f5f5f5;
+    border-color: #ddd;
+}
+[data-theme="light"] .pg-llm-answer h1,
+[data-theme="light"] .pg-llm-answer h2,
+[data-theme="light"] .pg-llm-answer h3 {
+    color: #222;
+}
+[data-theme="light"] .pg-llm-answer blockquote {
+    border-left-color: #ccc;
+    color: #666;
 }
 
 [data-theme="light"] .pg-assistant-text {

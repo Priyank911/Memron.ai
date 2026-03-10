@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { encrypt, decrypt, hashContent } from '../lib/encryption.js';
+import { generateEmbedding, buildEmbeddingInput, toPgVector } from '../lib/embeddings.js';
 import { generatePointerId, estimateTokens, calculateCompression, classifyBucket, isValidPointerId, VALID_BUCKETS } from '../lib/pointer.js';
 import { ValidationError, NotFoundError, formatToolError } from '../lib/errors.js';
 import { config } from '../config.js';
@@ -83,6 +84,11 @@ export function registerMemoryTools(server: McpServer): void {
         const pointerTokens = 3;
         const compression = calculateCompression(originalTokens);
 
+        // Compute embedding from plaintext (before it's only available encrypted)
+        const embeddingInput = buildEmbeddingInput(title, args.tags ?? [], content);
+        const embedding = await generateEmbedding(embeddingInput);
+        const embeddingStr = embedding ? toPgVector(embedding) : undefined;
+
         // Store in database
         await db.insertMemory({
           pointerId,
@@ -99,6 +105,7 @@ export function registerMemoryTools(server: McpServer): void {
           originalTokens,
           metadata: { compressionRate: compression.rate },
           apiKeyId,
+          embedding: embeddingStr,
         });
 
         return {
@@ -239,6 +246,19 @@ export function registerMemoryTools(server: McpServer): void {
         const updated = await db.updateMemory(updateParams);
         if (!updated) {
           throw new Error('Update failed — memory may have been deleted');
+        }
+
+        // Recompute embedding if content or title changed
+        if (updated && (args.content || args.title)) {
+          const embInput = buildEmbeddingInput(
+            updated.title,
+            updated.tags,
+            args.content ?? '',
+          );
+          const emb = await generateEmbedding(embInput);
+          if (emb) {
+            await db.updateMemoryEmbedding(updated.id, toPgVector(emb));
+          }
         }
 
         return {
