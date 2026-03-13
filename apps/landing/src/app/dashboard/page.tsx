@@ -174,7 +174,6 @@ export default function DashboardPage() {
         setOrgResolved(true);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, user]);
 
   /* ── Ctrl+K ── */
@@ -650,26 +649,34 @@ export default function DashboardPage() {
                     <line x1={hx} y1="0" x2={hx} y2="170" stroke="#a0a0a0" strokeWidth="1" strokeDasharray="4 3" opacity="0.7" />
                   );
                 })()}
-                {/* X-axis labels — show up to 12 evenly-spaced labels for any data length */}
+                {/* X-axis labels — evenly distributed, always including first & last data point */}
                 {(() => {
                   const n = areaChartData.length;
                   if (n === 0) return null;
-                  // Pick at most 12 labels evenly spread across the data
+                  if (n === 1) return (
+                    <text key={0} x={400} y="190" textAnchor="middle" className="mm-chart-label">{areaChartData[0].label}</text>
+                  );
+                  // Use exactly evenly-spaced step from first to last index
                   const maxLabels = Math.min(12, n);
-                  const step = n <= maxLabels ? 1 : Math.floor(n / maxLabels);
-                  return areaChartData
-                    .filter((_, i) => i % step === 0 || i === n - 1)
-                    .slice(0, maxLabels)
-                    .map((d, displayIdx, arr) => {
-                      const realIdx = areaChartData.findIndex(x => x === d);
-                      return (
-                        <text key={displayIdx}
-                          x={(realIdx / Math.max(n - 1, 1)) * 800}
-                          y="190" className="mm-chart-label">
-                          {d.label}
-                        </text>
-                      );
-                    });
+                  const step = (n - 1) / (maxLabels - 1);
+                  const indices: number[] = [];
+                  for (let i = 0; i < maxLabels; i++) {
+                    indices.push(Math.round(i * step));
+                  }
+                  // Deduplicate in case rounding produces repeats
+                  const unique = [...new Set(indices)];
+                  return unique.map((idx, displayIdx) => {
+                    const xPos = (idx / (n - 1)) * 800;
+                    // First label left-aligned, last right-aligned, middle centered
+                    const anchor = idx === 0 ? 'start' : idx === n - 1 ? 'end' : 'middle';
+                    return (
+                      <text key={displayIdx}
+                        x={xPos}
+                        y="190" textAnchor={anchor} className="mm-chart-label">
+                        {areaChartData[idx].label}
+                      </text>
+                    );
+                  });
                 })()}
               </svg>
               {/* Hover Tooltip */}

@@ -5621,6 +5621,99 @@
     color: #fff;
 }
 
+/* 3-dot menu */
+.pg-session-actions {
+    flex-shrink: 0;
+}
+
+.pg-session-menu-btn {
+    width: 20px;
+    height: 20px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: #555;
+    cursor: pointer;
+}
+
+.pg-session-item:hover .pg-session-menu-btn,
+.pg-session-menu-btn[aria-expanded="true"] {
+    display: flex;
+}
+
+/* Keep menu-btn visible when menu is open */
+.pg-session-actions:has(.pg-session-menu) .pg-session-menu-btn {
+    display: flex;
+}
+
+.pg-session-menu-btn:hover {
+    color: #fff;
+}
+
+.pg-session-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 50;
+    min-width: 120px;
+    background: #161616;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 3px 0;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.pg-session-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    padding: 5px 10px;
+    background: transparent;
+    border: none;
+    color: #aaa;
+    font-size: 0.68rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.pg-session-menu-item:hover {
+    background: #222;
+    color: #fff;
+}
+
+.pg-menu-danger:hover {
+    color: #f44;
+    background: rgba(255,68,68,0.08);
+}
+
+.pg-pin-icon {
+    color: #666;
+    flex-shrink: 0;
+}
+
+.pg-session-pinned .pg-pin-icon {
+    color: #888;
+}
+
+.pg-title-edit-input {
+    width: 100%;
+    font-size: 0.74rem;
+    background: #0a0a0a;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: inherit;
+    padding: 1px 4px;
+    outline: none;
+}
+
+.pg-title-edit-input:focus {
+    border-color: #555;
+}
+
 /* Footer with New Chat box */
 .pg-sidebar-footer {
     padding: 12px 14px;
@@ -6631,6 +6724,35 @@
 
 [data-theme="light"] .pg-session-del:hover {
     color: #333;
+}
+
+[data-theme="light"] .pg-session-menu-btn:hover {
+    color: #333;
+}
+
+[data-theme="light"] .pg-session-menu {
+    background: #fff;
+    border-color: #e0e0e0;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+
+[data-theme="light"] .pg-session-menu-item {
+    color: #555;
+}
+
+[data-theme="light"] .pg-session-menu-item:hover {
+    background: #f5f5f5;
+    color: #111;
+}
+
+[data-theme="light"] .pg-title-edit-input {
+    background: #fff;
+    border-color: #ccc;
+    color: #111;
+}
+
+[data-theme="light"] .pg-title-edit-input:focus {
+    border-color: #888;
 }
 
 [data-theme="light"] .pg-sidebar-footer {

@@ -56,7 +56,9 @@ export default function PlaygroundPage() {
   }, []);
 
   useEffect(() => {
-    if (isLoaded) fetchData();
+    if (isLoaded) {
+      requestAnimationFrame(() => fetchData());
+    }
   }, [isLoaded, fetchData]);
 
   if (!isLoaded || loading) {

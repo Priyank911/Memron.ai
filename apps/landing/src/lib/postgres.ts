@@ -495,6 +495,27 @@ export async function initializeSchema(): Promise<void> {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC)`);
 
+        // ─── Enable RLS & lock down PostgREST roles ─────────────
+        // The app connects via the postgres superuser which bypasses RLS,
+        // so no policies are needed. This blocks Supabase PostgREST
+        // (anon / authenticated) from accessing tables directly.
+        await pool.query(`
+          DO $$
+          DECLARE t TEXT; r TEXT;
+          BEGIN
+            FOREACH t IN ARRAY ARRAY[
+              'users','organizations','api_keys','org_members',
+              'memories','mcp_refresh_tokens','forensic_snapshots',
+              'buckets','bucket_shares','notifications'
+            ] LOOP
+              EXECUTE format('ALTER TABLE IF EXISTS %I ENABLE ROW LEVEL SECURITY', t);
+              FOR r IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated') LOOP
+                EXECUTE format('REVOKE ALL ON %I FROM %I', t, r);
+              END LOOP;
+            END LOOP;
+          END $$
+        `);
+
         // Only log if table was newly created
         if (!tableExisted) {
             console.log('[PostgreSQL] Schema initialized successfully');

@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
 const EMPTY_STATS = {
   totalMemories: 0, totalTokens: 0, originalTokens: 0,
   activeSessions: 0, buckets: [], sparkMemories: [], dailyChart: [],
-  hourlyChart: [], heatmapData: [], peakHour: '—',
+  hourlyChart: [], heatmapData: [], peakHour: '-',
   memoryDelta: 0, previousMemories: 0, range: '30d', mcpFetchChart: [],
 };
 
@@ -122,7 +122,7 @@ async function fetchStats(clerkId: string, range: string, targetOrgId: string | 
   }
 
   // Peak hour
-  let peakHour = '—';
+  let peakHour = '-';
   const maxVal = Math.max(...hourlyChart.map(h => h.value));
   if (maxVal > 0) {
     const peakIdx = hourlyChart.findIndex(h => h.value === maxVal);

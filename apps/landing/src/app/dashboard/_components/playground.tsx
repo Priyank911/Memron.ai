@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, Search, MessageSquare,
   Plus, Loader2, X, FolderClosed, FolderOpen, ChevronRight,
-  Trash2,
+  Trash2, History, MoreVertical, Pin, Pencil,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -122,6 +122,7 @@ interface ChatSession {
   title: string;
   lastMessage: string;
   timestamp: number;
+  pinned: boolean;
   messages: ChatMessage[];
 }
 
@@ -131,6 +132,14 @@ interface PlaygroundProps {
   totalTokens: number;
   userName: string;
   onBack: () => void;
+}
+
+interface HistorySearchResult {
+  query: string;
+  answer: string;
+  bucket: string | null;
+  similarity: number;
+  createdAt: string;
 }
 
 function formatTime(ts: number): string {
@@ -152,6 +161,13 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
   const [folderMemories, setFolderMemories] = useState<Record<string, MemoryPreview[]>>({});
   const [folderLoading, setFolderLoading] = useState<Set<string>>(new Set());
 
+  // History persistence & search
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historySearchResults, setHistorySearchResults] = useState<HistorySearchResult[]>([]);
+  const [historySearching, setHistorySearching] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Prompt history (up-arrow navigation)
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
@@ -159,6 +175,13 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const initStarted = useRef(false);
+
+  // 3-dot menu state
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [editTitleValue, setEditTitleValue] = useState('');
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? null;
   const activeBucketName = buckets.find(b => b.slug === selectedBucket)?.name ?? selectedBucket;
@@ -209,7 +232,7 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
   const createSession = useCallback(() => {
     const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const session: ChatSession = {
-      id, title: 'New Chat', lastMessage: '', timestamp: Date.now(), messages: [],
+      id, title: 'New Chat', lastMessage: '', timestamp: Date.now(), pinned: false, messages: [],
     };
     setSessions(prev => [session, ...prev]);
     setActiveSessionId(id);
@@ -217,9 +240,79 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
     setTimeout(() => inputRef.current?.focus(), 50);
   }, []);
 
+  // Load persisted sessions from API on mount — guarded with ref to prevent
+  // React StrictMode double-execution from creating duplicate sessions.
   useEffect(() => {
-    if (sessions.length === 0) createSession();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (initStarted.current) return;
+    initStarted.current = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/dashboard/playground/history?action=list', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.sessions && data.sessions.length > 0) {
+            const restored: ChatSession[] = data.sessions.map((s: any) => ({
+              id: s.sessionId,
+              title: s.title || 'Untitled',
+              lastMessage: s.lastMessage || '',
+              timestamp: new Date(s.updatedAt).getTime(),
+              pinned: !!s.pinned,
+              messages: [],
+            }));
+            // Always start with a fresh chat — previous chats in sidebar
+            const freshId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            const freshSession: ChatSession = {
+              id: freshId, title: 'New Chat', lastMessage: '', timestamp: Date.now(), pinned: false, messages: [],
+            };
+            setSessions([freshSession, ...restored]);
+            setActiveSessionId(freshId);
+          } else {
+            createSession();
+          }
+        } else {
+          createSession();
+        }
+      } catch {
+        createSession();
+      }
+      setHistoryLoaded(true);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load messages when switching to a persisted session with no messages
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const session = sessions.find(s => s.id === activeSessionId);
+    if (!session || session.messages.length > 0) return;
+    // Only load if it's a persisted session (not a fresh local one)
+    if (session.title === 'New Chat' && session.lastMessage === '') return;
+
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/dashboard/playground/history?action=messages&sessionId=${encodeURIComponent(activeSessionId)}`,
+          { credentials: 'include' },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data.messages && data.messages.length > 0) {
+            const msgs: ChatMessage[] = data.messages.map((m: any) => ({
+              id: `m_${m.id}`,
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+              timestamp: new Date(m.createdAt).getTime(),
+              bucket: m.metadata?.bucket || null,
+              memoryCount: m.role === 'assistant' ? (m.metadata?.memory_ids?.length || 0) : undefined,
+            }));
+            setSessions(prev => prev.map(s =>
+              s.id === activeSessionId ? { ...s, messages: msgs } : s
+            ));
+          }
+        }
+      } catch { /* silent */ }
+    })();
+  }, [activeSessionId, sessions]);
 
   useEffect(() => {
     const el = messagesEndRef.current;
@@ -273,7 +366,7 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
       const res = await fetch('/api/dashboard/playground', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: text, bucket: selectedBucket, chatHistory }),
+        body: JSON.stringify({ query: text, bucket: selectedBucket, chatHistory, sessionId: activeSessionId }),
       });
 
       let assistantMsg: ChatMessage;
@@ -283,6 +376,14 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
         const data = await res.json();
         const llmAnswer: string = data.answer || '';
         matchedMemoryCount = data.memories?.length || 0;
+
+        // Update title immediately if the API returned a generated one
+        if (data.title) {
+          const newTitle = data.title;
+          setSessions(prev => prev.map(s =>
+            s.id === activeSessionId ? { ...s, title: newTitle } : s
+          ));
+        }
 
         assistantMsg = {
           id: `m_${Date.now()}`, role: 'assistant',
@@ -374,6 +475,10 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
       if (id === activeSessionId) setActiveSessionId(next[0]?.id ?? null);
       return next;
     });
+    // Delete from server (fire-and-forget)
+    fetch(`/api/dashboard/playground/history?sessionId=${encodeURIComponent(id)}`, {
+      method: 'DELETE', credentials: 'include',
+    }).catch(() => {});
   }, [activeSessionId]);
 
   const clearChat = useCallback(() => {
@@ -382,6 +487,75 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
       s.id === activeSessionId ? { ...s, messages: [], title: 'New Chat', lastMessage: '' } : s
     ));
   }, [activeSessionId]);
+
+  // ── 3-dot menu handlers ──
+  const handleEditTitleStart = (id: string, currentTitle: string) => {
+    setEditingTitleId(id);
+    setEditTitleValue(currentTitle);
+    setMenuOpenId(null);
+  };
+
+  const handleEditTitleSave = async (id: string) => {
+    const trimmed = editTitleValue.trim();
+    if (!trimmed) { setEditingTitleId(null); return; }
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, title: trimmed } : s));
+    setEditingTitleId(null);
+    try {
+      await fetch('/api/dashboard/playground/history', {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: id, action: 'title', title: trimmed }),
+      });
+    } catch { /* silent */ }
+  };
+
+  const handleTogglePin = async (id: string) => {
+    setMenuOpenId(null);
+    setSessions(prev => {
+      const updated = prev.map(s => s.id === id ? { ...s, pinned: !s.pinned } : s);
+      return updated.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.timestamp - a.timestamp);
+    });
+    try {
+      await fetch('/api/dashboard/playground/history', {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: id, action: 'pin' }),
+      });
+    } catch { /* silent */ }
+  };
+
+  // Close menu on click outside
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpenId(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpenId]);
+
+  // Semantic search over history (debounced)
+  const handleHistorySearch = useCallback((q: string) => {
+    setHistorySearchQuery(q);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!q.trim()) {
+      setHistorySearchResults([]);
+      return;
+    }
+    searchTimerRef.current = setTimeout(async () => {
+      setHistorySearching(true);
+      try {
+        const params = new URLSearchParams({ action: 'search', q: q.trim() });
+        if (selectedBucket) params.set('bucket', selectedBucket);
+        const res = await fetch(`/api/dashboard/playground/history?${params}`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setHistorySearchResults(data.results || []);
+        }
+      } catch { /* silent */ }
+      setHistorySearching(false);
+    }, 400);
+  }, [selectedBucket]);
 
   const filteredSessions = sidebarSearch
     ? sessions.filter(s => s.title.toLowerCase().includes(sidebarSearch.toLowerCase()))
@@ -418,26 +592,100 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
           <input className="pg-search-input" placeholder="Search chats..." value={sidebarSearch} onChange={e => setSidebarSearch(e.target.value)} />
         </div>
 
+        {/* Semantic history search */}
+        <div className="pg-search-box" style={{ marginTop: 4 }}>
+          <History size={13} className="pg-search-icon" />
+          <input
+            className="pg-search-input"
+            placeholder="Semantic search history..."
+            value={historySearchQuery}
+            onChange={e => handleHistorySearch(e.target.value)}
+          />
+          {historySearching && <Loader2 size={12} className="pg-spin" style={{ marginRight: 6, opacity: 0.5 }} />}
+        </div>
+
+        {historySearchResults.length > 0 && (
+          <div className="pg-section" style={{ maxHeight: 180, overflowY: 'auto', padding: '0 8px' }}>
+            <div className="pg-section-label">Search Results</div>
+            {historySearchResults.map((r, i) => (
+              <div
+                key={i}
+                className="pg-session-item"
+                style={{ cursor: 'pointer', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}
+                onClick={() => {
+                  setInput(r.query);
+                  setHistorySearchQuery('');
+                  setHistorySearchResults([]);
+                  inputRef.current?.focus();
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    setInput(r.query);
+                    setHistorySearchQuery('');
+                    setHistorySearchResults([]);
+                  }
+                }}
+              >
+                <span className="pg-session-title" style={{ fontSize: '0.7rem' }}>Q: {r.query.slice(0, 60)}</span>
+                <span style={{ fontSize: '0.62rem', opacity: 0.6 }}>A: {r.answer.slice(0, 80)}…</span>
+                <span style={{ fontSize: '0.58rem', opacity: 0.4 }}>
+                  {Math.round(r.similarity * 100)}% match{r.bucket ? ` · ${r.bucket}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="pg-section pg-section-grow pg-history-section">
           <div className="pg-section-label">History</div>
           <div className="pg-session-list">
             {filteredSessions.map(s => (
               <div
                 key={s.id}
-                className={`pg-session-item${s.id === activeSessionId ? ' pg-session-active' : ''}`}
+                className={`pg-session-item${s.id === activeSessionId ? ' pg-session-active' : ''}${s.pinned ? ' pg-session-pinned' : ''}`}
                 onClick={() => setActiveSessionId(s.id)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={e => { if (e.key === 'Enter') setActiveSessionId(s.id); }}
               >
-                <MessageSquare size={12} />
+                {s.pinned && <Pin size={10} className="pg-pin-icon" />}
+                {!s.pinned && <MessageSquare size={12} />}
                 <div className="pg-session-info">
-                  <span className="pg-session-title">{s.title}</span>
+                  {editingTitleId === s.id ? (
+                    <input
+                      className="pg-title-edit-input"
+                      value={editTitleValue}
+                      onChange={e => setEditTitleValue(e.target.value)}
+                      onBlur={() => handleEditTitleSave(s.id)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleEditTitleSave(s.id); if (e.key === 'Escape') setEditingTitleId(null); }}
+                      onClick={e => e.stopPropagation()}
+                      autoFocus
+                    />
+                  ) : (
+                    <span className="pg-session-title">{s.title}</span>
+                  )}
                   <span className="pg-session-time">{formatTime(s.timestamp)}</span>
                 </div>
-                <button className="pg-session-del" onClick={e => { e.stopPropagation(); deleteSession(s.id); }}>
-                  <X size={11} />
-                </button>
+                <div className="pg-session-actions" style={{ position: 'relative' }}>
+                  <button className="pg-session-menu-btn" onClick={e => { e.stopPropagation(); setMenuOpenId(menuOpenId === s.id ? null : s.id); }}>
+                    <MoreVertical size={13} />
+                  </button>
+                  {menuOpenId === s.id && (
+                    <div className="pg-session-menu" ref={menuRef} onClick={e => e.stopPropagation()}>
+                      <button className="pg-session-menu-item" onClick={() => handleEditTitleStart(s.id, s.title)}>
+                        <Pencil size={11} /> Edit title
+                      </button>
+                      <button className="pg-session-menu-item" onClick={() => handleTogglePin(s.id)}>
+                        <Pin size={11} /> {s.pinned ? 'Unpin' : 'Pin'}
+                      </button>
+                      <button className="pg-session-menu-item pg-menu-danger" onClick={() => { setMenuOpenId(null); deleteSession(s.id); }}>
+                        <Trash2 size={11} /> Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
             {filteredSessions.length === 0 && <div className="pg-empty-hint">No chats yet</div>}

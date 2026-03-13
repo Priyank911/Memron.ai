@@ -174,7 +174,7 @@ function GitHubStars() {
           <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
         </svg>
       </span>
-      <span className="github-stars-count">{stars !== null ? formatStars(stars) : '—'}</span>
+      <span className="github-stars-count">{stars !== null ? formatStars(stars) : '-'}</span>
     </a>
   );
 }
@@ -287,7 +287,7 @@ export function Navbar() {
 
           {/* Desktop Navigation Links */}
           <div className="navbar-links desktop-only">
-            <Link href="#about" className="navbar-link">About</Link>
+            <Link href="/about" className="navbar-link">About</Link>
             
             <NavDropdown label="Research">
               <div className="dropdown-section">
@@ -407,7 +407,7 @@ export function Navbar() {
         {/* Sidebar Navigation */}
         <nav className="sidebar-nav">
           <div className="sidebar-section">
-            <Link href="#about" className="sidebar-link" onClick={closeMobileMenu}>
+            <Link href="/about" className="sidebar-link" onClick={closeMobileMenu}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <circle cx="12" cy="12" r="10"/>
                 <path d="M12 16v-4m0-4h.01"/>

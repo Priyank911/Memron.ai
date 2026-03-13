@@ -21,6 +21,14 @@ import { guardInput } from './input-guard';
 import { buildRAGContext } from './context-builder';
 import { generateAnswer, type LLMResponse } from './llm-service';
 
+// ─── Casual/greeting detection ───────────────────────────────
+
+const GREETING_PATTERNS = /^\s*(h(i|ey|ello|owdy|ola)|yo|sup|what'?s\s*up|good\s*(morning|afternoon|evening|day)|gm|greetings|namaste|heya?|hii+|thanks?|thank\s*you|ok(ay)?|bye|goodbye|see\s*ya|cheers|welcome|nice|cool|great|awesome|wow|lol|haha|hehe|wassup|whaddup|how\s*are\s*you|how'?s\s*it\s*going|how\s*do\s*you\s*do|who\s*are\s*you|what\s*are\s*you|what\s*can\s*you\s*do|help|introduce\s*yourself)\s*[!?.]*\s*$/i;
+
+function isCasualQuery(query: string): boolean {
+  return GREETING_PATTERNS.test(query.trim());
+}
+
 // ─── Types ───────────────────────────────────────────────────
 
 export interface PipelineInput {
@@ -81,10 +89,15 @@ export async function runRAGPipeline(
 
   const query = guard.sanitized!;
 
-  // 2. Retrieve and rank memories
-  const ctx = await buildRAGContext(input.clerkId, query, input.bucket);
+  // 2. Check if this is a casual/greeting query that doesn't need memory retrieval
+  const isConversational = isCasualQuery(query);
 
-  // 3. Generate grounded LLM answer
+  // 3. Retrieve and rank memories (skip for greetings/casual chat)
+  const ctx = isConversational
+    ? { memories: [], query, bucket: input.bucket, totalFound: 0, contextText: '', hasRelevantData: false, pastQA: [] }
+    : await buildRAGContext(input.clerkId, query, input.bucket);
+
+  // 4. Generate grounded LLM answer
   let llm: LLMResponse;
   try {
     llm = await generateAnswer({
@@ -106,7 +119,7 @@ export async function runRAGPipeline(
     };
   }
 
-  // 4. Return combined result
+  // 5. Return combined result
   return {
     ok: true,
     answer: llm.answer,

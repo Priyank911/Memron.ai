@@ -19,6 +19,7 @@
 
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
 import { embedQuery, toPgVector } from '@/lib/embeddings';
+import { getSimilarQAForContext, type SimilarQA } from '@/lib/playground-history';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ export interface RAGContext {
   totalFound: number;
   contextText: string;         // Flattened for LLM prompt — already truncated
   hasRelevantData: boolean;
+  pastQA: SimilarQA[];         // Similar past Q&A for few-shot context
 }
 
 // ─── Constants ───────────────────────────────────────────────
@@ -164,6 +166,7 @@ export async function buildRAGContext(
     totalFound: 0,
     contextText: '',
     hasRelevantData: false,
+    pastQA: [],
   };
 
   // 1. Resolve user
@@ -173,12 +176,13 @@ export async function buildRAGContext(
   const { id: uid, orgId } = supaUser;
   const { where: whereUser, params: userParams, nextIdx } = buildUserWhereClause(uid, orgId);
 
-  // 2. Run vector search and keyword search in parallel
+  // 2. Run vector search, keyword search, and past Q&A lookup in parallel
   const keywords = extractKeywords(query);
 
-  const [vectorRows, keywordRows] = await Promise.all([
+  const [vectorRows, keywordRows, pastQA] = await Promise.all([
     vectorSearch(whereUser, userParams, nextIdx, query, bucket),
     keywordSearch(whereUser, userParams, nextIdx, keywords, bucket),
+    getSimilarQAForContext(uid, query, bucket, 3),
   ]);
 
   // 3. Fuse results with RRF (or fallback to broad search)
@@ -211,6 +215,18 @@ export async function buildRAGContext(
 
   // 5. Build context text
   let contextText = '';
+
+  // Inject relevant past Q&A as few-shot examples first
+  if (pastQA.length > 0) {
+    contextText += '\n--- Previous Related Conversations ---\n';
+    for (const qa of pastQA) {
+      const entry = `\nQ: ${qa.query}\nA: ${qa.answer.slice(0, 400)}\n`;
+      if (contextText.length + entry.length > MAX_CONTEXT_CHARS * 0.3) break; // Cap past Q&A at 30% of budget
+      contextText += entry;
+    }
+    contextText += '\n--- Retrieved Memories ---\n';
+  }
+
   for (const m of memories) {
     const entry = buildMemoryEntry(m);
     if (contextText.length + entry.length > MAX_CONTEXT_CHARS) break;
@@ -224,6 +240,7 @@ export async function buildRAGContext(
     totalFound: fusedRows.length,
     contextText,
     hasRelevantData: memories.length > 0,
+    pastQA,
   };
 }
 

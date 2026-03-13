@@ -14,7 +14,7 @@ export function FlowchartCard() {
   // Ultra-smooth easeOutQuart for silky transitions
   const easeOutQuart = (t: number) => 1 - Math.pow(1 - t, 4);
 
-  const updateStyles = useCallback(() => {
+  const updateStyles = useCallback(function updateStylesFn() {
     const el = cardRef.current;
     if (!el) return;
 
@@ -63,7 +63,7 @@ export function FlowchartCard() {
       frame.style.opacity = String(cv.frame);
     }
 
-    rafRef.current = requestAnimationFrame(updateStyles);
+    rafRef.current = requestAnimationFrame(updateStylesFn);
   }, []);
 
   useEffect(() => {
@@ -118,7 +118,7 @@ export function FlowchartCard() {
             <h2 className="showcase-title">AI + MCP + Web3</h2>
             <p className="showcase-desc">
               Memron combines the power of Model Context Protocol with decentralized storage
-              to create truly persistent AI memory—26% higher response quality with 90% fewer tokens.
+              to create truly persistent AI memory - 26% higher response quality with 90% fewer tokens.
             </p>
             <button className="showcase-cta">
               Learn More
@@ -318,7 +318,7 @@ export function FlowchartCard() {
               of AI Memory
             </h2>
             <p className="integrations-desc">
-              We're actively researching and integrating cutting-edge technologies—
+              We're actively researching and integrating cutting-edge technologies -
               Reinforcement Learning from Memory (RLM), Meta's V-JEPA for visual understanding,
               Cognee for knowledge graphs, and more. Our platform evolves with the latest advances in AI.
             </p>

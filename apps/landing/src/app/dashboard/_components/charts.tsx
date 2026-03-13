@@ -82,14 +82,14 @@ export function DonutChart({
   const circ = 2 * Math.PI * r;
   const cx = size / 2;
 
-  let offset = 0;
-  const arcs = segments.map((seg) => {
+  const { arcs } = segments.reduce((acc, seg) => {
     const pct = seg.value / (total || 1);
     const dash = pct * circ;
-    const o = offset;
-    offset += dash;
-    return { ...seg, dash, gap: circ - dash, offset: o };
-  });
+    const o = acc.offset;
+    acc.arcs.push({ ...seg, dash, gap: circ - dash, offset: o });
+    acc.offset += dash;
+    return acc;
+  }, { arcs: [] as (DonutSegment & { dash: number; gap: number; offset: number })[], offset: 0 });
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>

@@ -218,6 +218,23 @@ async function _bootstrap(): Promise<void> {
     `);
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`);
 
+    // Enable RLS & lock down PostgREST roles (anon / authenticated).
+    // The app uses the postgres superuser which bypasses RLS.
+    await exec(`
+      DO $$
+      DECLARE t TEXT; r TEXT;
+      BEGIN
+        FOREACH t IN ARRAY ARRAY[
+          'users','organizations','api_keys','org_members','buckets'
+        ] LOOP
+          EXECUTE format('ALTER TABLE IF EXISTS %I ENABLE ROW LEVEL SECURITY', t);
+          FOR r IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated') LOOP
+            EXECUTE format('REVOKE ALL ON %I FROM %I', t, r);
+          END LOOP;
+        END LOOP;
+      END $$
+    `);
+
     schemaReady = true;
   } catch (err) {
     schemaPromise = null;

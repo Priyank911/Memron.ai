@@ -31,8 +31,17 @@ export function NotificationBell({ enabled = true }: NotificationBellProps) {
     }
   };
 
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
   const relativeTime = (isoStr: string) => {
-    const diff = Date.now() - new Date(isoStr).getTime();
+    if (now === null) return '';
+    const diff = now - new Date(isoStr).getTime();
     const mins = Math.floor(diff / 60_000);
     if (mins < 1) return 'just now';
     if (mins < 60) return `${mins}m ago`;

@@ -31,12 +31,14 @@ export function ThemeToggle() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
     const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' | null;
-    if (savedTheme) {
-      setTheme(savedTheme);
-      document.documentElement.setAttribute('data-theme', savedTheme);
-    }
+    requestAnimationFrame(() => {
+      if (savedTheme) {
+        setTheme(savedTheme);
+        document.documentElement.setAttribute('data-theme', savedTheme);
+      }
+      setMounted(true);
+    });
   }, []);
 
   const toggleTheme = () => {

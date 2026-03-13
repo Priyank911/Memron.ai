@@ -104,7 +104,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (user?.fullName && !orgName) setOrgName(`${user.fullName}'s Workspace`);
-  }, [user]);
+  }, [user, orgName]);
 
   useEffect(() => {
     if (!isLoaded || !user) return;
@@ -151,7 +151,7 @@ export default function OnboardingPage() {
     };
 
     runCheck();
-  }, [isLoaded, user]);
+  }, [isLoaded, user, router]);
 
   const go = (n: number) => {
     setAnim(true);

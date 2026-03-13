@@ -6,7 +6,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section id="about" className="hero-section">
+      <section id="hero" className="hero-section">
         <div className="hero-container">
           {/* Left Content */}
           <div className="hero-content">

@@ -60,9 +60,9 @@ export const SYSTEM_SERVICES = [
 /* ── API endpoints ── */
 export const API_ENDPOINTS = [
   { method: 'POST', path: '/v1/memories', calls: 4, avg: '42ms', p99: '180ms' },
-  { method: 'GET', path: '/v1/search', calls: 0, avg: '—', p99: '—' },
-  { method: 'GET', path: '/v1/memories/:id', calls: 0, avg: '—', p99: '—' },
-  { method: 'DELETE', path: '/v1/memories/:id', calls: 0, avg: '—', p99: '—' },
+  { method: 'GET', path: '/v1/search', calls: 0, avg: '-', p99: '-' },
+  { method: 'GET', path: '/v1/memories/:id', calls: 0, avg: '-', p99: '-' },
+  { method: 'DELETE', path: '/v1/memories/:id', calls: 0, avg: '-', p99: '-' },
 ];
 
 /* ── Data sources ── */

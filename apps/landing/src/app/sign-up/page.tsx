@@ -154,7 +154,7 @@ export default function SignUpPage() {
     };
 
     verify();
-  }, [otpValue, verifying, isLoaded, otpVerifying]);
+  }, [otpValue, verifying, isLoaded, otpVerifying, router, setActive, signUp]);
 
   // Focus first OTP box on mount
   useEffect(() => {

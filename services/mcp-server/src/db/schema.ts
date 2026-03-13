@@ -334,6 +334,25 @@ const MIGRATIONS = [
          WITH (m = 16, ef_construction = 64);
      END IF;
    END $$`,
+
+  // ─── Enable RLS & lock down PostgREST roles ──────────────
+  // The app connects via postgres superuser (bypasses RLS).
+  // This blocks Supabase PostgREST (anon/authenticated) access.
+  `DO $$
+   DECLARE t TEXT; r TEXT;
+   BEGIN
+     FOREACH t IN ARRAY ARRAY[
+       'users','organizations','api_keys','org_members',
+       'memories','mcp_oauth_clients','mcp_pending_auth',
+       'mcp_auth_codes','mcp_refresh_tokens','forensic_snapshots',
+       'buckets'
+     ] LOOP
+       EXECUTE format('ALTER TABLE IF EXISTS %I ENABLE ROW LEVEL SECURITY', t);
+       FOR r IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated') LOOP
+         EXECUTE format('REVOKE ALL ON %I FROM %I', t, r);
+       END LOOP;
+     END LOOP;
+   END $$`,
 ];
 
 /**

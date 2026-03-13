@@ -54,7 +54,41 @@ export function useUserSync(): { isReady: boolean } {
         return false;
     });
 
-    const syncUser = useCallback(async () => {
+    const checkOnboardingStatus = useCallback(async () => {
+        try {
+            const res = await fetch('/api/onboarding', {
+                credentials: 'include',
+            });
+
+            // Guard: ensure we got JSON back, not an HTML error page
+            if (!res.ok) {
+                return;
+            }
+            const contentType = res.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                return;
+            }
+
+            const data = await res.json();
+
+            if (data.isOnboarded) {
+                // Returning user — heal cookie in case it was cleared, then stay put
+                setCookie('memron_onboarded', 'true', 365);
+                setIsReady(true);
+            } else {
+                // Genuinely new user — send them through onboarding
+                if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/onboarding')) {
+                    router.replace('/onboarding');
+                }
+            }
+        } catch {
+            // On network error, allow rendering to avoid infinite loading.
+            // The middleware is the primary guard; this is defense-in-depth.
+            setIsReady(true);
+        }
+    }, [router]);
+
+    const syncUser = useCallback(async function syncUserFn() {
         // Prevent concurrent syncs
         if (isSyncing.current) return;
         
@@ -89,7 +123,7 @@ export function useUserSync(): { isReady: boolean } {
                 const delay = BASE_DELAY_MS * Math.pow(2, retryCount.current - 1);
                 setTimeout(() => {
                     isSyncing.current = false;
-                    syncUser();
+                    syncUserFn();
                 }, delay);
                 return; // Don't reset isSyncing yet
             }
@@ -99,48 +133,14 @@ export function useUserSync(): { isReady: boolean } {
                 const delay = BASE_DELAY_MS * Math.pow(2, retryCount.current - 1);
                 setTimeout(() => {
                     isSyncing.current = false;
-                    syncUser();
+                    syncUserFn();
                 }, delay);
                 return; // Don't reset isSyncing yet
             }
         }
 
         isSyncing.current = false;
-    }, [user?.id]);
-
-    const checkOnboardingStatus = useCallback(async () => {
-        try {
-            const res = await fetch('/api/onboarding', {
-                credentials: 'include',
-            });
-
-            // Guard: ensure we got JSON back, not an HTML error page
-            if (!res.ok) {
-                return;
-            }
-            const contentType = res.headers.get('content-type') || '';
-            if (!contentType.includes('application/json')) {
-                return;
-            }
-
-            const data = await res.json();
-
-            if (data.isOnboarded) {
-                // Returning user — heal cookie in case it was cleared, then stay put
-                setCookie('memron_onboarded', 'true', 365);
-                setIsReady(true);
-            } else {
-                // Genuinely new user — send them through onboarding
-                if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/onboarding')) {
-                    router.replace('/onboarding');
-                }
-            }
-        } catch {
-            // On network error, allow rendering to avoid infinite loading.
-            // The middleware is the primary guard; this is defense-in-depth.
-            setIsReady(true);
-        }
-    }, [router]);
+    }, [user?.id, checkOnboardingStatus]);
 
     useEffect(() => {
         // Only run after user is loaded
