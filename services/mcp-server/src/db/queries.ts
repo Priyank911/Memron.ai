@@ -160,11 +160,12 @@ export async function searchMemories(params: {
   const limit = Math.min(params.limit ?? 20, 50);
   const offset = params.offset ?? 0;
 
+  values.push(limit, offset);
   const result = await query<MemoryRow>(
     `SELECT * FROM memories
      WHERE ${conditions.join(' AND ')}
      ORDER BY created_at DESC
-     LIMIT ${limit} OFFSET ${offset}`,
+     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     values,
   );
   return result.rows;
@@ -645,10 +646,15 @@ export async function insertRefreshToken(params: {
   scopes: string[];
   ttlSeconds: number;
 }): Promise<void> {
+  // Validate ttlSeconds is a safe integer
+  const ttl = Math.floor(Number(params.ttlSeconds));
+  if (!Number.isFinite(ttl) || ttl <= 0 || ttl > 31536000) {
+    throw new Error('ttlSeconds must be a positive integer up to 31536000 (1 year)');
+  }
   await query(
     `INSERT INTO mcp_refresh_tokens (token_hash, client_id, user_id, scopes, expires_at)
-     VALUES ($1, $2, $3, $4, NOW() + INTERVAL '${params.ttlSeconds} seconds')`,
-    [params.tokenHash, params.clientId, params.userId, params.scopes],
+     VALUES ($1, $2, $3, $4, NOW() + make_interval(secs => $5))`,
+    [params.tokenHash, params.clientId, params.userId, params.scopes, ttl],
   );
 }
 
@@ -800,11 +806,12 @@ export async function getMemoriesForContext(params: {
 
   const limit = Math.min(params.limit ?? 100, 200);
 
+  values.push(limit);
   const result = await query<MemoryRow>(
     `SELECT * FROM memories
      WHERE ${conditions.join(' AND ')}
      ORDER BY created_at DESC
-     LIMIT ${limit}`,
+     LIMIT $${idx}`,
     values,
   );
   return result.rows;

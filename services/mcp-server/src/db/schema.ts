@@ -353,6 +353,372 @@ const MIGRATIONS = [
        END LOOP;
      END LOOP;
    END $$`,
+
+  // ═══════════════════════════════════════════════════════════
+  // ANALYSIS ENGINE TABLES (Memory Intelligence Layer)
+  // ═══════════════════════════════════════════════════════════
+
+  // ─── Enable pgvector extension ───────────────────────────────
+  `CREATE EXTENSION IF NOT EXISTS vector`,
+
+  // ─── Episodes (semantic conversation segments) ───────────────
+  `CREATE TABLE IF NOT EXISTS episodes (
+    id              SERIAL PRIMARY KEY,
+    episode_id      VARCHAR(64) UNIQUE NOT NULL,
+    session_id      VARCHAR(64) NOT NULL,
+    user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    episode_type    VARCHAR(50) NOT NULL DEFAULT 'goal_definition',
+    start_index     INTEGER NOT NULL DEFAULT 0,
+    end_index       INTEGER NOT NULL DEFAULT 0,
+    outcome         VARCHAR(20) DEFAULT 'neutral',
+    outcome_confidence REAL DEFAULT 0.5,
+    summary         TEXT,
+    raw_messages    JSONB,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_episodes_user ON episodes(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_episodes_type ON episodes(episode_type)`,
+  `CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)`,
+
+  // ─── Atomic Memories (structured memory units) ───────────────
+  `CREATE TABLE IF NOT EXISTS atomic_memories (
+    id                    SERIAL PRIMARY KEY,
+    memory_id             VARCHAR(64) UNIQUE NOT NULL,
+    user_id               INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    episode_id            VARCHAR(64),
+    workspace_id          VARCHAR(64),
+    agent_id              VARCHAR(255),
+    task_id               VARCHAR(255),
+
+    -- Classification
+    memory_type           VARCHAR(50) NOT NULL,
+
+    -- Content
+    content               TEXT NOT NULL,
+    compressed_content    TEXT,
+
+    -- Scoring
+    confidence            REAL DEFAULT 0.5,
+    success_score         REAL DEFAULT 0.5,
+    failure_score         REAL DEFAULT 0.2,
+    transferability       REAL DEFAULT 0.5,
+
+    -- Temporal
+    event_time            TIMESTAMPTZ,
+    valid_from            TIMESTAMPTZ DEFAULT NOW(),
+    valid_to              TIMESTAMPTZ,
+
+    -- Relations
+    supersedes_memory_id  VARCHAR(64),
+    source_span_start     INTEGER DEFAULT 0,
+    source_span_end       INTEGER DEFAULT 0,
+    graph_links           JSONB DEFAULT '[]',
+
+    -- Policy
+    share_policy          VARCHAR(20) DEFAULT 'private',
+    expiry                TIMESTAMPTZ,
+
+    -- Embedding (1536-dim for OpenAI compatibility)
+    embedding             vector(1536),
+
+    created_at            TIMESTAMPTZ DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_user ON atomic_memories(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_episode ON atomic_memories(episode_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_type ON atomic_memories(memory_type)`,
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_confidence ON atomic_memories(confidence DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_valid ON atomic_memories(valid_from, valid_to)`,
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_share ON atomic_memories(share_policy)`,
+
+  // Vector similarity index (IVFFlat for large datasets)
+  `DO $$ BEGIN
+     CREATE INDEX IF NOT EXISTS idx_atomic_memories_embedding
+       ON atomic_memories USING ivfflat (embedding vector_cosine_ops)
+       WITH (lists = 100);
+   EXCEPTION WHEN others THEN NULL;
+   END $$`,
+
+  // ─── Success Recipes (distilled task solutions) ──────────────
+  `CREATE TABLE IF NOT EXISTS success_recipes (
+    id                    SERIAL PRIMARY KEY,
+    recipe_id             VARCHAR(64) UNIQUE NOT NULL,
+    user_id               INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id          VARCHAR(64),
+
+    -- Identification
+    recipe_name           VARCHAR(255) NOT NULL,
+    task_type             VARCHAR(100) NOT NULL DEFAULT 'general',
+    problem_statement     TEXT NOT NULL,
+    problem_signature     VARCHAR(64),
+
+    -- Content (JSON structure)
+    recipe_content        JSONB NOT NULL,
+
+    -- Metrics
+    success_rate          REAL DEFAULT 0.5,
+    avg_token_cost        INTEGER DEFAULT 0,
+    transferability_score REAL DEFAULT 0.5,
+    usage_count           INTEGER DEFAULT 0,
+    positive_feedback     INTEGER DEFAULT 0,
+    negative_feedback     INTEGER DEFAULT 0,
+
+    -- Versioning
+    recipe_version        INTEGER DEFAULT 1,
+    parent_recipe_id      VARCHAR(64),
+
+    -- Embedding for semantic search
+    embedding             vector(1536),
+
+    created_at            TIMESTAMPTZ DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_recipes_user ON success_recipes(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_recipes_task_type ON success_recipes(task_type)`,
+  `CREATE INDEX IF NOT EXISTS idx_recipes_signature ON success_recipes(problem_signature)`,
+  `CREATE INDEX IF NOT EXISTS idx_recipes_success_rate ON success_recipes(success_rate DESC)`,
+
+  `DO $$ BEGIN
+     CREATE INDEX IF NOT EXISTS idx_recipes_embedding
+       ON success_recipes USING ivfflat (embedding vector_cosine_ops)
+       WITH (lists = 50);
+   EXCEPTION WHEN others THEN NULL;
+   END $$`,
+
+  // ─── Failure Patterns (anti-patterns to avoid) ───────────────
+  `CREATE TABLE IF NOT EXISTS failure_patterns (
+    id                SERIAL PRIMARY KEY,
+    pattern_id        UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    user_id           INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    task_type         VARCHAR(100),
+    pattern           TEXT NOT NULL,
+    symptom           TEXT,
+    probable_cause    TEXT,
+    avoidance_rule    TEXT,
+    occurrence_count  INTEGER DEFAULT 1,
+    last_seen_at      TIMESTAMPTZ DEFAULT NOW(),
+    created_at        TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_failure_patterns_user ON failure_patterns(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_failure_patterns_task ON failure_patterns(task_type)`,
+
+  // ─── Prompt Versions (prompt engineering tracking) ───────────
+  `CREATE TABLE IF NOT EXISTS prompt_templates (
+    id                SERIAL PRIMARY KEY,
+    template_id       UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    user_id           INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    name              VARCHAR(255) NOT NULL,
+    description       TEXT,
+    created_at        TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS prompt_versions (
+    id                    SERIAL PRIMARY KEY,
+    prompt_version_id     UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    prompt_template_id    UUID REFERENCES prompt_templates(template_id) ON DELETE CASCADE,
+    version_number        INTEGER NOT NULL DEFAULT 1,
+    parent_version_id     UUID,
+    branch_label          VARCHAR(100),
+    status                VARCHAR(20) DEFAULT 'draft',
+
+    -- Content
+    raw_text              TEXT NOT NULL,
+    structured_config     JSONB,
+
+    -- Components
+    system_block          TEXT,
+    memory_block          TEXT,
+    retrieval_block       TEXT,
+    tool_block            TEXT,
+    output_schema         TEXT,
+
+    -- Meta
+    change_summary        TEXT,
+    created_by            INTEGER REFERENCES users(id),
+    created_at            TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_prompt_versions_template ON prompt_versions(prompt_template_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_prompt_versions_status ON prompt_versions(status)`,
+
+  // ─── Prompt Diffs (semantic change tracking) ─────────────────
+  `CREATE TABLE IF NOT EXISTS prompt_diffs (
+    id                SERIAL PRIMARY KEY,
+    diff_id           UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    from_version_id   UUID REFERENCES prompt_versions(prompt_version_id),
+    to_version_id     UUID REFERENCES prompt_versions(prompt_version_id),
+    diff_type         VARCHAR(50),
+    semantic_change   TEXT,
+    impact_hypothesis TEXT,
+    created_at        TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  // ─── Run Records (execution outcome tracking) ────────────────
+  `CREATE TABLE IF NOT EXISTS run_records (
+    id                    SERIAL PRIMARY KEY,
+    run_id                UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    user_id               INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    session_id            UUID NOT NULL,
+    agent_id              VARCHAR(255),
+    workspace_id          UUID,
+    task_id               VARCHAR(255),
+
+    -- Version Links
+    prompt_version_id     UUID REFERENCES prompt_versions(prompt_version_id),
+    context_version_id    UUID,
+    retrieval_version_id  UUID,
+    tooling_version_id    UUID,
+    evaluation_version_id UUID,
+
+    -- Execution Details
+    model_name            VARCHAR(100),
+    model_params          JSONB,
+    input_tokens          INTEGER DEFAULT 0,
+    output_tokens         INTEGER DEFAULT 0,
+    latency_ms            INTEGER DEFAULT 0,
+    cost                  REAL,
+
+    -- Outcome
+    hallucination_flag    BOOLEAN DEFAULT false,
+    success_score         REAL DEFAULT 0.5,
+    user_feedback         VARCHAR(20),
+    final_acceptance      BOOLEAN DEFAULT false,
+    failure_reason        TEXT,
+
+    -- Artifacts
+    source_artifacts      TEXT[],
+
+    created_at            TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_run_records_user ON run_records(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_run_records_session ON run_records(session_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_run_records_prompt ON run_records(prompt_version_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_run_records_success ON run_records(success_score DESC)`,
+
+  // ─── Entities (knowledge graph nodes) ────────────────────────
+  `CREATE TABLE IF NOT EXISTS entities (
+    id                SERIAL PRIMARY KEY,
+    entity_id         VARCHAR(64) UNIQUE NOT NULL,
+    user_id           INTEGER REFERENCES users(id) ON DELETE CASCADE,
+
+    name              VARCHAR(500) NOT NULL,
+    canonical_name    VARCHAR(500),
+    entity_type       VARCHAR(100),
+    description       TEXT,
+
+    -- Source
+    first_seen_in     VARCHAR(12),
+    mention_count     INTEGER DEFAULT 1,
+
+    -- Embedding
+    embedding         vector(1536),
+
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_entities_user ON entities(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_entities_canonical ON entities(canonical_name)`,
+  `CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type)`,
+
+  `DO $$ BEGIN
+     CREATE INDEX IF NOT EXISTS idx_entities_embedding
+       ON entities USING ivfflat (embedding vector_cosine_ops)
+       WITH (lists = 100);
+   EXCEPTION WHEN others THEN NULL;
+   END $$`,
+
+  // ─── Entity Relationships (knowledge graph edges) ────────────
+  `CREATE TABLE IF NOT EXISTS entity_relationships (
+    id                  SERIAL PRIMARY KEY,
+    relationship_id     VARCHAR(64) UNIQUE NOT NULL,
+    user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,
+
+    source_entity_id    VARCHAR(64),
+    target_entity_id    VARCHAR(64),
+    relationship_type   VARCHAR(100),
+
+    strength            REAL DEFAULT 0.5,
+    evidence_count      INTEGER DEFAULT 1,
+    source_memories     TEXT[],
+
+    created_at          TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_user ON entity_relationships(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_source ON entity_relationships(source_entity_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_target ON entity_relationships(target_entity_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_type ON entity_relationships(relationship_type)`,
+
+  // ─── Memory Packets (cached retrieval results) ───────────────
+  `CREATE TABLE IF NOT EXISTS memory_packets (
+    id                  SERIAL PRIMARY KEY,
+    packet_id           VARCHAR(64) UNIQUE NOT NULL,
+    user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    session_id          VARCHAR(64),
+    query_hash          VARCHAR(64) NOT NULL,
+
+    -- Packet Content
+    packet_content      JSONB NOT NULL,
+    token_usage         JSONB,
+
+    -- Cache metadata
+    hit_count           INTEGER DEFAULT 0,
+    last_hit_at         TIMESTAMPTZ,
+    expires_at          TIMESTAMPTZ,
+
+    created_at          TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_packets_user ON memory_packets(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_packets_query ON memory_packets(query_hash)`,
+  `CREATE INDEX IF NOT EXISTS idx_packets_expires ON memory_packets(expires_at)`,
+
+  // ─── Updated-at trigger for new tables ───────────────────────
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgname = 'set_atomic_memories_updated_at'
+     ) THEN
+       CREATE TRIGGER set_atomic_memories_updated_at
+         BEFORE UPDATE ON atomic_memories
+         FOR EACH ROW
+         EXECUTE FUNCTION update_updated_at_column();
+     END IF;
+   END;
+   $$`,
+
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgname = 'set_recipes_updated_at'
+     ) THEN
+       CREATE TRIGGER set_recipes_updated_at
+         BEFORE UPDATE ON success_recipes
+         FOR EACH ROW
+         EXECUTE FUNCTION update_updated_at_column();
+     END IF;
+   END;
+   $$`,
+
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgname = 'set_entities_updated_at'
+     ) THEN
+       CREATE TRIGGER set_entities_updated_at
+         BEFORE UPDATE ON entities
+         FOR EACH ROW
+         EXECUTE FUNCTION update_updated_at_column();
+     END IF;
+   END;
+   $$`,
 ];
 
 /**
