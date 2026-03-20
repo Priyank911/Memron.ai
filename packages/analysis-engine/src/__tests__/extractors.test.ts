@@ -51,7 +51,7 @@ describe('Atomic Memory Extractor', () => {
       const memories = extractMemoriesSync(episode, 'user_1');
 
       // Heuristic extraction may or may not detect preference based on patterns
-      const preferenceMemory = memories.find(m => m.memoryType === 'preference');
+      // Heuristic extraction may or may not detect preference based on patterns
       // Just verify the extraction runs without error and returns an array
       expect(Array.isArray(memories)).toBe(true);
     });

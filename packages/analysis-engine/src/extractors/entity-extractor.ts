@@ -290,7 +290,7 @@ export function extractEntitiesSync(
 
   const heuristicEntities = extractWithHeuristics(episode.messages);
 
-  let entities: Entity[] = Array.from(heuristicEntities.entries())
+  const entities: Entity[] = Array.from(heuristicEntities.entries())
     .filter(([_, data]) => data.count >= fullConfig.minMentions)
     .map(([canonical, data]) => ({
       entityId: `ent_${nanoid(12)}`,
@@ -316,7 +316,7 @@ export function extractEntitiesSync(
 export function findRelatedEntities(
   entity: Entity,
   allEntities: Entity[],
-  threshold: number = 0.7
+  _threshold: number = 0.7
 ): Entity[] {
   const related: Entity[] = [];
   const canonical = entity.canonicalName;

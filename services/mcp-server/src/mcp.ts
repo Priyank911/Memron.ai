@@ -3,17 +3,32 @@
  *
  * Each MCP session gets its own McpServer instance (required by the SDK).
  * Tools are stateless — they read user context from authInfo on each call.
+ *
+ * When auto-ingest is enabled, `server.tool()` is proxied to automatically
+ * record tool calls and results into the conversation collector.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerAllTools } from './tools/index.js';
+import { config } from './config.js';
+import * as collector from './lib/conversation-collector.js';
 
 /**
- * Create a fully configured MCP server with all 9 tools registered.
- *
- * The McpServer SDK requires one instance per transport connection
- * because `server.connect(transport)` sets the transport internally.
+ * Mutable session context — populated after the transport is initialized.
+ * Passed by reference so that the proxy captures the session ID once it's known.
  */
-export function createMcpServer(): McpServer {
+export interface SessionContext {
+  sessionId?: string;
+  userId?: number;
+}
+
+/**
+ * Create a fully configured MCP server with all tools registered.
+ *
+ * When a SessionContext is provided and auto-ingest is enabled, every tool
+ * handler is wrapped to record the call and result into the conversation
+ * collector for later analysis.
+ */
+export function createMcpServer(ctx?: SessionContext): McpServer {
   const server = new McpServer(
     {
       name: 'memron',
@@ -42,6 +57,44 @@ export function createMcpServer(): McpServer {
       ].join('\n'),
     },
   );
+
+  // Proxy server.tool() to wrap handlers with auto-capture
+  if (config.autoIngest.enabled && ctx) {
+    const originalToolFn = server.tool;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (server as any).tool = function (this: McpServer, ...toolArgs: any[]) {
+      // Detect the overload: the last arg is always the handler callback
+      const lastIdx = toolArgs.length - 1;
+      const handler = toolArgs[lastIdx];
+      const toolName: string = toolArgs[0];
+
+      if (typeof handler !== 'function' || collector.isExcludedTool(toolName)) {
+        return originalToolFn.apply(this, toolArgs as any);
+      }
+
+      // Wrap the handler
+      const wrappedHandler = async (...handlerArgs: any[]) => {
+        const result = await handler(...handlerArgs);
+
+        // Record — never block tool responses
+        if (ctx.sessionId) {
+          try {
+            const args = handlerArgs[0]; // first arg is the parsed params
+            const userId = (handlerArgs[1] as any)?.authInfo?.extra?.userId ?? ctx.userId ?? null;
+            collector.recordToolCall(ctx.sessionId, userId, toolName, args, result);
+          } catch {
+            // Never propagate recording errors
+          }
+        }
+
+        return result;
+      };
+
+      toolArgs[lastIdx] = wrappedHandler;
+      return originalToolFn.apply(this, toolArgs as any);
+    };
+  }
 
   registerAllTools(server);
 

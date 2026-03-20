@@ -793,8 +793,8 @@ export async function updateRunRecordFeedback(
      SET user_feedback = $3,
          final_acceptance = COALESCE($4, final_acceptance),
          success_score = CASE
-           WHEN $3 = 'positive' THEN LEAST(success_score + 0.1, 1.0)
-           WHEN $3 = 'negative' THEN GREATEST(success_score - 0.1, 0.0)
+           WHEN $3::text = 'positive' THEN LEAST(success_score + 0.1, 1.0)
+           WHEN $3::text = 'negative' THEN GREATEST(success_score - 0.1, 0.0)
            ELSE success_score
          END
      WHERE run_id = $1 AND user_id = $2
@@ -923,4 +923,73 @@ export async function getActivePromptVersion(
     [templateId]
   );
   return result.rows[0] || null;
+}
+
+// ============================================================================
+// Conversation History Operations (Auto-Capture)
+// ============================================================================
+
+export interface ConversationHistoryRow {
+  id: number;
+  session_id: string;
+  user_id: number | null;
+  messages: unknown;
+  tool_call_count: number;
+  ingested: boolean;
+  ingested_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * Upsert conversation history — insert or append messages and increment tool call count.
+ */
+export async function upsertConversationHistory(params: {
+  sessionId: string;
+  userId: number | null;
+  messages: unknown[];
+  toolCallCount: number;
+}): Promise<ConversationHistoryRow> {
+  const result = await query<ConversationHistoryRow>(
+    `INSERT INTO conversation_history (session_id, user_id, messages, tool_call_count)
+     VALUES ($1, $2, $3::jsonb, $4)
+     ON CONFLICT (session_id) DO UPDATE SET
+       messages = (conversation_history.messages::jsonb || $3::jsonb),
+       tool_call_count = conversation_history.tool_call_count + $4,
+       user_id = COALESCE($2, conversation_history.user_id)
+     RETURNING *`,
+    [
+      params.sessionId,
+      params.userId,
+      JSON.stringify(params.messages),
+      params.toolCallCount,
+    ]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Mark a conversation as ingested after the analysis pipeline has processed it.
+ */
+export async function markConversationIngested(sessionId: string): Promise<void> {
+  await query(
+    `UPDATE conversation_history SET ingested = true, ingested_at = NOW() WHERE session_id = $1`,
+    [sessionId]
+  );
+}
+
+/**
+ * Get un-ingested conversations for crash recovery on startup.
+ */
+export async function getUningestedConversations(
+  limit: number = 50
+): Promise<ConversationHistoryRow[]> {
+  const result = await query<ConversationHistoryRow>(
+    `SELECT * FROM conversation_history
+     WHERE ingested = false AND tool_call_count >= 2
+     ORDER BY updated_at ASC
+     LIMIT $1`,
+    [limit]
+  );
+  return result.rows;
 }

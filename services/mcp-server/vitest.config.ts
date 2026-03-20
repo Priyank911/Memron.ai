@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { resolve } from 'path';
 
 export default defineConfig({
   test: {
@@ -16,8 +17,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@memron/analysis-engine': '../../packages/analysis-engine/src',
-      '@memron/shared-types': '../../packages/shared-types/src',
+      '@memron/analysis-engine': resolve(__dirname, '../../packages/analysis-engine/src/index.ts'),
+      '@memron/shared-types': resolve(__dirname, '../../packages/shared-types/src/index.ts'),
     },
   },
 });

@@ -8,19 +8,11 @@ import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import {
   runPipeline,
-  runPipelineSync,
   quickAnalyze,
   type ConversationMessage,
-  type PipelineConfig,
 } from '@memron/analysis-engine';
-import {
-  insertEpisode,
-  insertAtomicMemory,
-  insertRecipe,
-  insertEntity,
-  insertEntityRelationship,
-} from '../db/queries-analysis.js';
 import { McpError, ErrorCode } from '../lib/errors.js';
+import { autoIngest } from '../lib/auto-ingest.js';
 
 const MessageSchema = z.object({
   role: z.enum(['user', 'assistant', 'system', 'tool']),
@@ -69,110 +61,13 @@ export function registerIngestTools(server: McpServer): void {
         timestamp: m.timestamp || new Date().toISOString(),
       }));
 
-      const config: PipelineConfig = {
-        useLLM: input.options?.useLLM ?? true,
-        parallel: true,
-      };
-
       try {
-        const result = await runPipeline(
-          {
-            sessionId,
-            userId,
-            messages,
-            options: input.options,
-          },
-          config
-        );
-
-        // Store episodes
-        for (const episode of result.episodes) {
-          await insertEpisode({
-            episodeId: episode.episodeId,
-            sessionId: episode.sessionId,
-            userId: input.userId,
-            episodeType: episode.episodeType,
-            startIndex: episode.startIndex,
-            endIndex: episode.endIndex,
-            outcome: episode.outcome,
-            outcomeConfidence: 0.7,
-            summary: episode.summary,
-            rawMessages: episode.messages,
-          });
-        }
-
-        // Store memories
-        for (const memory of result.memories) {
-          await insertAtomicMemory({
-            memoryId: memory.memoryId,
-            userId: input.userId,
-            // episodeId is not on AtomicMemoryUnit, but we can derive it from context
-            memoryType: memory.memoryType,
-            content: memory.content,
-            compressedContent: memory.compressedContent,
-            confidence: memory.confidence,
-            successScore: memory.successScore,
-            failureScore: memory.failureScore,
-            transferability: memory.transferability,
-            validFrom: memory.validFrom ? new Date(memory.validFrom) : new Date(),
-            sharePolicy: memory.sharePolicy,
-          });
-        }
-
-        // Store recipes
-        for (const recipe of result.recipes) {
-          await insertRecipe({
-            recipeId: recipe.recipeId,
-            userId: input.userId,
-            recipeName: recipe.recipeName,
-            taskType: recipe.taskType,
-            problemStatement: recipe.problemStatement,
-            problemSignature: recipe.problemSignature,
-            recipeContent: {
-              approach: recipe.approach,
-              doList: recipe.doList,
-              dontList: recipe.dontList,
-              prerequisites: recipe.prerequisites,
-              caveats: recipe.caveats,
-              failurePatterns: recipe.failurePatterns,
-            },
-            successRate: recipe.successRate,
-            avgTokenCost: recipe.avgTokenCost,
-            transferabilityScore: recipe.transferabilityScore,
-            recipeVersion: recipe.recipeVersion,
-            parentRecipeId: recipe.parentRecipeId,
-          });
-        }
-
-        // Store entities
-        const entityIdMap = new Map<string, string>();
-        for (const entity of result.entities) {
-          const stored = await insertEntity({
-            entityId: entity.entityId,
-            userId: input.userId,
-            name: entity.name,
-            canonicalName: entity.canonicalName,
-            entityType: entity.entityType,
-            description: entity.description,
-            firstSeenIn: entity.firstSeenIn,
-            mentionCount: entity.mentionCount,
-          });
-          entityIdMap.set(entity.entityId, stored.entity_id);
-        }
-
-        // Store relationships
-        for (const rel of result.relationships) {
-          await insertEntityRelationship({
-            relationshipId: `rel_${nanoid(12)}`,
-            userId: input.userId,
-            sourceEntityId: rel.sourceEntityId,
-            targetEntityId: rel.targetEntityId,
-            relationshipType: rel.relationshipType,
-            strength: rel.strength,
-            evidenceCount: rel.evidenceCount,
-            sourceMemories: rel.sourceMemories,
-          });
-        }
+        const result = await autoIngest({
+          sessionId,
+          userId: input.userId,
+          messages,
+          useLLM: input.options?.useLLM ?? true,
+        });
 
         return {
           content: [
@@ -181,14 +76,7 @@ export function registerIngestTools(server: McpServer): void {
               text: JSON.stringify({
                 success: true,
                 sessionId,
-                stats: result.processingStats,
-                summary: {
-                  episodes: result.episodes.length,
-                  memories: result.memories.length,
-                  recipes: result.recipes.length,
-                  entities: result.entities.length,
-                  relationships: result.relationships.length,
-                },
+                summary: result.stats,
               }, null, 2),
             },
           ],

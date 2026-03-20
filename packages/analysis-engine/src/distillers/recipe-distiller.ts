@@ -218,11 +218,7 @@ function extractFailurePatterns(
   const patterns: FailurePattern[] = [];
 
   // Look for retry patterns
-  let lastAssistantContent = '';
   for (const message of episode.messages) {
-    if (message.role === 'assistant') {
-      lastAssistantContent = message.content;
-    }
 
     if (message.role === 'user') {
       const content = message.content.toLowerCase();
@@ -284,7 +280,7 @@ function inferTaskType(episode: Episode): string {
  */
 async function distillWithLLM(
   episode: Episode,
-  analysis?: EpisodeAnalysis
+  _analysis?: EpisodeAnalysis
 ): Promise<LLMRecipeResult> {
   const content = episode.messages
     .map((m, i) => `[${i}] ${m.role}: ${m.content.slice(0, 500)}`)
@@ -343,12 +339,6 @@ export async function distillRecipe(
     const { doList, dontList } = extractGuidanceLists(episode, analysis);
     const failurePatterns = extractFailurePatterns(episode, analysis);
     const taskType = inferTaskType(episode);
-
-    // Calculate metrics
-    const originalTokens = episode.messages.reduce(
-      (sum, m) => sum + estimateTokens(m.content),
-      0
-    );
 
     recipe = {
       recipeId: `rec_${nanoid(12)}`,

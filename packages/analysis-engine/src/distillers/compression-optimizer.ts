@@ -221,7 +221,7 @@ function extractKeyElements(text: string): string[] {
   const elements: string[] = [];
 
   // File paths
-  const files = text.match(/[\w\/\-\.]+\.[a-z]{2,4}/gi);
+  const files = text.match(/[\w/\-.]+\.[a-z]{2,4}/gi);
   if (files) elements.push(...files);
 
   // Function/method names

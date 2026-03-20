@@ -263,7 +263,7 @@ describe('Compression Optimizer', () => {
 
   describe('compressBatch', () => {
     // compressBatch uses the async LLM path, which may require API key
-    const hasApiKey = !!process.env.GROQ_API_KEY;
+    const _hasApiKey = !!process.env.GROQ_API_KEY;
 
     it('should compress multiple contents', async () => {
       const contents = [

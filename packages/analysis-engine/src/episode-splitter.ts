@@ -73,7 +73,7 @@ const BOUNDARY_PATTERNS = {
  */
 function detectEpisodeTypeFromContent(
   message: ConversationMessage,
-  previousMessages: ConversationMessage[]
+  _previousMessages: ConversationMessage[]
 ): { type: EpisodeType; confidence: number } | null {
   const content = message.content.trim().toLowerCase();
 
@@ -134,7 +134,7 @@ function findHeuristicBoundaries(
 
   // First message is always a boundary
   if (messages.length > 0) {
-    const firstType = detectEpisodeTypeFromContent(messages[0], []);
+    detectEpisodeTypeFromContent(messages[0], []);
     boundaries.push({
       index: 0,
       reason: 'Conversation start',
@@ -382,7 +382,7 @@ export function splitIntoEpisodesSync(
     return [];
   }
 
-  let boundaries = findHeuristicBoundaries(messages, fullConfig);
+  const boundaries = findHeuristicBoundaries(messages, fullConfig);
 
   // Ensure we have at least one boundary at the start
   if (boundaries.length === 0 || boundaries[0].index !== 0) {

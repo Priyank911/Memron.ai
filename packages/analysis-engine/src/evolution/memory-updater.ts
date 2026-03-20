@@ -8,7 +8,6 @@ import type {
   AtomicMemoryUnit,
   MemoryUpdate,
   ConflictResolution,
-  MemoryRelation,
 } from '../types';
 import { suggestResolution } from './conflict-detector';
 
@@ -234,7 +233,7 @@ export function resolveConflict(
   const fullConfig = { ...DEFAULT_CONFIG, ...config };
 
   switch (resolution.resolution) {
-    case 'keep_newer':
+    case 'keep_newer': {
       const newer =
         new Date(memory1.timestamp) > new Date(memory2.timestamp) ? memory1 : memory2;
       const older = newer === memory1 ? memory2 : memory1;
@@ -250,8 +249,9 @@ export function resolveConflict(
         affectedIds: [older.memoryId],
         description: `Kept newer memory ${newer.memoryId}, superseding ${older.memoryId}`,
       };
+    }
 
-    case 'keep_older':
+    case 'keep_older': {
       const older2 =
         new Date(memory1.timestamp) < new Date(memory2.timestamp) ? memory1 : memory2;
       const newer2 = older2 === memory1 ? memory2 : memory1;
@@ -266,8 +266,9 @@ export function resolveConflict(
         affectedIds: [older2.memoryId],
         description: `Kept older memory ${older2.memoryId}, invalidating ${newer2.memoryId}`,
       };
+    }
 
-    case 'merge':
+    case 'merge': {
       const merged = mergeMemories(memory1, memory2);
 
       if (fullConfig.preserveHistory) {
@@ -281,6 +282,7 @@ export function resolveConflict(
         affectedIds: [memory1.memoryId, memory2.memoryId],
         description: `Merged memories into ${merged.memoryId}`,
       };
+    }
 
     case 'manual_review':
     default:

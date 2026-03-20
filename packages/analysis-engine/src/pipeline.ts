@@ -7,10 +7,9 @@ import { nanoid } from 'nanoid';
 import { splitIntoEpisodes, splitIntoEpisodesSync } from './episode-splitter';
 import { extractMemories, extractMemoriesSync, calculateCompressionStats } from './extractors/atomic-extractor';
 import { extractEntities, extractEntitiesSync } from './extractors/entity-extractor';
-import { extractPreferences, extractPreferencesSync } from './extractors/preference-extractor';
 import { analyzeTrajectory, analyzeTrajectorySync } from './analyzers/trajectory-analyzer';
 import { detectOutcome } from './analyzers/outcome-detector';
-import { detectHallucinations, detectHallucinationsSync } from './analyzers/hallucination-detector';
+import { detectHallucinationsSync } from './analyzers/hallucination-detector';
 import { distillRecipe, distillRecipeSync } from './distillers/recipe-distiller';
 import { findAllConflicts, findAllConflictsSync } from './evolution/conflict-detector';
 import { processBatchUpdates } from './evolution/memory-updater';
@@ -23,7 +22,6 @@ import type {
   Entity,
   EntityRelationship,
   AnalysisPipelineInput,
-  AnalysisPipelineOptions,
   AnalysisPipelineResult,
 } from './types';
 
@@ -81,7 +79,7 @@ export async function runPipeline(
   const options = input.options || {};
   const startTime = Date.now();
 
-  let totalOutputTokens = 0;
+  const totalOutputTokens = 0;
 
   // Step 1: Split into episodes
   const episodes: Episode[] = [];

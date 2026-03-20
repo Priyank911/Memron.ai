@@ -328,7 +328,7 @@ export async function detectConflict(
 export function detectConflictSync(
   memory1: AtomicMemoryUnit,
   memory2: AtomicMemoryUnit,
-  config: ConflictDetectorConfig = {}
+  _config: ConflictDetectorConfig = {}
 ): MemoryUpdate | null {
   const result = detectRelationHeuristic(memory1, memory2);
 
@@ -353,9 +353,6 @@ export function suggestResolution(
   memory1: AtomicMemoryUnit,
   memory2: AtomicMemoryUnit
 ): ConflictResolution {
-  const time1 = new Date(memory1.timestamp).getTime();
-  const time2 = new Date(memory2.timestamp).getTime();
-
   let resolution: 'keep_newer' | 'keep_older' | 'merge' | 'manual_review';
   let confidence = 0.6;
 

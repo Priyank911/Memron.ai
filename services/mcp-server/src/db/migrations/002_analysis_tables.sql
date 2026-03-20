@@ -24,9 +24,9 @@ CREATE TABLE IF NOT EXISTS episodes (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_episodes_session ON episodes(session_id);
-CREATE INDEX idx_episodes_user ON episodes(user_id);
-CREATE INDEX idx_episodes_outcome ON episodes(outcome);
+CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id);
+CREATE INDEX IF NOT EXISTS idx_episodes_user ON episodes(user_id);
+CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome);
 
 -- ============================================================================
 -- Atomic Memories Table
@@ -68,12 +68,17 @@ CREATE TABLE IF NOT EXISTS atomic_memories (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_atomic_memories_user ON atomic_memories(user_id);
-CREATE INDEX idx_atomic_memories_episode ON atomic_memories(episode_id);
-CREATE INDEX idx_atomic_memories_type ON atomic_memories(memory_type);
-CREATE INDEX idx_atomic_memories_confidence ON atomic_memories(confidence);
-CREATE INDEX idx_atomic_memories_valid ON atomic_memories(valid_from, valid_to);
-CREATE INDEX idx_atomic_memories_embedding ON atomic_memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_atomic_memories_user ON atomic_memories(user_id);
+CREATE INDEX IF NOT EXISTS idx_atomic_memories_episode ON atomic_memories(episode_id);
+CREATE INDEX IF NOT EXISTS idx_atomic_memories_type ON atomic_memories(memory_type);
+CREATE INDEX IF NOT EXISTS idx_atomic_memories_confidence ON atomic_memories(confidence);
+CREATE INDEX IF NOT EXISTS idx_atomic_memories_valid ON atomic_memories(valid_from, valid_to);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='atomic_memories' AND column_name='embedding') THEN
+    ALTER TABLE atomic_memories ADD COLUMN embedding vector(1536);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_atomic_memories_embedding ON atomic_memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- ============================================================================
 -- Success Recipes Table
@@ -109,11 +114,16 @@ CREATE TABLE IF NOT EXISTS success_recipes (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_recipes_user ON success_recipes(user_id);
-CREATE INDEX idx_recipes_task_type ON success_recipes(task_type);
-CREATE INDEX idx_recipes_success_rate ON success_recipes(success_rate);
-CREATE INDEX idx_recipes_problem_sig ON success_recipes(problem_signature);
-CREATE INDEX idx_recipes_embedding ON success_recipes USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_recipes_user ON success_recipes(user_id);
+CREATE INDEX IF NOT EXISTS idx_recipes_task_type ON success_recipes(task_type);
+CREATE INDEX IF NOT EXISTS idx_recipes_success_rate ON success_recipes(success_rate);
+CREATE INDEX IF NOT EXISTS idx_recipes_problem_sig ON success_recipes(problem_signature);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='success_recipes' AND column_name='embedding') THEN
+    ALTER TABLE success_recipes ADD COLUMN embedding vector(1536);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_recipes_embedding ON success_recipes USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- ============================================================================
 -- Failure Patterns Table
@@ -131,8 +141,8 @@ CREATE TABLE IF NOT EXISTS failure_patterns (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_failure_patterns_user ON failure_patterns(user_id);
-CREATE INDEX idx_failure_patterns_task_type ON failure_patterns(task_type);
+CREATE INDEX IF NOT EXISTS idx_failure_patterns_user ON failure_patterns(user_id);
+CREATE INDEX IF NOT EXISTS idx_failure_patterns_task_type ON failure_patterns(task_type);
 
 -- ============================================================================
 -- Entities Table
@@ -157,10 +167,15 @@ CREATE TABLE IF NOT EXISTS entities (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_entities_user ON entities(user_id);
-CREATE INDEX idx_entities_canonical ON entities(canonical_name);
-CREATE INDEX idx_entities_type ON entities(entity_type);
-CREATE INDEX idx_entities_embedding ON entities USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_entities_user ON entities(user_id);
+CREATE INDEX IF NOT EXISTS idx_entities_canonical ON entities(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='entities' AND column_name='embedding') THEN
+    ALTER TABLE entities ADD COLUMN embedding vector(1536);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_entities_embedding ON entities USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- ============================================================================
 -- Entity Relationships Table
@@ -182,10 +197,10 @@ CREATE TABLE IF NOT EXISTS entity_relationships (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_entity_rels_user ON entity_relationships(user_id);
-CREATE INDEX idx_entity_rels_source ON entity_relationships(source_entity_id);
-CREATE INDEX idx_entity_rels_target ON entity_relationships(target_entity_id);
-CREATE INDEX idx_entity_rels_type ON entity_relationships(relationship_type);
+CREATE INDEX IF NOT EXISTS idx_entity_rels_user ON entity_relationships(user_id);
+CREATE INDEX IF NOT EXISTS idx_entity_rels_source ON entity_relationships(source_entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_rels_target ON entity_relationships(target_entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_rels_type ON entity_relationships(relationship_type);
 
 -- ============================================================================
 -- Prompt Templates Table
@@ -200,7 +215,7 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_prompt_templates_user ON prompt_templates(user_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_templates_user ON prompt_templates(user_id);
 
 -- ============================================================================
 -- Prompt Versions Table
@@ -229,9 +244,9 @@ CREATE TABLE IF NOT EXISTS prompt_versions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_prompt_versions_template ON prompt_versions(prompt_template_id);
-CREATE INDEX idx_prompt_versions_status ON prompt_versions(status);
-CREATE INDEX idx_prompt_versions_number ON prompt_versions(version_number);
+CREATE INDEX IF NOT EXISTS idx_prompt_versions_template ON prompt_versions(prompt_template_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_versions_status ON prompt_versions(status);
+CREATE INDEX IF NOT EXISTS idx_prompt_versions_number ON prompt_versions(version_number);
 
 -- ============================================================================
 -- Prompt Diffs Table
@@ -247,8 +262,8 @@ CREATE TABLE IF NOT EXISTS prompt_diffs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_prompt_diffs_from ON prompt_diffs(from_version_id);
-CREATE INDEX idx_prompt_diffs_to ON prompt_diffs(to_version_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_diffs_from ON prompt_diffs(from_version_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_diffs_to ON prompt_diffs(to_version_id);
 
 -- ============================================================================
 -- Run Records Table
@@ -287,11 +302,11 @@ CREATE TABLE IF NOT EXISTS run_records (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_run_records_user ON run_records(user_id);
-CREATE INDEX idx_run_records_session ON run_records(session_id);
-CREATE INDEX idx_run_records_prompt ON run_records(prompt_version_id);
-CREATE INDEX idx_run_records_success ON run_records(success_score);
-CREATE INDEX idx_run_records_hallucination ON run_records(hallucination_flag);
+CREATE INDEX IF NOT EXISTS idx_run_records_user ON run_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_run_records_session ON run_records(session_id);
+CREATE INDEX IF NOT EXISTS idx_run_records_prompt ON run_records(prompt_version_id);
+CREATE INDEX IF NOT EXISTS idx_run_records_success ON run_records(success_score);
+CREATE INDEX IF NOT EXISTS idx_run_records_hallucination ON run_records(hallucination_flag);
 
 -- ============================================================================
 -- Memory Packets Table
@@ -312,9 +327,22 @@ CREATE TABLE IF NOT EXISTS memory_packets (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_memory_packets_user ON memory_packets(user_id);
-CREATE INDEX idx_memory_packets_risk ON memory_packets(risk_level);
-CREATE INDEX idx_memory_packets_embedding ON memory_packets USING ivfflat (query_embedding vector_cosine_ops) WITH (lists = 100);
+-- Add missing columns if table was created by base migration without them
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='memory_packets' AND column_name='query_embedding') THEN
+    ALTER TABLE memory_packets ADD COLUMN query_embedding vector(1536);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='memory_packets' AND column_name='risk_level') THEN
+    ALTER TABLE memory_packets ADD COLUMN risk_level VARCHAR(20);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='memory_packets' AND column_name='source_memory_ids') THEN
+    ALTER TABLE memory_packets ADD COLUMN source_memory_ids TEXT[];
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_memory_packets_user ON memory_packets(user_id);
+CREATE INDEX IF NOT EXISTS idx_memory_packets_risk ON memory_packets(risk_level);
+CREATE INDEX IF NOT EXISTS idx_memory_packets_embedding ON memory_packets USING ivfflat (query_embedding vector_cosine_ops) WITH (lists = 100);
 
 -- ============================================================================
 -- Update timestamp trigger function
@@ -327,15 +355,18 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- Apply update triggers
+-- Apply update triggers (idempotent)
+DROP TRIGGER IF EXISTS update_atomic_memories_updated_at ON atomic_memories;
 CREATE TRIGGER update_atomic_memories_updated_at
   BEFORE UPDATE ON atomic_memories
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_success_recipes_updated_at ON success_recipes;
 CREATE TRIGGER update_success_recipes_updated_at
   BEFORE UPDATE ON success_recipes
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_entities_updated_at ON entities;
 CREATE TRIGGER update_entities_updated_at
   BEFORE UPDATE ON entities
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

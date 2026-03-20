@@ -60,13 +60,13 @@ const HALLUCINATION_PATTERNS: Array<{
     verificationStep: 'Ask for source or verification of this claim',
   },
   {
-    pattern: /\b(file|path)\s*[:=]\s*["']?([\/\w\-\.]+)["']?/i,
+    pattern: /\b(file|path)\s*[:=]\s*["']?([/\w\-.]+)["']?/i,
     reason: 'Specific file path stated without confirmation',
     riskLevel: 'medium',
     verificationStep: 'Verify the file exists at this path',
   },
   {
-    pattern: /\b(version|v)\s*[:=]?\s*(\d+\.[\d\.]+)/i,
+    pattern: /\b(version|v)\s*[:=]?\s*(\d+\.[\d.]+)/i,
     reason: 'Specific version number claimed',
     riskLevel: 'low',
     verificationStep: 'Check the actual installed/required version',
@@ -172,7 +172,7 @@ function detectWithHeuristics(
 /**
  * Check if content references established context
  */
-function isContextGrounded(
+function _isContextGrounded(
   content: string,
   previousUserMessages: ConversationMessage[]
 ): boolean {
@@ -182,7 +182,7 @@ function isContextGrounded(
     .join(' ');
 
   // Extract potential claims (file paths, names, etc.)
-  const fileMatch = content.match(/\b([\w\/\-\.]+\.[a-z]{2,4})\b/gi);
+  const fileMatch = content.match(/\b([\w/\-.]+\.[a-z]{2,4})\b/gi);
   const nameMatch = content.match(/\b([A-Z][a-z]+[A-Z]\w*)\b/g); // CamelCase names
 
   if (fileMatch) {
@@ -297,7 +297,7 @@ export async function detectHallucinations(
  */
 export function detectHallucinationsSync(
   messages: ConversationMessage[],
-  config: HallucinationDetectorConfig = {}
+  _config: HallucinationDetectorConfig = {}
 ): HallucinationAnalysis {
   const indicators = detectWithHeuristics(messages);
   const overallRisk = calculateOverallRisk(indicators);

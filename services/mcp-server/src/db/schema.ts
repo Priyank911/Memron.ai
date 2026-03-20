@@ -345,7 +345,7 @@ const MIGRATIONS = [
        'users','organizations','api_keys','org_members',
        'memories','mcp_oauth_clients','mcp_pending_auth',
        'mcp_auth_codes','mcp_refresh_tokens','forensic_snapshots',
-       'buckets'
+       'buckets','conversation_history'
      ] LOOP
        EXECUTE format('ALTER TABLE IF EXISTS %I ENABLE ROW LEVEL SECURITY', t);
        FOR r IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated') LOOP
@@ -510,7 +510,7 @@ const MIGRATIONS = [
   // ─── Prompt Versions (prompt engineering tracking) ───────────
   `CREATE TABLE IF NOT EXISTS prompt_templates (
     id                SERIAL PRIMARY KEY,
-    template_id       UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    template_id       VARCHAR(50) UNIQUE NOT NULL,
     user_id           INTEGER REFERENCES users(id) ON DELETE CASCADE,
     name              VARCHAR(255) NOT NULL,
     description       TEXT,
@@ -519,10 +519,10 @@ const MIGRATIONS = [
 
   `CREATE TABLE IF NOT EXISTS prompt_versions (
     id                    SERIAL PRIMARY KEY,
-    prompt_version_id     UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
-    prompt_template_id    UUID REFERENCES prompt_templates(template_id) ON DELETE CASCADE,
+    prompt_version_id     VARCHAR(50) UNIQUE NOT NULL,
+    prompt_template_id    VARCHAR(50) REFERENCES prompt_templates(template_id) ON DELETE CASCADE,
     version_number        INTEGER NOT NULL DEFAULT 1,
-    parent_version_id     UUID,
+    parent_version_id     VARCHAR(50),
     branch_label          VARCHAR(100),
     status                VARCHAR(20) DEFAULT 'draft',
 
@@ -549,9 +549,9 @@ const MIGRATIONS = [
   // ─── Prompt Diffs (semantic change tracking) ─────────────────
   `CREATE TABLE IF NOT EXISTS prompt_diffs (
     id                SERIAL PRIMARY KEY,
-    diff_id           UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
-    from_version_id   UUID REFERENCES prompt_versions(prompt_version_id),
-    to_version_id     UUID REFERENCES prompt_versions(prompt_version_id),
+    diff_id           VARCHAR(50) UNIQUE NOT NULL,
+    from_version_id   VARCHAR(50) REFERENCES prompt_versions(prompt_version_id),
+    to_version_id     VARCHAR(50) REFERENCES prompt_versions(prompt_version_id),
     diff_type         VARCHAR(50),
     semantic_change   TEXT,
     impact_hypothesis TEXT,
@@ -561,19 +561,19 @@ const MIGRATIONS = [
   // ─── Run Records (execution outcome tracking) ────────────────
   `CREATE TABLE IF NOT EXISTS run_records (
     id                    SERIAL PRIMARY KEY,
-    run_id                UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
+    run_id                VARCHAR(50) UNIQUE NOT NULL,
     user_id               INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    session_id            UUID NOT NULL,
+    session_id            VARCHAR(200) NOT NULL,
     agent_id              VARCHAR(255),
-    workspace_id          UUID,
+    workspace_id          VARCHAR(50),
     task_id               VARCHAR(255),
 
     -- Version Links
-    prompt_version_id     UUID REFERENCES prompt_versions(prompt_version_id),
-    context_version_id    UUID,
-    retrieval_version_id  UUID,
-    tooling_version_id    UUID,
-    evaluation_version_id UUID,
+    prompt_version_id     VARCHAR(50) REFERENCES prompt_versions(prompt_version_id),
+    context_version_id    VARCHAR(50),
+    retrieval_version_id  VARCHAR(50),
+    tooling_version_id    VARCHAR(50),
+    evaluation_version_id VARCHAR(50),
 
     -- Execution Details
     model_name            VARCHAR(100),
@@ -659,26 +659,58 @@ const MIGRATIONS = [
   // ─── Memory Packets (cached retrieval results) ───────────────
   `CREATE TABLE IF NOT EXISTS memory_packets (
     id                  SERIAL PRIMARY KEY,
-    packet_id           VARCHAR(64) UNIQUE NOT NULL,
+    packet_id           VARCHAR(50) UNIQUE NOT NULL,
     user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    session_id          VARCHAR(64),
-    query_hash          VARCHAR(64) NOT NULL,
-
-    -- Packet Content
+    query_embedding     vector(1536),
     packet_content      JSONB NOT NULL,
-    token_usage         JSONB,
-
-    -- Cache metadata
-    hit_count           INTEGER DEFAULT 0,
-    last_hit_at         TIMESTAMPTZ,
-    expires_at          TIMESTAMPTZ,
-
+    token_count         INTEGER DEFAULT 0,
+    risk_level          VARCHAR(20),
+    source_memory_ids   TEXT[],
     created_at          TIMESTAMPTZ DEFAULT NOW()
   )`,
 
+  // Add risk_level column if it doesn't exist (for databases created before this column was added)
+  `DO $$ BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'memory_packets' AND column_name = 'risk_level'
+    ) THEN
+      ALTER TABLE memory_packets ADD COLUMN risk_level VARCHAR(20);
+    END IF;
+  END $$`,
+
   `CREATE INDEX IF NOT EXISTS idx_packets_user ON memory_packets(user_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_packets_query ON memory_packets(query_hash)`,
-  `CREATE INDEX IF NOT EXISTS idx_packets_expires ON memory_packets(expires_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_packets_risk ON memory_packets(risk_level)`,
+
+  // ─── Conversation History (auto-capture MCP interactions) ────
+  `CREATE TABLE IF NOT EXISTS conversation_history (
+    id              SERIAL PRIMARY KEY,
+    session_id      VARCHAR(100) UNIQUE NOT NULL,
+    user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    messages        JSONB NOT NULL DEFAULT '[]',
+    tool_call_count INTEGER DEFAULT 0,
+    ingested        BOOLEAN DEFAULT false,
+    ingested_at     TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_conversation_history_user ON conversation_history(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_conversation_history_ingested ON conversation_history(ingested) WHERE ingested = false`,
+  `CREATE INDEX IF NOT EXISTS idx_conversation_history_updated ON conversation_history(updated_at DESC)`,
+
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgname = 'set_conversation_history_updated_at'
+     ) THEN
+       CREATE TRIGGER set_conversation_history_updated_at
+         BEFORE UPDATE ON conversation_history
+         FOR EACH ROW
+         EXECUTE FUNCTION update_updated_at_column();
+     END IF;
+   END;
+   $$`,
 
   // ─── Updated-at trigger for new tables ───────────────────────
   `DO $$

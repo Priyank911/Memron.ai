@@ -335,7 +335,7 @@ describe('Memory Updater', () => {
 
   describe('getUpdateSummary', () => {
     it('should provide update summary', () => {
-      const memory = createMemory('m1', 'Test', 'fact');
+      createMemory('m1', 'Test', 'fact');
       const results = [
         {
           action: 'updated' as const,

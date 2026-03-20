@@ -94,6 +94,18 @@ export const config = {
     defaultTokenBudget: 4000,
     maxSearchResults: 50,
   },
+
+  /** Auto-ingest — automatic conversation capture & analysis */
+  autoIngest: {
+    /** Feature flag — set AUTO_INGEST_ENABLED=false to disable */
+    enabled: (process.env.AUTO_INGEST_ENABLED || 'true') === 'true',
+    /** Minimum tool calls before triggering analysis pipeline */
+    minCalls: parseInt(process.env.AUTO_INGEST_MIN_CALLS || '2', 10),
+    /** Use LLM for analysis (false = heuristic-only, saves cost) */
+    useLLM: (process.env.AUTO_INGEST_USE_LLM || 'false') === 'true',
+    /** Persist buffer to DB every N tool calls */
+    persistEvery: parseInt(process.env.AUTO_INGEST_PERSIST_EVERY || '10', 10),
+  },
 } as const;
 
 export type Config = typeof config;

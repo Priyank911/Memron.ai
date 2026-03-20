@@ -105,7 +105,6 @@ function determineImpact(
   message: ConversationMessage,
   nextMessages: ConversationMessage[]
 ): ImpactType {
-  const content = message.content.toLowerCase();
   const nextContent = nextMessages.map((m) => m.content.toLowerCase()).join(' ');
 
   // Positive indicators
@@ -145,7 +144,6 @@ function calculateStepScores(messages: ConversationMessage[]): StepScore[] {
   return messages.map((message, i) => {
     const content = message.content;
     const length = content.length;
-    const wordCount = content.split(/\s+/).length;
 
     // Relevance: shorter, more focused messages tend to be more relevant
     const relevance = Math.min(1, 200 / Math.max(length, 1));

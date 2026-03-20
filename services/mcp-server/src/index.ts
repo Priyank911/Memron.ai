@@ -42,9 +42,11 @@ import { runMigrations } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
 import { MemronTokenVerifier } from './auth/verify.js';
-import { createMcpServer } from './mcp.js';
+import { createMcpServer, type SessionContext } from './mcp.js';
 import * as tokens from './lib/tokens.js';
 import * as db from './db/queries.js';
+import * as collector from './lib/conversation-collector.js';
+import { recoverUningestedConversations } from './lib/auto-ingest.js';
 
 // ─────────────────────────────────────────────────────────────
 // Initialization
@@ -538,18 +540,19 @@ app.post('/mcp', universalAuth, async (req, res) => {
     }
 
     // New session (handles both fresh connects and stale session IDs)
-    const mcpServer = createMcpServer();
+    const userId = (req as any).auth?.extra?.userId;
+    const sessionCtx: SessionContext = { userId };
+    const mcpServer = createMcpServer(sessionCtx);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (newSessionId) => {
-        const userId = (req as any).auth?.extra?.userId;
+        sessionCtx.sessionId = newSessionId;
         sessions.set(newSessionId, {
           transport,
           server: mcpServer,
           lastActivity: Date.now(),
           userId,
         });
-        // session created
       },
     });
 
@@ -558,8 +561,8 @@ app.post('/mcp', universalAuth, async (req, res) => {
     transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid) {
+        collector.flushSession(sid).catch(() => {}); // fire-and-forget
         sessions.delete(sid);
-        // session closed
       }
     };
 
@@ -614,6 +617,7 @@ app.delete('/mcp', async (req, res) => {
 
   if (sessionId && sessions.has(sessionId)) {
     const session = sessions.get(sessionId)!;
+    collector.flushSession(sessionId).catch(() => {}); // fire-and-forget
     try {
       await session.transport.close();
       await session.server.close();
@@ -843,6 +847,7 @@ function sweepIdleSessions(): void {
   let swept = 0;
   for (const [id, session] of sessions) {
     if (now - session.lastActivity > SESSION_IDLE_MS) {
+      collector.flushSession(id).catch(() => {}); // fire-and-forget
       try {
         session.transport.close();
         session.server.close();
@@ -872,6 +877,9 @@ async function main() {
   await runMigrations();
   await warmPool();
 
+  // Recover any conversations that were captured but not analyzed (crash recovery)
+  await recoverUningestedConversations();
+
   if (!testEncryption()) {
     console.error('[FATAL] Encryption self-test failed. Check ENCRYPTION_SECRET.');
     process.exit(1);
@@ -899,6 +907,9 @@ async function main() {
   const shutdown = async (signal: string) => {
     console.log(`\n[${signal}] Shutting down...`);
     if (sweepTimer) clearInterval(sweepTimer);
+
+    // Flush all conversation buffers before closing sessions
+    await collector.flushAll().catch(() => {});
 
     for (const [id, session] of sessions) {
       try {

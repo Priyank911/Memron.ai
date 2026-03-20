@@ -3,8 +3,6 @@
  * Generates embeddings for memories, recipes, and entities using various providers
  */
 
-import Groq from 'groq-sdk';
-
 export interface EmbeddingConfig {
   provider: 'groq' | 'openai' | 'local';
   model?: string;
@@ -24,17 +22,6 @@ const DEFAULT_CONFIG: Required<EmbeddingConfig> = {
   dimensions: 1536,
   apiKey: process.env.GROQ_API_KEY || '',
 };
-
-let groqClient: Groq | null = null;
-
-function getGroqClient(apiKey?: string): Groq {
-  if (!groqClient) {
-    groqClient = new Groq({
-      apiKey: apiKey || process.env.GROQ_API_KEY,
-    });
-  }
-  return groqClient;
-}
 
 /**
  * Generate embedding for text content

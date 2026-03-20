@@ -73,7 +73,7 @@ export async function analyze<T>(
   let data: T;
   try {
     data = JSON.parse(message.content) as T;
-  } catch (error) {
+  } catch {
     throw new Error(`Failed to parse Groq JSON response: ${message.content}`);
   }
 

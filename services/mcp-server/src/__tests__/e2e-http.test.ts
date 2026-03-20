@@ -45,6 +45,19 @@ vi.mock('../config.js', () => ({
   },
 }));
 
+vi.mock('../lib/auto-ingest.js', () => ({
+  recoverUningestedConversations: vi.fn().mockResolvedValue(undefined),
+  autoIngest: vi.fn().mockResolvedValue({ success: true, stats: {} }),
+}));
+
+vi.mock('../lib/conversation-collector.js', () => ({
+  recordToolCall: vi.fn(),
+  flushSession: vi.fn().mockResolvedValue(undefined),
+  flushAll: vi.fn().mockResolvedValue(undefined),
+  isExcludedTool: vi.fn().mockReturnValue(false),
+  getBuffer: vi.fn().mockReturnValue(undefined),
+}));
+
 vi.mock('../mcp.js', () => ({
   createMcpServer: vi.fn().mockReturnValue({
     connect: vi.fn().mockResolvedValue(undefined),
