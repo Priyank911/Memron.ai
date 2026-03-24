@@ -3,9 +3,9 @@
  * Extracts user preferences from conversations
  */
 
-import { analyze } from '../llm/groq-client';
-import { PREFERENCE_EXTRACTION_PROMPT } from '../llm/prompts';
-import type { ConversationMessage, Episode } from '../types';
+import { analyze } from '../llm/groq-client.js';
+import { PREFERENCE_EXTRACTION_PROMPT } from '../llm/prompts.js';
+import type { ConversationMessage, Episode } from '../types.js';
 
 export type PreferenceCategory =
   | 'code_style'

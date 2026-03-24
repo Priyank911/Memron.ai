@@ -2,7 +2,7 @@
  * Entity Extractor
  * Extracts named entities and relationships from conversations
  */
-import type { Episode, Entity, EntityRelationship } from '../types';
+import type { Episode, Entity, EntityRelationship } from '../types.js';
 export interface EntityExtractorConfig {
     minMentions?: number;
     useHeuristics?: boolean;

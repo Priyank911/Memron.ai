@@ -2,7 +2,7 @@
  * Trajectory Analyzer
  * Analyzes conversation trajectories to understand success/failure patterns
  */
-import type { Episode, EpisodeAnalysis, TrajectoryPoint } from '../types';
+import type { Episode, EpisodeAnalysis, TrajectoryPoint } from '../types.js';
 export interface TrajectoryAnalyzerConfig {
     useHeuristics?: boolean;
     useLLM?: boolean;

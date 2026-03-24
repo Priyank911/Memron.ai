@@ -2,7 +2,7 @@
  * Preference Extractor
  * Extracts user preferences from conversations
  */
-import type { Episode } from '../types';
+import type { Episode } from '../types.js';
 export type PreferenceCategory = 'code_style' | 'communication' | 'tooling' | 'quality' | 'process';
 export interface ExtractedPreference {
     category: PreferenceCategory;

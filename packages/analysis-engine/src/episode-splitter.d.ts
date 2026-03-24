@@ -2,7 +2,7 @@
  * Episode Splitter
  * Splits conversations into semantic episodes for structured analysis
  */
-import type { ConversationMessage, Episode } from './types';
+import type { ConversationMessage, Episode } from './types.js';
 export interface EpisodeSplitterConfig {
     minEpisodeLength?: number;
     maxEpisodeLength?: number;

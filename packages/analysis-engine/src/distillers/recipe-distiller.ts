@@ -4,8 +4,8 @@
  */
 
 import { nanoid } from 'nanoid';
-import { analyze } from '../llm/groq-client';
-import { RECIPE_DISTILLATION_PROMPT } from '../llm/prompts';
+import { analyze } from '../llm/groq-client.js';
+import { RECIPE_DISTILLATION_PROMPT } from '../llm/prompts.js';
 import type {
   Episode,
   EpisodeAnalysis,
@@ -13,7 +13,7 @@ import type {
   RecipeStep,
   FailurePattern,
   ConversationMessage,
-} from '../types';
+} from '../types.js';
 
 export interface RecipeDistillerConfig {
   minSuccessScore?: number;

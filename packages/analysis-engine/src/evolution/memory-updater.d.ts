@@ -2,7 +2,7 @@
  * Memory Updater
  * Handles memory updates, merges, and invalidations
  */
-import type { AtomicMemoryUnit, MemoryUpdate, ConflictResolution } from '../types';
+import type { AtomicMemoryUnit, MemoryUpdate, ConflictResolution } from '../types.js';
 export interface UpdateResult {
     action: 'created' | 'updated' | 'merged' | 'invalidated' | 'skipped';
     memoryId: string;

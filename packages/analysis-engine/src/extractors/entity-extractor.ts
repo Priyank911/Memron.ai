@@ -4,8 +4,8 @@
  */
 
 import { nanoid } from 'nanoid';
-import { analyze } from '../llm/groq-client';
-import { ENTITY_EXTRACTION_PROMPT } from '../llm/prompts';
+import { analyze } from '../llm/groq-client.js';
+import { ENTITY_EXTRACTION_PROMPT } from '../llm/prompts.js';
 import type {
   ConversationMessage,
   Episode,
@@ -13,7 +13,7 @@ import type {
   EntityRelationship,
   EntityType,
   RelationshipType,
-} from '../types';
+} from '../types.js';
 
 export interface EntityExtractorConfig {
   minMentions?: number;

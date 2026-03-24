@@ -3,8 +3,8 @@
  * Analyzes conversation trajectories to understand success/failure patterns
  */
 
-import { analyze } from '../llm/groq-client';
-import { TRAJECTORY_ANALYSIS_PROMPT } from '../llm/prompts';
+import { analyze } from '../llm/groq-client.js';
+import { TRAJECTORY_ANALYSIS_PROMPT } from '../llm/prompts.js';
 import type {
   ConversationMessage,
   Episode,
@@ -14,7 +14,7 @@ import type {
   ImpactType,
   StepScore,
   OutcomeType,
-} from '../types';
+} from '../types.js';
 
 export interface TrajectoryAnalyzerConfig {
   useHeuristics?: boolean;

@@ -4,15 +4,15 @@
  */
 
 import { nanoid } from 'nanoid';
-import { splitIntoEpisodes, splitIntoEpisodesSync } from './episode-splitter';
-import { extractMemories, extractMemoriesSync, calculateCompressionStats } from './extractors/atomic-extractor';
-import { extractEntities, extractEntitiesSync } from './extractors/entity-extractor';
-import { analyzeTrajectory, analyzeTrajectorySync } from './analyzers/trajectory-analyzer';
-import { detectOutcome } from './analyzers/outcome-detector';
-import { detectHallucinationsSync } from './analyzers/hallucination-detector';
-import { distillRecipe, distillRecipeSync } from './distillers/recipe-distiller';
-import { findAllConflicts, findAllConflictsSync } from './evolution/conflict-detector';
-import { processBatchUpdates } from './evolution/memory-updater';
+import { splitIntoEpisodes, splitIntoEpisodesSync } from './episode-splitter.js';
+import { extractMemories, extractMemoriesSync, calculateCompressionStats } from './extractors/atomic-extractor.js';
+import { extractEntities, extractEntitiesSync } from './extractors/entity-extractor.js';
+import { analyzeTrajectory, analyzeTrajectorySync } from './analyzers/trajectory-analyzer.js';
+import { detectOutcome } from './analyzers/outcome-detector.js';
+import { detectHallucinationsSync } from './analyzers/hallucination-detector.js';
+import { distillRecipe, distillRecipeSync } from './distillers/recipe-distiller.js';
+import { findAllConflicts, findAllConflictsSync } from './evolution/conflict-detector.js';
+import { processBatchUpdates } from './evolution/memory-updater.js';
 import type {
   ConversationMessage,
   Episode,
@@ -23,7 +23,7 @@ import type {
   EntityRelationship,
   AnalysisPipelineInput,
   AnalysisPipelineResult,
-} from './types';
+} from './types.js';
 
 export interface PipelineConfig {
   useLLM?: boolean;

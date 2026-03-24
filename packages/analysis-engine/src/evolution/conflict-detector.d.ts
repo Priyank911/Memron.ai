@@ -2,7 +2,7 @@
  * Conflict Detector
  * Detects conflicts and relationships between memories
  */
-import type { AtomicMemoryUnit, MemoryUpdate, ConflictResolution } from '../types';
+import type { AtomicMemoryUnit, MemoryUpdate, ConflictResolution } from '../types.js';
 export interface ConflictDetectorConfig {
     useHeuristics?: boolean;
     useLLM?: boolean;

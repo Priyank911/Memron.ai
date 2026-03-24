@@ -8,8 +8,8 @@ import type {
   AtomicMemoryUnit,
   MemoryUpdate,
   ConflictResolution,
-} from '../types';
-import { suggestResolution } from './conflict-detector';
+} from '../types.js';
+import { suggestResolution } from './conflict-detector.js';
 
 export interface UpdateResult {
   action: 'created' | 'updated' | 'merged' | 'invalidated' | 'skipped';

@@ -3,8 +3,8 @@
  * Optimizes content compression while preserving essential information
  */
 
-import { analyze } from '../llm/groq-client';
-import { COMPRESSION_PROMPT } from '../llm/prompts';
+import { analyze } from '../llm/groq-client.js';
+import { COMPRESSION_PROMPT } from '../llm/prompts.js';
 
 export interface CompressionResult {
   compressed: string;

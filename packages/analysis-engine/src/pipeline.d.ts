@@ -2,7 +2,7 @@
  * Analysis Pipeline
  * Orchestrates the full analysis workflow from conversation to structured output
  */
-import type { ConversationMessage, AnalysisPipelineInput, AnalysisPipelineResult } from './types';
+import type { ConversationMessage, AnalysisPipelineInput, AnalysisPipelineResult } from './types.js';
 export interface PipelineConfig {
     useLLM?: boolean;
     parallel?: boolean;

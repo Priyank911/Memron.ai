@@ -2,7 +2,7 @@
  * Recipe Distiller
  * Extracts reusable success recipes from winning conversation paths
  */
-import type { Episode, EpisodeAnalysis, SuccessRecipe } from '../types';
+import type { Episode, EpisodeAnalysis, SuccessRecipe } from '../types.js';
 export interface RecipeDistillerConfig {
     minSuccessScore?: number;
     maxRecipeSteps?: number;
