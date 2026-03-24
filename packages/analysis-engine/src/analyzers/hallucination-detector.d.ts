@@ -2,7 +2,7 @@
  * Hallucination Detector
  * Detects potential hallucinations in AI responses
  */
-import type { ConversationMessage } from '../types';
+import type { ConversationMessage } from '../types.js';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export interface HallucinationIndicator {
     content: string;

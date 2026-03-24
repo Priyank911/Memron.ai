@@ -2,7 +2,7 @@
  * Outcome Detector
  * Detects and classifies conversation outcomes
  */
-import type { ConversationMessage, Episode, OutcomeType } from '../types';
+import type { ConversationMessage, Episode, OutcomeType } from '../types.js';
 export interface OutcomeSignal {
     type: 'positive' | 'negative' | 'neutral';
     strength: number;

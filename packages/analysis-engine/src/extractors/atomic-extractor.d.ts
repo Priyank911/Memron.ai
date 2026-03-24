@@ -2,7 +2,7 @@
  * Atomic Memory Extractor
  * Extracts structured memory units from conversation episodes
  */
-import type { AtomicMemoryUnit, ConversationMessage, Episode } from '../types';
+import type { AtomicMemoryUnit, ConversationMessage, Episode } from '../types.js';
 export interface AtomicExtractorConfig {
     minConfidence?: number;
     maxMemoriesPerEpisode?: number;

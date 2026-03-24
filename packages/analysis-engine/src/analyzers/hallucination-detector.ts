@@ -3,9 +3,9 @@
  * Detects potential hallucinations in AI responses
  */
 
-import { analyze } from '../llm/groq-client';
-import { HALLUCINATION_DETECTION_PROMPT } from '../llm/prompts';
-import type { ConversationMessage } from '../types';
+import { analyze } from '../llm/groq-client.js';
+import { HALLUCINATION_DETECTION_PROMPT } from '../llm/prompts.js';
+import type { ConversationMessage } from '../types.js';
 
 export type RiskLevel = 'low' | 'medium' | 'high';
 

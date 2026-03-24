@@ -4,15 +4,15 @@
  */
 
 import { nanoid } from 'nanoid';
-import { analyze } from '../llm/groq-client';
-import { MEMORY_EXTRACTION_PROMPT } from '../llm/prompts';
+import { analyze } from '../llm/groq-client.js';
+import { MEMORY_EXTRACTION_PROMPT } from '../llm/prompts.js';
 import type {
   AtomicMemoryUnit,
   ConversationMessage,
   Episode,
   MemoryType,
   EntityLink,
-} from '../types';
+} from '../types.js';
 
 export interface AtomicExtractorConfig {
   minConfidence?: number;

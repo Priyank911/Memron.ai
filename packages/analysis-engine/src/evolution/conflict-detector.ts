@@ -3,14 +3,14 @@
  * Detects conflicts and relationships between memories
  */
 
-import { analyze } from '../llm/groq-client';
-import { CONFLICT_DETECTION_PROMPT } from '../llm/prompts';
+import { analyze } from '../llm/groq-client.js';
+import { CONFLICT_DETECTION_PROMPT } from '../llm/prompts.js';
 import type {
   AtomicMemoryUnit,
   MemoryRelation,
   MemoryUpdate,
   ConflictResolution,
-} from '../types';
+} from '../types.js';
 
 export interface ConflictDetectorConfig {
   useHeuristics?: boolean;

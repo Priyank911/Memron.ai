@@ -6,23 +6,23 @@
  */
 
 // Core types
-export * from './types';
+export * from './types.js';
 
 // Episode splitting
-export { splitIntoEpisodes, splitIntoEpisodesSync, summarizeEpisode } from './episode-splitter';
+export { splitIntoEpisodes, splitIntoEpisodesSync, summarizeEpisode } from './episode-splitter.js';
 
 // Extractors
 export {
   extractMemories,
   extractMemoriesSync,
   calculateCompressionStats,
-} from './extractors/atomic-extractor';
+} from './extractors/atomic-extractor.js';
 
 export {
   extractEntities,
   extractEntitiesSync,
   findRelatedEntities,
-} from './extractors/entity-extractor';
+} from './extractors/entity-extractor.js';
 
 export {
   extractPreferences,
@@ -30,7 +30,7 @@ export {
   preferencesToMemoryContent,
   type ExtractedPreference,
   type PreferenceCategory,
-} from './extractors/preference-extractor';
+} from './extractors/preference-extractor.js';
 
 // Analyzers
 export {
@@ -38,7 +38,7 @@ export {
   analyzeTrajectorySync,
   findWinningBranch,
   getTrajectorySimpleSummary,
-} from './analyzers/trajectory-analyzer';
+} from './analyzers/trajectory-analyzer.js';
 
 export {
   detectOutcome,
@@ -48,7 +48,7 @@ export {
   getOutcomeExplanation,
   type OutcomeDetectionResult,
   type OutcomeSignal,
-} from './analyzers/outcome-detector';
+} from './analyzers/outcome-detector.js';
 
 export {
   detectHallucinations,
@@ -58,7 +58,7 @@ export {
   type HallucinationAnalysis,
   type HallucinationIndicator,
   type RiskLevel,
-} from './analyzers/hallucination-detector';
+} from './analyzers/hallucination-detector.js';
 
 // Distillers
 export {
@@ -67,7 +67,7 @@ export {
   calculateCompressionRatio,
   mergeRecipes,
   formatRecipeForDisplay,
-} from './distillers/recipe-distiller';
+} from './distillers/recipe-distiller.js';
 
 export {
   compressContent,
@@ -75,7 +75,7 @@ export {
   compressBatch,
   getCompressionSummary,
   type CompressionResult,
-} from './distillers/compression-optimizer';
+} from './distillers/compression-optimizer.js';
 
 // Evolution
 export {
@@ -84,7 +84,7 @@ export {
   suggestResolution,
   findAllConflicts,
   findAllConflictsSync,
-} from './evolution/conflict-detector';
+} from './evolution/conflict-detector.js';
 
 export {
   applyUpdate,
@@ -96,12 +96,12 @@ export {
   expireMemories,
   getUpdateSummary,
   type UpdateResult,
-} from './evolution/memory-updater';
+} from './evolution/memory-updater.js';
 
 // LLM
-export { analyze, analyzeBatch, analyzeStream, resetClient } from './llm/groq-client';
+export { analyze, analyzeBatch, analyzeStream, resetClient } from './llm/groq-client.js';
 
-export * from './llm/prompts';
+export * from './llm/prompts.js';
 
 // Pipeline
 export {
@@ -110,7 +110,7 @@ export {
   quickAnalyze,
   getPipelineSummary,
   type PipelineConfig,
-} from './pipeline';
+} from './pipeline.js';
 
 // Embeddings
 export {
@@ -124,4 +124,4 @@ export {
   embedQuery,
   type EmbeddingConfig,
   type EmbeddingResult,
-} from './embeddings/embedding-generator';
+} from './embeddings/embedding-generator.js';

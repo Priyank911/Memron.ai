@@ -2,6 +2,6 @@
  * Analyzers Module Exports
  */
 
-export * from './trajectory-analyzer';
-export * from './outcome-detector';
-export * from './hallucination-detector';
+export * from './trajectory-analyzer.js';
+export * from './outcome-detector.js';
+export * from './hallucination-detector.js';

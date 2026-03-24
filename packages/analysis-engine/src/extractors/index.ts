@@ -2,6 +2,6 @@
  * Extractors Module Exports
  */
 
-export * from './atomic-extractor';
-export * from './entity-extractor';
-export * from './preference-extractor';
+export * from './atomic-extractor.js';
+export * from './entity-extractor.js';
+export * from './preference-extractor.js';

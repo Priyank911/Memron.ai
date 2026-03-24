@@ -4,14 +4,14 @@
  */
 
 import { nanoid } from 'nanoid';
-import { analyze } from './llm/groq-client';
-import { EPISODE_SPLITTING_PROMPT } from './llm/prompts';
+import { analyze } from './llm/groq-client.js';
+import { EPISODE_SPLITTING_PROMPT } from './llm/prompts.js';
 import type {
   ConversationMessage,
   Episode,
   EpisodeBoundary,
   EpisodeType,
-} from './types';
+} from './types.js';
 
 export interface EpisodeSplitterConfig {
   minEpisodeLength?: number;
