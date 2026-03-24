@@ -5,6 +5,18 @@
  * Tool handlers catch these and return proper MCP error responses.
  */
 
+// ErrorCode enum for standardized error types
+export enum ErrorCode {
+  NotFound = 'NOT_FOUND',
+  ValidationError = 'VALIDATION_ERROR',
+  AuthRequired = 'AUTH_REQUIRED',
+  Forbidden = 'FORBIDDEN',
+  RateLimit = 'RATE_LIMIT',
+  EncryptionError = 'ENCRYPTION_ERROR',
+  DatabaseError = 'DB_ERROR',
+  InternalError = 'INTERNAL_ERROR',
+}
+
 export class McpError extends Error {
   constructor(
     message: string,

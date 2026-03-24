@@ -1,0 +1,56 @@
+{
+  "sessionId": "sample_debug_session",
+  "userId": "user_123",
+  "messages": [
+    {
+      "role": "user",
+      "content": "I'm getting an error when I try to run my React app. It says 'Cannot read property map of undefined'",
+      "timestamp": "2024-01-15T10:00:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "This error typically occurs when you're trying to call `.map()` on a variable that is undefined. Can you share the component code where this error is happening?",
+      "timestamp": "2024-01-15T10:00:15Z"
+    },
+    {
+      "role": "user",
+      "content": "Here's my code:\n\nfunction UserList({ users }) {\n  return (\n    <ul>\n      {users.map(user => <li key={user.id}>{user.name}</li>)}\n    </ul>\n  );\n}",
+      "timestamp": "2024-01-15T10:01:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "I see the issue. The `users` prop might be undefined when the component first renders. You should add a check before mapping. Try this:\n\n```jsx\nfunction UserList({ users = [] }) {\n  return (\n    <ul>\n      {users.map(user => <li key={user.id}>{user.name}</li>)}\n    </ul>\n  );\n}\n```\n\nOr you can use optional chaining:\n\n```jsx\n{users?.map(user => <li key={user.id}>{user.name}</li>)}\n```",
+      "timestamp": "2024-01-15T10:01:30Z"
+    },
+    {
+      "role": "user",
+      "content": "I tried the default parameter but still getting the error",
+      "timestamp": "2024-01-15T10:02:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Let me look at how you're calling this component. Can you show me the parent component that renders `UserList`?",
+      "timestamp": "2024-01-15T10:02:15Z"
+    },
+    {
+      "role": "user",
+      "content": "function App() {\n  const [users, setUsers] = useState();\n\n  useEffect(() => {\n    fetch('/api/users').then(r => r.json()).then(setUsers);\n  }, []);\n\n  return <UserList users={users} />;\n}",
+      "timestamp": "2024-01-15T10:03:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Found it! The issue is `useState()` - you're not providing an initial value, so `users` starts as `undefined`. Change it to:\n\n```jsx\nconst [users, setUsers] = useState([]);\n```\n\nThis way, `users` will be an empty array while the data is loading, and `.map()` will work fine on an empty array.",
+      "timestamp": "2024-01-15T10:03:30Z"
+    },
+    {
+      "role": "user",
+      "content": "That fixed it! Thanks so much. I'll remember to always initialize state with the correct type.",
+      "timestamp": "2024-01-15T10:04:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "You're welcome! Yes, it's a good practice to always initialize state with the expected type - empty array for arrays, empty string for strings, null for optional objects, etc. This prevents these kinds of runtime errors.",
+      "timestamp": "2024-01-15T10:04:15Z"
+    }
+  ]
+}

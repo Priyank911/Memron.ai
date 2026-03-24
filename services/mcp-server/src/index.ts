@@ -31,6 +31,7 @@ import 'dotenv/config';
 
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { randomUUID, createHash, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
@@ -41,9 +42,11 @@ import { runMigrations } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
 import { MemronTokenVerifier } from './auth/verify.js';
-import { createMcpServer } from './mcp.js';
+import { createMcpServer, type SessionContext } from './mcp.js';
 import * as tokens from './lib/tokens.js';
 import * as db from './db/queries.js';
+import * as collector from './lib/conversation-collector.js';
+import { recoverUningestedConversations } from './lib/auto-ingest.js';
 
 // ─────────────────────────────────────────────────────────────
 // Initialization
@@ -120,10 +123,14 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 app.use(express.static(join(__dirname, '..', 'public'), { maxAge: '7d' }));
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
+
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
+  : null;
 
 app.use(cors({
-  origin: true,
+  origin: config.isDev ? true : (ALLOWED_ORIGINS || true),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
@@ -137,6 +144,40 @@ app.use(cors({
     'Mcp-Protocol-Version',
   ],
 }));
+
+// ─────────────────────────────────────────────────────────────
+// Rate Limiting
+// ─────────────────────────────────────────────────────────────
+
+const apiLimiter = rateLimit({
+  windowMs: 60_000,
+  max: parseInt(process.env.RATE_LIMIT_MCP || '100', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 60_000,
+  max: parseInt(process.env.RATE_LIMIT_AUTH || '10', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many authentication attempts' },
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 60_000,
+  max: parseInt(process.env.RATE_LIMIT_ADMIN || '3', 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many admin requests' },
+});
+
+// Apply rate limiters to routes
+app.use('/mcp', apiLimiter);
+app.use('/auth/complete', authLimiter);
+app.use('/auth/test', authLimiter);
+app.use('/admin/seed-key', adminLimiter);
 
 // ─────────────────────────────────────────────────────────────
 // Dynamic Public URL Helper
@@ -499,18 +540,19 @@ app.post('/mcp', universalAuth, async (req, res) => {
     }
 
     // New session (handles both fresh connects and stale session IDs)
-    const mcpServer = createMcpServer();
+    const userId = (req as any).auth?.extra?.userId;
+    const sessionCtx: SessionContext = { userId };
+    const mcpServer = createMcpServer(sessionCtx);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (newSessionId) => {
-        const userId = (req as any).auth?.extra?.userId;
+        sessionCtx.sessionId = newSessionId;
         sessions.set(newSessionId, {
           transport,
           server: mcpServer,
           lastActivity: Date.now(),
           userId,
         });
-        // session created
       },
     });
 
@@ -519,8 +561,8 @@ app.post('/mcp', universalAuth, async (req, res) => {
     transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid) {
+        collector.flushSession(sid).catch(() => {}); // fire-and-forget
         sessions.delete(sid);
-        // session closed
       }
     };
 
@@ -575,6 +617,7 @@ app.delete('/mcp', async (req, res) => {
 
   if (sessionId && sessions.has(sessionId)) {
     const session = sessions.get(sessionId)!;
+    collector.flushSession(sessionId).catch(() => {}); // fire-and-forget
     try {
       await session.transport.close();
       await session.server.close();
@@ -621,22 +664,26 @@ app.post('/auth/test', async (req, res) => {
 
     if (!result) {
       // Help debug: check if user/key tables exist and have data
-      let diagnostics: any = {};
-      try {
-        const userCount = await dbQuery('SELECT count(*) as c FROM users');
-        const keyCount = await dbQuery('SELECT count(*) as c FROM api_keys');
-        diagnostics = {
-          users_in_db: parseInt(userCount.rows[0]?.c || '0'),
-          keys_in_db: parseInt(keyCount.rows[0]?.c || '0'),
-          key_hash_prefix: keyHash.slice(0, 16) + '...',
-        };
-      } catch { /* silent */ }
+      if (config.isDev) {
+        let diagnostics: any = {};
+        try {
+          const userCount = await dbQuery('SELECT count(*) as c FROM users');
+          const keyCount = await dbQuery('SELECT count(*) as c FROM api_keys');
+          diagnostics = {
+            users_in_db: parseInt(userCount.rows[0]?.c || '0'),
+            keys_in_db: parseInt(keyCount.rows[0]?.c || '0'),
+            key_hash_prefix: keyHash.slice(0, 16) + '...',
+          };
+        } catch { /* silent */ }
 
-      res.status(401).json({
-        error: 'API key not found',
-        hint: 'The key hash does not match any active key in the database.',
-        diagnostics,
-      });
+        res.status(401).json({
+          error: 'API key not found',
+          hint: 'The key hash does not match any active key in the database.',
+          diagnostics,
+        });
+      } else {
+        res.status(401).json({ error: 'API key not found' });
+      }
       return;
     }
 
@@ -663,6 +710,15 @@ app.post('/auth/test', async (req, res) => {
  * Body: { api_key, email, name?, org_name?, clerk_id? }
  */
 app.post('/admin/seed-key', async (req, res) => {
+  // Admin endpoint requires ADMIN_SECRET in production
+  if (!config.isDev) {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const providedSecret = req.headers['x-admin-secret'] as string;
+    if (!adminSecret || providedSecret !== adminSecret) {
+      res.status(403).json({ error: 'Forbidden: Invalid or missing admin secret' });
+      return;
+    }
+  }
   try {
     const { api_key, email, name, org_name, clerk_id } = req.body;
 
@@ -734,7 +790,7 @@ app.post('/admin/seed-key', async (req, res) => {
     });
   } catch (error: any) {
     console.error('[Admin] Seed error:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: config.isDev ? error.message : 'Internal server error' });
   }
 });
 
@@ -791,6 +847,7 @@ function sweepIdleSessions(): void {
   let swept = 0;
   for (const [id, session] of sessions) {
     if (now - session.lastActivity > SESSION_IDLE_MS) {
+      collector.flushSession(id).catch(() => {}); // fire-and-forget
       try {
         session.transport.close();
         session.server.close();
@@ -820,6 +877,9 @@ async function main() {
   await runMigrations();
   await warmPool();
 
+  // Recover any conversations that were captured but not analyzed (crash recovery)
+  await recoverUningestedConversations();
+
   if (!testEncryption()) {
     console.error('[FATAL] Encryption self-test failed. Check ENCRYPTION_SECRET.');
     process.exit(1);
@@ -848,6 +908,9 @@ async function main() {
     console.log(`\n[${signal}] Shutting down...`);
     if (sweepTimer) clearInterval(sweepTimer);
 
+    // Flush all conversation buffers before closing sessions
+    await collector.flushAll().catch(() => {});
+
     for (const [id, session] of sessions) {
       try {
         await session.transport.close();
@@ -870,7 +933,14 @@ async function main() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-main().catch((error) => {
-  console.error('[FATAL] Startup failed:', error);
-  process.exit(1);
-});
+// Export app for testing (supertest binds without starting the server)
+export { app };
+
+// Skip server bootstrap when imported by test runner
+const isTestEnv = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+if (!isTestEnv) {
+  main().catch((error) => {
+    console.error('[FATAL] Startup failed:', error);
+    process.exit(1);
+  });
+}

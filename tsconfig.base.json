@@ -23,7 +23,8 @@
       "@memron/memory-core": ["./packages/memory-core/src"],
       "@memron/trust-registry": ["./packages/trust-registry/src"],
       "@memron/shared-types": ["./packages/shared-types/src"],
-      "@memron/ui": ["./packages/ui/src"]
+      "@memron/ui": ["./packages/ui/src"],
+      "@memron/analysis-engine": ["./packages/analysis-engine/src"]
     }
   },
   "exclude": ["node_modules", "dist", ".next", "coverage"]
