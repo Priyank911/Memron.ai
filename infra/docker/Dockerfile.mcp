@@ -15,16 +15,18 @@ WORKDIR /app
 # ── Install dependencies ──
 FROM base AS deps
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
-COPY packages/shared-types/package.json ./packages/shared-types/
-COPY services/mcp-server/package.json   ./services/mcp-server/
+COPY packages/shared-types/package.json    ./packages/shared-types/
+COPY packages/analysis-engine/package.json ./packages/analysis-engine/
+COPY services/mcp-server/package.json      ./services/mcp-server/
 
 RUN pnpm install --frozen-lockfile --filter @memron/mcp-server...
 
 # ── Build ──
 FROM deps AS build
 COPY tsconfig.base.json turbo.json ./
-COPY packages/shared-types/ ./packages/shared-types/
-COPY services/mcp-server/   ./services/mcp-server/
+COPY packages/shared-types/    ./packages/shared-types/
+COPY packages/analysis-engine/ ./packages/analysis-engine/
+COPY services/mcp-server/      ./services/mcp-server/
 
 RUN pnpm turbo build --filter=@memron/mcp-server
 
@@ -43,14 +45,17 @@ ENV NODE_ENV=production
 ENV PORT=4201
 
 # Copy built artifacts + production node_modules
-COPY --from=build --chown=memron:memron /app/packages/shared-types/dist        ./packages/shared-types/dist
-COPY --from=build --chown=memron:memron /app/packages/shared-types/package.json ./packages/shared-types/
-COPY --from=build --chown=memron:memron /app/services/mcp-server/dist          ./services/mcp-server/dist
-COPY --from=build --chown=memron:memron /app/services/mcp-server/package.json  ./services/mcp-server/
-COPY --from=build --chown=memron:memron /app/services/mcp-server/public        ./services/mcp-server/public
-COPY --from=build --chown=memron:memron /app/node_modules                      ./node_modules
-COPY --from=build --chown=memron:memron /app/services/mcp-server/node_modules  ./services/mcp-server/node_modules
-COPY --from=build --chown=memron:memron /app/packages/shared-types/node_modules ./packages/shared-types/node_modules
+COPY --from=build --chown=memron:memron /app/packages/shared-types/dist          ./packages/shared-types/dist
+COPY --from=build --chown=memron:memron /app/packages/shared-types/package.json   ./packages/shared-types/
+COPY --from=build --chown=memron:memron /app/packages/analysis-engine/dist        ./packages/analysis-engine/dist
+COPY --from=build --chown=memron:memron /app/packages/analysis-engine/package.json ./packages/analysis-engine/
+COPY --from=build --chown=memron:memron /app/services/mcp-server/dist            ./services/mcp-server/dist
+COPY --from=build --chown=memron:memron /app/services/mcp-server/package.json    ./services/mcp-server/
+COPY --from=build --chown=memron:memron /app/services/mcp-server/public          ./services/mcp-server/public
+COPY --from=build --chown=memron:memron /app/node_modules                        ./node_modules
+COPY --from=build --chown=memron:memron /app/services/mcp-server/node_modules    ./services/mcp-server/node_modules
+COPY --from=build --chown=memron:memron /app/packages/shared-types/node_modules   ./packages/shared-types/node_modules
+COPY --from=build --chown=memron:memron /app/packages/analysis-engine/node_modules ./packages/analysis-engine/node_modules
 
 USER memron
 WORKDIR /app/services/mcp-server
