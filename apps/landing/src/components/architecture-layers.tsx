@@ -436,10 +436,22 @@ export function ArchitectureLayers() {
             align-items: center;
           }
         }
+
+        @media (max-width: 768px) {
+          .arch-header {
+            display: none !important;
+          }
+          .arch-sticky {
+            top: 2vh;
+          }
+          .arch-flex {
+            padding: 1.5rem 1rem;
+          }
+        }
       `}</style>
 
       <div className="arch-sticky">
-        <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
+        <div className="arch-header" style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
           <span className="features-badge" style={{ marginBottom: '1rem', display: 'inline-block' }}>7-Layer Architecture</span>
           <h2 className="features-title" style={{ margin: 0 }}>
             Context Intelligence &<br />

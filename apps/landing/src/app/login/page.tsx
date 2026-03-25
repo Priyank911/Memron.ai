@@ -1192,6 +1192,11 @@ export default function LoginPage() {
             width: 100% !important;
           }
         }
+        @media (max-width: 480px) {
+          .login-page > div:first-of-type {
+            padding: 2rem 1.5rem !important;
+          }
+        }
       `}</style>
       {/* Clerk CAPTCHA widget mount point */}
       <div id="clerk-captcha" style={{ position: 'fixed', bottom: 0, right: 0, zIndex: 9999 }} />

@@ -484,7 +484,7 @@ export default function HomePage() {
       </section >
 
       {/* Architecture Showcase Section */}
-      <section id="architecture" className="features-section" style={{ paddingTop: '5rem', paddingBottom: '3rem' }}>
+      <section id="architecture" className="features-section architecture-section-mobile" style={{ paddingTop: '5rem', paddingBottom: '3rem' }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem' }}>
           <ArchitectureLayers />
         </div>

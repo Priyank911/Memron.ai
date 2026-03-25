@@ -737,6 +737,9 @@ export default function SignUpPage() {
           .signup-page > div:nth-child(2) { display: none !important; }
           .signup-page > div:first-child { flex: none !important; min-height: 100vh !important; width: 100% !important; }
         }
+        @media (max-width: 480px) {
+          .signup-page > div:first-child { padding: 2rem 1.5rem !important; }
+        }
       `}</style>
       <div id="clerk-captcha" style={{ position: 'fixed', bottom: 0, right: 0, zIndex: 9999 }} />
     </div>
