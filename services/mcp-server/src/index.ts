@@ -37,7 +37,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { config } from './config.js';
-import { testConnection, warmPool, close as closeDb, query as dbQuery } from './db/client.js';
+import { testConnection, warmPool, close as closeDb, query as dbQuery, getPoolStats, logPoolStats } from './db/client.js';
 import { runMigrations } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
@@ -47,6 +47,7 @@ import * as tokens from './lib/tokens.js';
 import * as db from './db/queries.js';
 import * as collector from './lib/conversation-collector.js';
 import { recoverUningestedConversations } from './lib/auto-ingest.js';
+import { userCache } from './lib/user-cache.js';
 
 // ─────────────────────────────────────────────────────────────
 // Initialization
@@ -864,6 +865,48 @@ function sweepIdleSessions(): void {
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 // ─────────────────────────────────────────────────────────────
+// Index Verification (Performance Check)
+// ─────────────────────────────────────────────────────────────
+
+async function verifyIndexes(): Promise<void> {
+  try {
+    const result = await dbQuery(`
+      SELECT indexname, tablename
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname IN (
+          'idx_api_keys_hash',
+          'idx_api_keys_user',
+          'idx_users_clerk_id',
+          'idx_memories_user',
+          'idx_memories_bucket',
+          'idx_memories_pointer'
+        )
+    `);
+
+    const existingIndexes = result.rows.map((r: { indexname: string }) => r.indexname);
+    const requiredIndexes = [
+      'idx_api_keys_hash',
+      'idx_api_keys_user',
+      'idx_users_clerk_id',
+      'idx_memories_user',
+    ];
+
+    const missing = requiredIndexes.filter(idx => !existingIndexes.includes(idx));
+
+    if (missing.length > 0) {
+      console.warn(`[DB] Missing critical indexes: ${missing.join(', ')}`);
+      console.warn('[DB] Run migrations to create indexes for better performance');
+    } else {
+      console.log(`[DB] All critical indexes verified (${existingIndexes.length} found)`);
+    }
+  } catch (error) {
+    // Non-fatal - just log warning
+    console.warn('[DB] Could not verify indexes:', error instanceof Error ? error.message : 'Unknown error');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Server Bootstrap
 // ─────────────────────────────────────────────────────────────
 
@@ -877,6 +920,9 @@ async function main() {
   await runMigrations();
   await warmPool();
 
+  // Verify critical indexes exist for auth performance
+  await verifyIndexes();
+
   // Recover any conversations that were captured but not analyzed (crash recovery)
   await recoverUningestedConversations();
 
@@ -884,6 +930,9 @@ async function main() {
     console.error('[FATAL] Encryption self-test failed. Check ENCRYPTION_SECRET.');
     process.exit(1);
   }
+
+  // Log initial pool stats
+  logPoolStats();
 
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
 

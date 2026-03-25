@@ -65,7 +65,9 @@ export const config = {
     ssl: process.env.PG_SSL !== 'false'
       ? { rejectUnauthorized: process.env.PG_CA_CERT ? true : false, ca: process.env.PG_CA_CERT }
       : false,
-    maxConnections: parseInt(process.env.PG_MAX_CONNECTIONS || (isRailway ? '10' : '20'), 10),
+    maxConnections: parseInt(process.env.PG_MAX_CONNECTIONS || (isRailway ? '10' : '15'), 10),
+    idleTimeout: parseInt(process.env.PG_IDLE_TIMEOUT || '20000', 10),
+    connectionTimeout: parseInt(process.env.PG_CONNECTION_TIMEOUT || '10000', 10),
   },
 
   /** AES-256-GCM encryption for memory content */

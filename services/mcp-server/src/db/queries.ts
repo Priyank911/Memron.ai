@@ -11,6 +11,7 @@
  * - User / profile lookups
  */
 import { query, transaction } from './client.js';
+import { userCache, type CachedUser } from '../lib/user-cache.js';
 
 // ─────────────────────────────────────────────────────────────
 // Memory Operations
@@ -653,7 +654,8 @@ export async function insertRefreshToken(params: {
   }
   await query(
     `INSERT INTO mcp_refresh_tokens (token_hash, client_id, user_id, scopes, expires_at)
-     VALUES ($1, $2, $3, $4, NOW() + make_interval(secs => $5))`,
+     VALUES ($1, $2, $3, $4, NOW() + make_interval(secs => $5))
+     ON CONFLICT (token_hash) DO NOTHING`,
     [params.tokenHash, params.clientId, params.userId, params.scopes, ttl],
   );
 }
@@ -719,31 +721,128 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
   orgId: number | null;
   apiKeyId: number;
 } | null> {
-  try {
-    const result = await query(
-      `SELECT u.*, ak.id as api_key_id, ak.scopes as key_scopes, ak.org_id as key_org_id
-       FROM api_keys ak
-       JOIN users u ON ak.user_id = u.id
-       WHERE ak.key_hash = $1 AND ak.is_active = true AND u.is_active = true`,
-      [keyHash],
-    );
-    if (!result.rows[0]) return null;
-    const row = result.rows[0];
+  // Check cache first (5-minute TTL)
+  const cached = userCache.get(keyHash);
+  if (cached) {
+    console.log(`[Auth] Cache HIT for key ${keyHash.slice(0, 8)}...`);
     return {
-      user: row as UserRow,
-      keyScopes: row.key_scopes ?? ['memory:read', 'memory:write'],
-      orgId: row.key_org_id ?? null,
-      apiKeyId: row.api_key_id,
+      user: {
+        id: cached.id,
+        universal_id: cached.universal_id,
+        clerk_id: cached.clerk_id,
+        email: cached.email,
+        first_name: cached.first_name,
+        last_name: cached.last_name,
+        full_name: cached.full_name,
+        image_url: cached.image_url,
+        is_active: cached.is_active,
+      } as UserRow,
+      keyScopes: cached.key_scopes,
+      orgId: cached.key_org_id,
+      apiKeyId: cached.api_key_id,
     };
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : String(error);
-    // If tables don't exist yet, log a warning instead of crashing
-    if (msg.includes('does not exist')) {
-      console.warn(`[DB] getUserByApiKeyHash: table missing — ${msg}`);
-      return null;
-    }
-    throw error;
   }
+
+  // Thundering herd protection: if request is already pending, wait for it
+  const pending = userCache.getPending(keyHash);
+  if (pending) {
+    console.log(`[Auth] Waiting for pending request for key ${keyHash.slice(0, 8)}...`);
+    const result = await pending;
+    if (result) {
+      return {
+        user: {
+          id: result.id,
+          universal_id: result.universal_id,
+          clerk_id: result.clerk_id,
+          email: result.email,
+          first_name: result.first_name,
+          last_name: result.last_name,
+          full_name: result.full_name,
+          image_url: result.image_url,
+          is_active: result.is_active,
+        } as UserRow,
+        keyScopes: result.key_scopes,
+        orgId: result.key_org_id,
+        apiKeyId: result.api_key_id,
+      };
+    }
+    return null;
+  }
+
+  // Cache miss - query database (with thundering herd protection)
+  console.log(`[Auth] Cache MISS for key ${keyHash.slice(0, 8)}... querying database`);
+
+  const fetchPromise = (async (): Promise<CachedUser | null> => {
+    try {
+      const result = await query(
+        `SELECT u.*, ak.id as api_key_id, ak.scopes as key_scopes, ak.org_id as key_org_id
+         FROM api_keys ak
+         JOIN users u ON ak.user_id = u.id
+         WHERE ak.key_hash = $1 AND ak.is_active = true AND u.is_active = true`,
+        [keyHash],
+      );
+
+      if (!result.rows[0]) return null;
+      const row = result.rows[0];
+
+      const userData: CachedUser = {
+        id: row.id,
+        universal_id: row.universal_id,
+        clerk_id: row.clerk_id,
+        email: row.email,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        full_name: row.full_name,
+        image_url: row.image_url,
+        is_active: row.is_active,
+        api_key_id: row.api_key_id,
+        key_scopes: row.key_scopes ?? ['memory:read', 'memory:write'],
+        key_org_id: row.key_org_id ?? null,
+      };
+
+      // Store in cache for future requests
+      userCache.set(keyHash, userData);
+      console.log(`[Auth] Cached user ${row.email} for key ${keyHash.slice(0, 8)}...`);
+
+      return userData;
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // If tables don't exist yet, log a warning instead of crashing
+      if (msg.includes('does not exist')) {
+        console.warn(`[DB] getUserByApiKeyHash: table missing — ${msg}`);
+        return null;
+      }
+      userCache.recordError();
+      throw error;
+    } finally {
+      // Always clear pending request
+      userCache.clearPending(keyHash);
+    }
+  })();
+
+  // Register as pending
+  userCache.setPending(keyHash, fetchPromise);
+
+  const userData = await fetchPromise;
+  if (userData) {
+    return {
+      user: {
+        id: userData.id,
+        universal_id: userData.universal_id,
+        clerk_id: userData.clerk_id,
+        email: userData.email,
+        first_name: userData.first_name,
+        last_name: userData.last_name,
+        full_name: userData.full_name,
+        image_url: userData.image_url,
+        is_active: userData.is_active,
+      } as UserRow,
+      keyScopes: userData.key_scopes,
+      orgId: userData.key_org_id,
+      apiKeyId: userData.api_key_id,
+    };
+  }
+  return null;
 }
 
 export async function getOrgForUser(userId: number): Promise<{

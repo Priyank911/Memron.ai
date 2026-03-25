@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import { VideoCarousel } from '@/components/journey-carousel';
 import { FlowchartCard } from '@/components/flowchart-card';
+import { ArchitectureLayers } from '@/components/architecture-layers';
 
 export default function HomePage() {
   return (
@@ -161,102 +162,154 @@ export default function HomePage() {
               </ul>
             </div>
             <div className="feature-box-visual">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="100%" height="100%" style={{ maxWidth: '360px', margin: '0 auto' }}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" width="100%" height="100%" style={{ maxWidth: '600px', margin: '0 auto', display: 'block' }}>
                 <defs>
                   <style>{`
-                    .ah-svg {
-                      --ah-bg: transparent;
-                      --ah-surface: #1a1a2e;
-                      --ah-border: #2a2a40;
-                      --ah-green: #22c55e;
-                      --ah-red: #ef4444;
-                      --ah-purple: #a78bfa;
-                      --ah-text: #e5e7eb;
-                      --ah-muted: #6b7280;
-                      --ah-check-bg: rgba(34, 197, 94, 0.1);
-                      --ah-warn-bg: rgba(239, 68, 68, 0.1);
+                    .ah-new-svg {
+                      --bg-card: #151921;
+                      --border-card: #272E38;
+                      --text-primary: #F3F4F6;
+                      --text-secondary: #8B949E;
+                      --accent-red: #F87171;
+                      --accent-cyan: #22D3EE;
+                      --accent-blue: #60A5FA;
+                      --accent-green: #34D399;
+                      --wire-color: #3B82F6;
                     }
-                    [data-theme="light"] .ah-svg {
-                      --ah-surface: #f8f9fa;
-                      --ah-border: #e5e7eb;
-                      --ah-text: #374151;
-                      --ah-muted: #9ca3af;
-                      --ah-check-bg: rgba(34, 197, 94, 0.08);
-                      --ah-warn-bg: rgba(239, 68, 68, 0.08);
+                    [data-theme="light"] .ah-new-svg {
+                      --bg-card: #F9FAFB;
+                      --border-card: #E5E7EB;
+                      --text-primary: #111827;
+                      --text-secondary: #4B5563;
+                      --wire-color: #93C5FD;
                     }
-                    .ah-svg text {
-                      font-family: system-ui, -apple-system, sans-serif;
-                      font-size: 11px;
-                      font-weight: 500;
+                    .ah-title { fill: var(--text-primary); font-size: 16px; font-weight: 700; letter-spacing: -0.2px; font-family: system-ui, sans-serif; }
+                    .ah-body-text { fill: var(--text-secondary); font-size: 13px; font-weight: 400; letter-spacing: 0.1px; font-family: system-ui, sans-serif; }
+                    .ah-tag-text { font-size: 11px; font-weight: 600; letter-spacing: 0.2px; font-family: system-ui, sans-serif; }
+
+                    .ah-core-aura {
+                      animation: ah-breatheAura 5s ease-in-out infinite alternate;
+                      transform-origin: center;
                     }
-                    @keyframes ahCheckIn {
-                      0%, 10% { opacity: 0; transform: scale(0.8); }
-                      15%, 85% { opacity: 1; transform: scale(1); }
-                      90%, 100% { opacity: 0; transform: scale(0.8); }
+                    @keyframes ah-breatheAura {
+                      0% { transform: scale(0.9); opacity: 0.7; }
+                      100% { transform: scale(1.1); opacity: 1; }
                     }
-                    @keyframes ahStrike {
-                      0%, 30% { opacity: 0; transform: scaleX(0); }
-                      35%, 85% { opacity: 1; transform: scaleX(1); }
-                      90%, 100% { opacity: 0; transform: scaleX(0); }
+
+                    .ah-ui-card {
+                      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), stroke 0.3s ease;
+                      transform-origin: center;
+                      cursor: pointer;
                     }
-                    @keyframes ahPulse {
-                      0%, 100% { opacity: 0.4; }
-                      50% { opacity: 1; }
+                    .ah-ui-card:hover {
+                      transform: translateY(-4px);
+                      stroke: #4B5563;
                     }
-                    .ah-svg .ah-row-1 { animation: ahCheckIn 6s infinite ease-in-out; }
-                    .ah-svg .ah-row-2 { animation: ahCheckIn 6s infinite ease-in-out 0.8s; }
-                    .ah-svg .ah-row-3 { animation: ahCheckIn 6s infinite ease-in-out 1.6s; }
-                    .ah-svg .ah-strike { transform-origin: left center; animation: ahStrike 6s infinite ease-in-out 1.6s; }
-                    .ah-svg .ah-scan { animation: ahPulse 2s infinite ease-in-out; }
+                    [data-theme="light"] .ah-ui-card:hover { stroke: #9CA3AF; }
+
+                    .ah-data-stream {
+                      fill: none;
+                      stroke: #FFFFFF;
+                      strokeWidth: 2;
+                      strokeLinecap: round;
+                      strokeDasharray: 4 40;
+                      animation: ah-flowStream 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+                    }
+                    [data-theme="light"] .ah-data-stream { stroke: #3B82F6; }
+
+                    .ah-data-stream-delay {
+                      fill: none;
+                      stroke: #FFFFFF;
+                      strokeWidth: 2;
+                      strokeLinecap: round;
+                      strokeDasharray: 4 40;
+                      animation: ah-flowStream 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite 1.25s;
+                    }
+                    [data-theme="light"] .ah-data-stream-delay { stroke: #3B82F6; }
+
+                    @keyframes ah-flowStream {
+                      0% { stroke-dashoffset: 84; opacity: 0; }
+                      20% { opacity: 1; }
+                      80% { opacity: 1; }
+                      100% { stroke-dashoffset: 0; opacity: 0; }
+                    }
                   `}</style>
+                  <path id="ah-curve-left" d="M 460 300 C 460 360, 310 330, 310 390" pathLength="84" />
+                  <path id="ah-curve-right" d="M 540 300 C 540 360, 690 330, 690 390" pathLength="84" />
                 </defs>
-                <g className="ah-svg">
-                  {/* Container */}
-                  <rect x="20" y="15" width="360" height="210" rx="12" fill="var(--ah-surface)" stroke="var(--ah-border)" strokeWidth="1" />
 
-                  {/* Header */}
-                  <text x="40" y="42" fill="var(--ah-purple)" fontSize="10" fontWeight="700" letterSpacing="1.5">VERIFICATION ENGINE</text>
-                  <rect x="40" y="48" width="30" height="3" rx="1.5" fill="var(--ah-purple)" />
+                <g className="ah-new-svg">
+                  {/* The Intense Central Glow */}
+                  <circle cx="500" cy="280" r="350" fill="url(#ah-blue-glow)" className="ah-core-aura" />
 
-                  {/* Scanning line */}
-                  <rect x="20" y="55" width="360" height="2" fill="var(--ah-purple)" opacity="0.15" className="ah-scan" />
-
-                  {/* Row 1 - Verified */}
-                  <g className="ah-row-1" style={{ transformOrigin: '200px 85px' }}>
-                    <rect x="40" y="68" width="320" height="34" rx="8" fill="var(--ah-check-bg)" />
-                    <circle cx="60" cy="85" r="8" fill="none" stroke="var(--ah-green)" strokeWidth="1.5" />
-                    <path d="M56 85 l3 3 l6 -6" fill="none" stroke="var(--ah-green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <text x="78" y="83" fill="var(--ah-text)" fontSize="11" fontWeight="600">Uses async/await pattern</text>
-                    <text x="78" y="95" fill="var(--ah-muted)" fontSize="9">Verified — Source: conversation #42</text>
-                    <text x="340" y="88" fill="var(--ah-green)" fontSize="10" fontWeight="700" textAnchor="end">98%</text>
+                  {/* Static faded wires */}
+                  <g fill="none" stroke="var(--wire-color)" strokeWidth="1.5" strokeLinecap="round" opacity="0.6">
+                    <use href="#ah-curve-left" />
+                    <use href="#ah-curve-right" />
                   </g>
 
-                  {/* Row 2 - Verified */}
-                  <g className="ah-row-2" style={{ transformOrigin: '200px 125px' }}>
-                    <rect x="40" y="108" width="320" height="34" rx="8" fill="var(--ah-check-bg)" />
-                    <circle cx="60" cy="125" r="8" fill="none" stroke="var(--ah-green)" strokeWidth="1.5" />
-                    <path d="M56 125 l3 3 l6 -6" fill="none" stroke="var(--ah-green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <text x="78" y="123" fill="var(--ah-text)" fontSize="11" fontWeight="600">Prefers TypeScript strict mode</text>
-                    <text x="78" y="135" fill="var(--ah-muted)" fontSize="9">Verified — Source: preference log</text>
-                    <text x="340" y="128" fill="var(--ah-green)" fontSize="10" fontWeight="700" textAnchor="end">95%</text>
+                  {/* Animated glowing data particles */}
+                  <use href="#ah-curve-left" className="ah-data-stream" />
+                  <use href="#ah-curve-right" className="ah-data-stream-delay" />
+
+                  {/* TOP NODE */}
+                  <g className="ah-ui-card" filter="url(#ah-soft-shadow)">
+                    <rect x="310" y="110" width="380" height="180" rx="16" fill="var(--bg-card)" stroke="var(--border-card)" strokeWidth="1.5" />
+
+                    <g transform="translate(309, 130)">
+                      <text x="22" y="10" fill="var(--accent-red)" className="ah-tag-text">Automatic Pipeline</text>
+                    </g>
+
+                    <text x="330" y="165" className="ah-title">Anti-Hallucination Guard</text>
+                    <text x="330" y="190" className="ah-body-text">
+                      <tspan x="330" dy="0">Grounds every AI response in verified memory,</tspan>
+                      <tspan x="330" dy="20">preventing fabricated answers and ensuring</tspan>
+                      <tspan x="330" dy="20">strict factual consistency.</tspan>
+                    </text>
+
+                    <g transform="translate(330, 260)">
+                      <path d="M 6 0 L 7.5 4.5 L 12 6 L 7.5 7.5 L 6 12 L 4.5 7.5 L 0 6 L 4.5 4.5 Z" fill="var(--accent-cyan)" />
+                      <text x="18" y="9" fill="var(--accent-cyan)" className="ah-tag-text">Fact-Checking Pipeline</text>
+                    </g>
+
+                    <text x="670" y="269" fill="var(--text-secondary)" className="ah-tag-text" textAnchor="end">Active Mode</text>
                   </g>
 
-                  {/* Row 3 - Rejected (hallucination caught) */}
-                  <g className="ah-row-3" style={{ transformOrigin: '200px 165px' }}>
-                    <rect x="40" y="148" width="320" height="34" rx="8" fill="var(--ah-warn-bg)" />
-                    <circle cx="60" cy="165" r="8" fill="none" stroke="var(--ah-red)" strokeWidth="1.5" />
-                    <line x1="55" y1="160" x2="65" y2="170" stroke="var(--ah-red)" strokeWidth="2" strokeLinecap="round" />
-                    <line x1="65" y1="160" x2="55" y2="170" stroke="var(--ah-red)" strokeWidth="2" strokeLinecap="round" />
-                    <text x="78" y="163" fill="var(--ah-text)" fontSize="11" fontWeight="600" opacity="0.5">Uses Redux for state mgmt</text>
-                    {/* <line x1="78" y1="162" x2="230" y2="162" stroke="var(--ah-red)" strokeWidth="1" className="ah-strike" /> */}
-                    <text x="78" y="175" fill="var(--ah-red)" fontSize="9" fontWeight="600">Rejected — No matching memory</text>
-                    <text x="340" y="168" fill="var(--ah-red)" fontSize="10" fontWeight="700" textAnchor="end">12%</text>
+                  {/* BOTTOM LEFT NODE */}
+                  <g className="ah-ui-card" filter="url(#ah-soft-shadow)">
+                    <rect x="150" y="390" width="320" height="150" rx="12" fill="var(--bg-card)" stroke="var(--border-card)" strokeWidth="1.5" />
+
+                    <text x="170" y="425" className="ah-title" style={{ fontSize: '14px' }}>Source-verified responses</text>
+                    <text x="170" y="450" className="ah-body-text">
+                      <tspan x="170" dy="0">Cross-references all generated</tspan>
+                      <tspan x="170" dy="20">claims directly against extracted</tspan>
+                      <tspan x="170" dy="20">facts from the memory timeline.</tspan>
+                    </text>
+
+                    <text x="170" y="515" fill="var(--accent-blue)" className="ah-tag-text">Validation</text>
+
+                    <g transform="translate(450, 505)">
+                      <text x="5" y="10" fill="var(--accent-green)" className="ah-tag-text" textAnchor="end">Verified</text>
+                    </g>
                   </g>
 
-                  {/* Bottom status */}
-                  <rect x="40" y="192" width="140" height="22" rx="6" fill="var(--ah-check-bg)" />
-                  <circle cx="53" cy="203" r="4" fill="var(--ah-green)" />
-                  <text x="62" y="207" fill="var(--ah-green)" fontSize="10" fontWeight="600">2 verified · 1 blocked</text>
+                  {/* BOTTOM RIGHT NODE */}
+                  <g className="ah-ui-card" filter="url(#ah-soft-shadow)">
+                    <rect x="530" y="390" width="320" height="150" rx="12" fill="var(--bg-card)" stroke="var(--border-card)" strokeWidth="1.5" />
+
+                    <text x="550" y="425" className="ah-title" style={{ fontSize: '14px' }}>Confidence scoring per claim</text>
+                    <text x="550" y="450" className="ah-body-text">
+                      <tspan x="550" dy="0">Calculates deterministic precision</tspan>
+                      <tspan x="550" dy="20">matches for each specific claim</tspan>
+                      <tspan x="550" dy="20">before passing the final output.</tspan>
+                    </text>
+
+                    <text x="550" y="515" fill="var(--accent-blue)" className="ah-tag-text">Scoring</text>
+
+                    <g transform="translate(830, 505)">
+                      <text x="0" y="10" fill="var(--accent-green)" className="ah-tag-text" textAnchor="end">High Match</text>
+                    </g>
+                  </g>
                 </g>
               </svg>
             </div>
@@ -276,72 +329,153 @@ export default function HomePage() {
               </ul>
             </div>
             <div className="feature-box-visual">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="100%" height="100%" style={{ maxWidth: '360px', margin: '0 auto' }}>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" width="100%" height="100%" style={{ maxWidth: '520px', margin: '0 auto', display: 'block', overflow: 'visible' }}>
                 <defs>
+                  {/* Dot grid background pattern */}
+                  <pattern id="mcp-dot-grid" width="22" height="22" patternUnits="userSpaceOnUse">
+                    <circle cx="1.5" cy="1.5" r="1" className="mcp3-grid-dot" />
+                  </pattern>
+                  {/* Blue gradient for Memron Engine */}
+                  <linearGradient id="mcp3-blue-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#60A5FA" />
+                    <stop offset="100%" stopColor="#2563EB" />
+                  </linearGradient>
+                  {/* Soft shadow for nodes */}
+                  <filter id="mcp3-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="6" stdDeviation="12" floodColor="#000000" floodOpacity="0.08" />
+                  </filter>
+                  {/* Particle glow */}
+                  <filter id="mcp3-pglow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="2" result="blur" />
+                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                  </filter>
+                  {/* Branch wires: left nodes → MCP center */}
+                  <path id="mcp3-p1" d="M175 88 C 265 88, 265 216, 360 216" />
+                  <path id="mcp3-p2" d="M175 178 C 265 178, 265 216, 360 216" />
+                  <path id="mcp3-p3" d="M175 268 C 265 268, 265 216, 360 216" />
+                  <path id="mcp3-p4" d="M175 358 C 265 358, 265 216, 360 216" />
+                  {/* Main trunk: MCP → Memron Engine */}
+                  <path id="mcp3-main" d="M418 216 L545 216" />
                   <style>{`
-                    .mcp-svg {
-                      --mcp-surface: #1a1a2e;
-                      --mcp-border: #2a2a40;
-                      --mcp-fg: #e5e7eb;
-                      --mcp-muted: #6b7280;
-                      --mcp-line: #3f3f5e;
-                      --mcp-accent: #a78bfa;
+                    .mcp3-svg {
+                      --mcp3-bg: transparent;
+                      --mcp3-node-bg: rgba(255,255,255,0.04);
+                      --mcp3-node-border: rgba(255,255,255,0.08);
+                      --mcp3-wire: rgba(255,255,255,0.10);
+                      --mcp3-text: rgba(255,255,255,0.8);
+                      --mcp3-sub: rgba(255,255,255,0.38);
+                      --mcp3-particle: #3B82F6;
                     }
-                    [data-theme="light"] .mcp-svg {
-                      --mcp-surface: #f8f9fa;
-                      --mcp-border: #e5e7eb;
-                      --mcp-fg: #374151;
-                      --mcp-muted: #9ca3af;
-                      --mcp-line: #d1d5db;
-                      --mcp-accent: #8b5cf6;
+                    [data-theme="light"] .mcp3-svg {
+                      --mcp3-node-bg: #F3F4F6;
+                      --mcp3-node-border: #E5E7EB;
+                      --mcp3-wire: #D1D5DB;
+                      --mcp3-text: #1F2937;
+                      --mcp3-sub: #6B7280;
+                      --mcp3-particle: #3B82F6;
                     }
-                    .mcp-svg text {
-                      font-family: system-ui, sans-serif;
-                      font-size: 11px;
-                      font-weight: 600;
-                      fill: var(--mcp-fg);
+                    .mcp3-grid-dot { fill: rgba(255,255,255,0.04); }
+                    [data-theme="light"] .mcp3-grid-dot { fill: #E5E7EB; }
+                    @keyframes mcp3GlowPulse {
+                      0% { filter: drop-shadow(0 0 14px rgba(59,130,246,0.35)); }
+                      100% { filter: drop-shadow(0 0 32px rgba(59,130,246,0.65)); }
                     }
-                    .mcp-svg .mcp-label {
-                      font-size: 9px;
-                      font-weight: 700;
-                      fill: var(--mcp-muted);
-                      letter-spacing: 1px;
-                      text-transform: uppercase;
-                    }
-                    @keyframes mcpFlow { from { stroke-dashoffset: 12; } to { stroke-dashoffset: 0; } }
-                    .mcp-svg .mcp-flow { stroke-dasharray: 6 6; animation: mcpFlow 1s linear infinite; }
-                    @keyframes mcpPulse1 { 0%, 15% { transform: scale(1); } 20% { transform: scale(1.08); } 25%, 100% { transform: scale(1); } }
-                    @keyframes mcpPulse2 { 0%, 45% { transform: scale(1); } 50% { transform: scale(1.08); } 55%, 100% { transform: scale(1); } }
-                    @keyframes mcpPulse3 { 0%, 75% { transform: scale(1); } 80% { transform: scale(1.08); } 85%, 100% { transform: scale(1); } }
-                    .mcp-svg .mcp-n1 { transform-origin: 60px 100px; animation: mcpPulse1 4s infinite linear; }
-                    .mcp-svg .mcp-n2 { transform-origin: 200px 100px; animation: mcpPulse2 4s infinite linear; }
-                    .mcp-svg .mcp-n3 { transform-origin: 340px 100px; animation: mcpPulse3 4s infinite linear; }
+                    .mcp3-engine-glow { animation: mcp3GlowPulse 4s ease-in-out infinite alternate; }
                   `}</style>
                 </defs>
-                <g className="mcp-svg">
-                  <line x1="110" y1="100" x2="150" y2="100" stroke="var(--mcp-line)" strokeWidth="2" className="mcp-flow" />
-                  <line x1="250" y1="100" x2="290" y2="100" stroke="var(--mcp-line)" strokeWidth="2" className="mcp-flow" />
 
-                  {/* Agent A */}
-                  <g className="mcp-n1">
-                    <rect x="20" y="75" width="80" height="50" rx="12" fill="var(--mcp-surface)" stroke="var(--mcp-border)" strokeWidth="1.5" />
-                    <circle cx="38" cy="100" r="4" fill="#22c55e" />
-                    <text x="68" y="104" textAnchor="middle">Agent A</text>
+                <g className="mcp3-svg">
+                  {/* Dot grid background */}
+                  <rect width="100%" height="100%" fill="url(#mcp-dot-grid)" rx="12" />
+
+                  {/* Title */}
+                  <text x="360" y="34" textAnchor="middle" style={{ fontSize: '16px', fontWeight: 700, fill: 'var(--mcp3-text)', fontFamily: 'system-ui,sans-serif', letterSpacing: '-0.3px' }}>Native MCP Architecture</text>
+                  <text x="360" y="54" textAnchor="middle" style={{ fontSize: '9.5px', fontWeight: 500, fill: 'var(--mcp3-sub)', fontFamily: 'system-ui,sans-serif' }}>Standardized memory context synced across distributed environments.</text>
+
+                  {/* ── Static wires ── */}
+                  <g fill="none" stroke="var(--mcp3-wire)" strokeWidth="1.5" strokeLinecap="round">
+                    <use href="#mcp3-p1" />
+                    <use href="#mcp3-p2" />
+                    <use href="#mcp3-p3" />
+                    <use href="#mcp3-p4" />
+                    <use href="#mcp3-main" strokeWidth="2.5" />
                   </g>
 
-                  {/* MCP Hub */}
-                  <g className="mcp-n2">
-                    <polygon points="200,60 250,100 200,140 150,100" fill="var(--mcp-surface)" stroke="var(--mcp-accent)" strokeWidth="2" />
-                    <text x="200" y="104" textAnchor="middle" fill="var(--mcp-accent)">MCP</text>
+                  {/* ── Animated data particles ── */}
+                  <g fill="var(--mcp3-particle)" filter="url(#mcp3-pglow)">
+                    <circle r="2">
+                      <animateMotion dur="2.5s" repeatCount="indefinite" begin="0s"><mpath href="#mcp3-p1" /></animateMotion>
+                      <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="2.5s" repeatCount="indefinite" begin="0s" />
+                    </circle>
+                    <circle r="2">
+                      <animateMotion dur="2.2s" repeatCount="indefinite" begin="0.8s"><mpath href="#mcp3-p2" /></animateMotion>
+                      <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="2.2s" repeatCount="indefinite" begin="0.8s" />
+                    </circle>
+                    <circle r="2">
+                      <animateMotion dur="2.8s" repeatCount="indefinite" begin="0.4s"><mpath href="#mcp3-p3" /></animateMotion>
+                      <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="2.8s" repeatCount="indefinite" begin="0.4s" />
+                    </circle>
+                    <circle r="2">
+                      <animateMotion dur="2.6s" repeatCount="indefinite" begin="1.2s"><mpath href="#mcp3-p4" /></animateMotion>
+                      <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="2.6s" repeatCount="indefinite" begin="1.2s" />
+                    </circle>
+                    {/* Dense trunk particles */}
+                    <circle r="3">
+                      <animateMotion dur="1.2s" repeatCount="indefinite" begin="0s"><mpath href="#mcp3-main" /></animateMotion>
+                    </circle>
+                    <circle r="3">
+                      <animateMotion dur="1.2s" repeatCount="indefinite" begin="0.4s"><mpath href="#mcp3-main" /></animateMotion>
+                    </circle>
+                    <circle r="3">
+                      <animateMotion dur="1.2s" repeatCount="indefinite" begin="0.8s"><mpath href="#mcp3-main" /></animateMotion>
+                    </circle>
                   </g>
-                  <text x="200" y="160" textAnchor="middle" className="mcp-label">Protocol</text>
 
-                  {/* Agent B */}
-                  <g className="mcp-n3">
-                    <rect x="300" y="75" width="80" height="50" rx="12" fill="var(--mcp-surface)" stroke="var(--mcp-border)" strokeWidth="1.5" />
-                    <circle cx="318" cy="100" r="4" fill="#3b82f6" />
-                    <text x="348" y="104" textAnchor="middle">Agent B</text>
+                  {/* ── LEFT NODES ── */}
+
+                  {/* Node 1: OpenAI (AI Models) */}
+                  <text x="100" y="92" textAnchor="end" style={{ fontSize: '10px', fontWeight: 600, fill: 'var(--mcp3-sub)', letterSpacing: '0.4px', fontFamily: 'system-ui,sans-serif' }}>OpenAI</text>
+                  <g filter="url(#mcp3-shadow)">
+                    <rect x="115" y="58" width="60" height="60" rx="15" fill="var(--mcp3-node-bg)" stroke="var(--mcp3-node-border)" strokeWidth="1" />
+                    <image href="/icons/openai.svg" x="127" y="70" width="36" height="36" />
                   </g>
+
+                  {/* Node 2: Cursor (Web / Apps) */}
+                  <text x="100" y="182" textAnchor="end" style={{ fontSize: '10px', fontWeight: 600, fill: 'var(--mcp3-sub)', letterSpacing: '0.4px', fontFamily: 'system-ui,sans-serif' }}>Cursor.ai</text>
+                  <g filter="url(#mcp3-shadow)">
+                    <rect x="115" y="148" width="60" height="60" rx="15" fill="var(--mcp3-node-bg)" stroke="var(--mcp3-node-border)" strokeWidth="1" />
+                    <image href="/icons/cursor-ai.png" x="127" y="160" width="36" height="36" />
+                  </g>
+
+                  {/* Node 3: Cline (IDE / Tools) */}
+                  <text x="100" y="272" textAnchor="end" style={{ fontSize: '10px', fontWeight: 600, fill: 'var(--mcp3-sub)', letterSpacing: '0.4px', fontFamily: 'system-ui,sans-serif' }}>Claude.ai</text>
+                  <g filter="url(#mcp3-shadow)">
+                    <rect x="115" y="238" width="60" height="60" rx="15" fill="var(--mcp3-node-bg)" stroke="var(--mcp3-node-border)" strokeWidth="1" />
+                    <image href="/icons/claude-ai.png" x="127" y="250" width="36" height="36" />
+                  </g>
+
+                  {/* Node 4: VS Code (Edge Nodes) */}
+                  <text x="100" y="362" textAnchor="end" style={{ fontSize: '10px', fontWeight: 600, fill: 'var(--mcp3-sub)', letterSpacing: '0.4px', fontFamily: 'system-ui,sans-serif' }}>Copilot</text>
+                  <g filter="url(#mcp3-shadow)">
+                    <rect x="115" y="328" width="60" height="60" rx="15" fill="var(--mcp3-node-bg)" stroke="var(--mcp3-node-border)" strokeWidth="1" />
+                    <image href="/icons/github-copilot.png" x="127" y="340" width="36" height="36" />
+                  </g>
+
+                  {/* ── CENTER NODE: MCP Server ── */}
+                  <g filter="url(#mcp3-shadow)">
+                    <rect x="360" y="186" width="60" height="60" rx="15" fill="var(--mcp3-node-bg)" stroke="var(--mcp3-node-border)" strokeWidth="1" />
+                    <image href="/icons/mcp.svg" x="372" y="198" width="36" height="36" />
+                  </g>
+                  <text x="390" y="270" textAnchor="middle" style={{ fontSize: '10px', fontWeight: 600, fill: 'var(--mcp3-sub)', letterSpacing: '0.4px', fontFamily: 'system-ui,sans-serif' }}>MCP Server</text>
+
+                  {/* ── RIGHT NODE: Memron Memory Engine ── */}
+                  <g className="mcp3-engine-glow">
+                    <rect x="545" y="156" width="120" height="120" rx="28" fill="url(#mcp3-blue-grad)" />
+                    <image href="/logo_w.png" x="565" y="176" width="80" height="80" style={{ opacity: 0.95 }} />
+                    {/* Glass shine overlay */}
+
+                  </g>
+                  <text x="605" y="304" textAnchor="middle" style={{ fontSize: '10px', fontWeight: 600, fill: 'var(--mcp3-text)', letterSpacing: '0.3px', fontFamily: 'system-ui,sans-serif' }}>Memron Memory Engine</text>
                 </g>
               </svg>
             </div>
@@ -349,219 +483,12 @@ export default function HomePage() {
         </div >
       </section >
 
-      {/* Research Section - Compact: text left, SVG right */}
-      < section id="blog" className="research-section-compact" >
-        <div className="research-compact-inner">
-          <div className="research-compact-text">
-            <h3 className="research-title">Memory Compression Engine</h3>
-            <p className="research-desc">
-              Intelligently compresses conversation context into optimized memory representations,
-              reducing token overhead while preserving technical fidelity.
-            </p>
-            <ul className="research-list">
-              <li>
-                <span className="research-status active"></span>
-                <span>Extracts code patterns and API preferences</span>
-              </li>
-              <li>
-                <span className="research-status active"></span>
-                <span>Compresses context by up to 80%</span>
-              </li>
-              <li>
-                <span className="research-status active"></span>
-                <span>Redundant cloud storage</span>
-              </li>
-            </ul>
-          </div>
-          <div className="research-compact-visual">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 375" className="compression-pipeline-svg" style={{ width: '100%', height: 'auto', display: 'block' }}>
-              <defs>
-                <filter id="cpp-card-shadow" x="-10%" y="-10%" width="120%" height="120%">
-                  <feDropShadow dx="0" dy="6" stdDeviation="10" floodColor="var(--cpp-shadow-color)" floodOpacity="var(--cpp-shadow-op)" />
-                </filter>
-                <filter id="cpp-panel-shadow" x="-5%" y="-5%" width="110%" height="110%">
-                  <feDropShadow dx="0" dy="16" stdDeviation="24" floodColor="var(--cpp-shadow-color)" floodOpacity="var(--cpp-shadow-op-heavy)" />
-                </filter>
-                <linearGradient id="cpp-flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="var(--cpp-accent-blue)" stopOpacity="0.2" />
-                  <stop offset="50%" stopColor="var(--cpp-accent-purple)" />
-                  <stop offset="100%" stopColor="var(--cpp-accent-green)" stopOpacity="0.2" />
-                </linearGradient>
-                <linearGradient id="cpp-scan-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="var(--cpp-accent-purple)" stopOpacity="0" />
-                  <stop offset="50%" stopColor="var(--cpp-accent-purple)" stopOpacity="0.5" />
-                  <stop offset="100%" stopColor="var(--cpp-accent-purple)" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              <style>{`
-                .compression-pipeline-svg {
-                  --cpp-panel-bg: rgba(15, 15, 20, 0.6);
-                  --cpp-panel-border: #2a2a35;
-                  --cpp-card-bg: #181820;
-                  --cpp-card-border: #242430;
-                  --cpp-text-main: #f8fafc;
-                  --cpp-text-muted: #94a3b8;
-                  --cpp-text-mono: #cbd5e1;
-                  --cpp-accent-purple: #a78bfa;
-                  --cpp-accent-purple-light: rgba(167, 139, 250, 0.15);
-                  --cpp-accent-green: #34d399;
-                  --cpp-pill-bg: rgba(52, 211, 153, 0.15);
-                  --cpp-accent-blue: #60a5fa;
-                  --cpp-bar-bg: #334155;
-                  --cpp-shadow-color: #000;
-                  --cpp-shadow-op: 0.3;
-                  --cpp-shadow-op-heavy: 0.6;
-                  --cpp-font-sans: system-ui, sans-serif;
-                  --cpp-font-mono: ui-monospace, monospace;
-                }
-                [data-theme="light"] .compression-pipeline-svg {
-                  --cpp-panel-bg: rgba(255, 255, 255, 0.6);
-                  --cpp-panel-border: #e5e7eb;
-                  --cpp-card-bg: #ffffff;
-                  --cpp-card-border: #f1f5f9;
-                  --cpp-text-main: #0f172a;
-                  --cpp-text-muted: #64748b;
-                  --cpp-text-mono: #475569;
-                  --cpp-accent-purple: #8b5cf6;
-                  --cpp-accent-purple-light: rgba(139, 92, 246, 0.1);
-                  --cpp-accent-green: #10b981;
-                  --cpp-pill-bg: rgba(16, 185, 129, 0.1);
-                  --cpp-accent-blue: #3b82f6;
-                  --cpp-bar-bg: #e2e8f0;
-                  --cpp-shadow-color: #000;
-                  --cpp-shadow-op: 0.04;
-                  --cpp-shadow-op-heavy: 0.08;
-                }
-                .compression-pipeline-svg text { font-family: var(--cpp-font-sans); }
-                .compression-pipeline-svg .cpp-header-title { font-size: 16px; font-weight: 800; fill: var(--cpp-text-main); letter-spacing: 2px; }
-                .compression-pipeline-svg .cpp-step-title { font-size: 13px; font-weight: 700; fill: var(--cpp-text-muted); letter-spacing: 1.5px; text-transform: uppercase; }
-                .compression-pipeline-svg .cpp-card-label { font-size: 11px; font-weight: 700; fill: var(--cpp-accent-purple); letter-spacing: 0.5px; }
-                .compression-pipeline-svg .cpp-card-time { font-size: 11px; font-weight: 500; fill: var(--cpp-text-muted); }
-                .compression-pipeline-svg .cpp-card-title { font-size: 15px; font-weight: 600; fill: var(--cpp-text-main); }
-                .compression-pipeline-svg .cpp-source-label { font-size: 12px; font-weight: 500; fill: var(--cpp-text-muted); }
-                .compression-pipeline-svg .cpp-source-value { font-size: 11px; font-family: var(--cpp-font-mono); fill: var(--cpp-text-mono); font-weight: 500; }
-                .compression-pipeline-svg .cpp-pill-text { font-size: 12px; font-family: var(--cpp-font-mono); font-weight: 600; fill: var(--cpp-accent-green); }
-                .compression-pipeline-svg .cpp-token-text { font-size: 12px; font-weight: 700; font-family: var(--cpp-font-mono); }
-                .compression-pipeline-svg .cpp-token-high { fill: var(--cpp-accent-blue); }
-                .compression-pipeline-svg .cpp-token-low { fill: var(--cpp-accent-green); }
-                @keyframes cppFlowLine { 0% { stroke-dashoffset: 20; } 100% { stroke-dashoffset: 0; } }
-                .compression-pipeline-svg .cpp-flow-line { stroke-dasharray: 6 6; animation: cppFlowLine 0.8s linear infinite; }
-                @keyframes cppFadeInSlide { 0% { opacity: 0; transform: translateY(20px); } 100% { opacity: 1; transform: translateY(0); } }
-                .compression-pipeline-svg .cpp-step-1 { opacity: 0; animation: cppFadeInSlide 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards; }
-                .compression-pipeline-svg .cpp-step-2 { opacity: 0; animation: cppFadeInSlide 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.2s forwards; }
-                .compression-pipeline-svg .cpp-step-3 { opacity: 0; animation: cppFadeInSlide 0.8s cubic-bezier(0.16, 1, 0.3, 1) 2.5s forwards; }
-                @keyframes cppScan { 0% { transform: translateY(0); } 50% { transform: translateY(140px); } 100% { transform: translateY(0); } }
-                .compression-pipeline-svg .cpp-scanner { animation: cppScan 2.5s ease-in-out infinite; }
-                @keyframes cppPulseRing { 0% { transform: scale(0.9); opacity: 0.8; } 100% { transform: scale(1.3); opacity: 0; } }
-                .compression-pipeline-svg .cpp-engine-pulse { transform-origin: center; animation: cppPulseRing 2s infinite cubic-bezier(0.2, 0, 0.2, 1); }
-                @keyframes cppCompressBar { 0% { width: 0; } 100% { width: 220px; } }
-                .compression-pipeline-svg .cpp-bar-fill { width: 0; animation: cppCompressBar 1s cubic-bezier(0.16, 1, 0.3, 1) 3s forwards; }
-                @keyframes cppPopIn { 0% { opacity: 0; transform: scale(0.9); } 70% { transform: scale(1.05); } 100% { opacity: 1; transform: scale(1); } }
-                .compression-pipeline-svg .cpp-pill { opacity: 0; transform-origin: center; animation: cppPopIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 3.8s forwards; }
-                @keyframes cppFloatUp { 0% { opacity: 0; transform: translateY(20px) scale(0.9); } 20% { opacity: 1; transform: translateY(0) scale(1); } 80% { opacity: 1; transform: translateY(-30px) scale(1); } 100% { opacity: 0; transform: translateY(-50px) scale(0.9); } }
-                .compression-pipeline-svg .cpp-float-1 { animation: cppFloatUp 3s infinite linear 1.5s; opacity: 0; }
-                .compression-pipeline-svg .cpp-float-2 { animation: cppFloatUp 3s infinite linear 2.5s; opacity: 0; }
-              `}</style>
-              <g transform="scale(0.75)">
-                <rect x="10" y="10" width="980" height="480" rx="16" fill="var(--cpp-panel-bg)" stroke="var(--cpp-panel-border)" strokeWidth="1.5" filter="url(#cpp-panel-shadow)" />
-                <g transform="translate(40, 50)">
-                  <text x="0" y="0" className="cpp-header-title">MEMORY COMPRESSION PIPELINE</text>
-                  <rect x="0" y="15" width="40" height="4" rx="2" fill="var(--cpp-accent-purple)" />
-                </g>
-                <path d="M 320 250 L 360 250" fill="none" stroke="var(--cpp-accent-blue)" strokeWidth="3" className="cpp-flow-line" />
-                <path d="M 640 250 L 680 250" fill="none" stroke="var(--cpp-accent-purple)" strokeWidth="3" className="cpp-flow-line" />
-                <path d="M 320 250 L 680 250" fill="none" stroke="url(#cpp-flow-gradient)" strokeWidth="2" opacity="0.3" />
-                <g transform="translate(40, 100)">
-                  <g className="cpp-step-1">
-                    <text x="0" y="0" className="cpp-step-title">1. Raw Ingestion</text>
-                    <text x="280" y="0" className="cpp-token-text cpp-token-high" textAnchor="end">2,048 Tokens</text>
-                    <rect x="0" y="20" width="280" height="300" rx="12" fill="var(--cpp-card-bg)" stroke="var(--cpp-card-border)" strokeWidth="1.5" filter="url(#cpp-card-shadow)" />
-                    <g transform="translate(20, 40)" opacity="0.7">
-                      <rect x="0" y="0" width="140" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.4" />
-                      <rect x="0" y="16" width="200" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.2" />
-                      <rect x="0" y="32" width="180" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.2" />
-                      <rect x="0" y="60" width="80" height="8" rx="4" fill="var(--cpp-accent-blue)" opacity="0.6" />
-                      <rect x="20" y="76" width="220" height="8" rx="4" fill="var(--cpp-text-main)" opacity="0.8" />
-                      <rect x="20" y="92" width="190" height="8" rx="4" fill="var(--cpp-text-main)" opacity="0.5" />
-                      <rect x="20" y="108" width="210" height="8" rx="4" fill="var(--cpp-text-main)" opacity="0.5" />
-                      <rect x="0" y="136" width="120" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.3" />
-                      <rect x="20" y="152" width="180" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.2" />
-                      <rect x="20" y="168" width="160" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.2" />
-                      <rect x="20" y="184" width="200" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.2" />
-                      <rect x="0" y="212" width="100" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.4" />
-                      <rect x="0" y="228" width="240" height="8" rx="4" fill="var(--cpp-text-muted)" opacity="0.2" />
-                    </g>
-                    <text x="140" y="345" className="cpp-source-label" textAnchor="middle">Unstructured API Logs &amp; Chat</text>
-                  </g>
-                </g>
-                <g transform="translate(360, 100)">
-                  <g className="cpp-step-2">
-                    <text x="140" y="0" className="cpp-step-title" textAnchor="middle">2. Memron Engine</text>
-                    <rect x="0" y="20" width="280" height="300" rx="12" fill="var(--cpp-panel-bg)" stroke="var(--cpp-accent-purple)" strokeWidth="2" strokeDasharray="8 4" filter="url(#cpp-card-shadow)" />
-                    <g transform="translate(140, 250)">
-                      <g className="cpp-float-1">
-                        <rect x="-70" y="-15" width="140" height="30" rx="8" fill="var(--cpp-card-bg)" stroke="var(--cpp-card-border)" strokeWidth="1.5" filter="url(#cpp-card-shadow)" />
-                        <text x="0" y="4" className="cpp-card-label" textAnchor="middle">Extracting Patterns...</text>
-                      </g>
-                      <g className="cpp-float-2">
-                        <rect x="-75" y="-15" width="150" height="30" rx="8" fill="var(--cpp-card-bg)" stroke="var(--cpp-card-border)" strokeWidth="1.5" filter="url(#cpp-card-shadow)" />
-                        <text x="0" y="4" className="cpp-card-label" textAnchor="middle" fill="var(--cpp-text-main)">Removing Redundancy</text>
-                      </g>
-                    </g>
-                    <g transform="translate(140, 150)">
-                      <circle cx="0" cy="0" r="40" fill="none" stroke="var(--cpp-accent-purple)" strokeWidth="2" className="cpp-engine-pulse" />
-                      <circle cx="0" cy="0" r="55" fill="none" stroke="var(--cpp-accent-purple-light)" strokeWidth="4" className="cpp-engine-pulse" style={{ animationDelay: '1s' }} />
-                      <polygon points="0,-30 26,-15 26,15 0,30 -26,15 -26,-15" fill="var(--cpp-accent-purple)" />
-                      <polygon points="0,-15 13,-7.5 13,7.5 0,15 -13,7.5 -13,-7.5" fill="var(--cpp-panel-bg)" opacity="0.5" />
-                    </g>
-                    <rect x="10" y="30" width="260" height="60" fill="url(#cpp-scan-grad)" className="cpp-scanner" />
-                    <line x1="10" y1="60" x2="270" y2="60" stroke="var(--cpp-accent-purple)" strokeWidth="2" className="cpp-scanner" />
-                    <text x="140" y="345" className="cpp-source-label" textAnchor="middle" fill="var(--cpp-accent-purple)">Context compressed by 80%</text>
-                  </g>
-                </g>
-                <g transform="translate(680, 100)">
-                  <g className="cpp-step-3">
-                    <text x="0" y="0" className="cpp-step-title">3. Grounded Memory</text>
-                    <text x="280" y="0" className="cpp-token-text cpp-token-low" textAnchor="end">410 Tokens</text>
-                    <rect x="0" y="20" width="280" height="300" rx="12" fill="var(--cpp-card-bg)" stroke="var(--cpp-card-border)" strokeWidth="1.5" filter="url(#cpp-card-shadow)" />
-                    <rect x="0" y="20" width="4" height="300" rx="2" fill="var(--cpp-accent-green)" />
-                    <g transform="translate(20, 45)">
-                      <text x="0" y="0" className="cpp-card-label">CODE PATTERN</text>
-                      <text x="240" y="0" className="cpp-card-time" textAnchor="end">Just now</text>
-                      <text x="0" y="35" className="cpp-card-title">Uses async/await</text>
-                      <text x="0" y="55" className="cpp-card-title">over .then() chains</text>
-                      <text x="0" y="90" className="cpp-source-label">Source:</text>
-                      <text x="55" y="90" className="cpp-source-value">Ingestion Pipeline</text>
-                      <g transform="translate(0, 125)">
-                        <text x="0" y="0" className="cpp-source-label">Compression Ratio:</text>
-                        <text x="240" y="0" className="cpp-token-text" textAnchor="end" fill="var(--cpp-accent-purple)">-80%</text>
-                        <rect x="0" y="15" width="240" height="6" rx="3" fill="var(--cpp-bar-bg)" />
-                        <rect x="0" y="15" height="6" rx="3" fill="var(--cpp-accent-purple)" className="cpp-bar-fill" />
-                      </g>
-                      <g transform="translate(0, 180)">
-                        <g className="cpp-pill">
-                          <rect x="0" y="0" width="240" height="32" rx="8" fill="var(--cpp-pill-bg)" />
-                          <circle cx="16" cy="16" r="9" fill="none" stroke="var(--cpp-accent-green)" strokeWidth="1.5" />
-                          <path d="M11 16 l3 3 l6 -6" fill="none" stroke="var(--cpp-accent-green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          <text x="35" y="20" className="cpp-pill-text">Hash: bafk...x7q2</text>
-                        </g>
-                      </g>
-                      <g transform="translate(0, 220)">
-                        <g className="cpp-pill" style={{ animationDelay: '4.1s' }}>
-                          <rect x="0" y="0" width="240" height="32" rx="8" fill="var(--cpp-pill-bg)" />
-                          <circle cx="16" cy="16" r="9" fill="none" stroke="var(--cpp-accent-green)" strokeWidth="1.5" />
-                          <path d="M 12 16 L 16 12 L 20 16 M 16 12 L 16 20" fill="none" stroke="var(--cpp-accent-green)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                          <text x="35" y="20" className="cpp-pill-text">Redundant Cloud Stored</text>
-                        </g>
-                      </g>
-                    </g>
-                  </g>
-                </g>
-              </g>
-            </svg>
-          </div>
+      {/* Architecture Showcase Section */}
+      <section id="architecture" className="features-section" style={{ paddingTop: '5rem', paddingBottom: '3rem' }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem' }}>
+          <ArchitectureLayers />
         </div>
-      </section >
+      </section>
 
       {/* Showcase Section - How It Works */}
       < section id="team" className="showcase-section" >

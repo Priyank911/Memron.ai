@@ -31,16 +31,16 @@ export function NotificationBell({ enabled = true }: NotificationBellProps) {
     }
   };
 
-  const [now, setNow] = useState<number | null>(null);
+  // Initialize with current timestamp (lazy initialization to avoid unnecessary renders)
+  const [now, setNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
-    setNow(Date.now());
+    // Update timestamp every minute for "X mins ago" display
     const interval = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(interval);
   }, []);
 
   const relativeTime = (isoStr: string) => {
-    if (now === null) return '';
     const diff = now - new Date(isoStr).getTime();
     const mins = Math.floor(diff / 60_000);
     if (mins < 1) return 'just now';
