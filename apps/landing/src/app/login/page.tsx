@@ -337,7 +337,7 @@ export default function LoginPage() {
       await signIn.authenticateWithRedirect({
         strategy,
         redirectUrl: '/sso-callback',
-        redirectUrlComplete: '/dashboard',
+        redirectUrlComplete: '/sso-callback',
       });
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Failed to sign in');

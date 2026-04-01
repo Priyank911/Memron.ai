@@ -197,7 +197,7 @@ export default function SignUpPage() {
       await signUp.authenticateWithRedirect({
         strategy,
         redirectUrl: '/sso-callback',
-        redirectUrlComplete: '/onboarding',
+        redirectUrlComplete: '/sso-callback',
       });
     } catch (err: any) {
       setError(err.errors?.[0]?.message || 'Failed to sign up');

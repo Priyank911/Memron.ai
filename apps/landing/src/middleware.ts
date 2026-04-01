@@ -19,6 +19,7 @@ const isAuthRoute = createRouteMatcher([
   '/forgot-password',
 ])
 
+const isSSOCallbackRoute = createRouteMatcher(['/sso-callback(.*)'])
 const isDashboardRoute = createRouteMatcher(['/dashboard(.*)', '/playground(.*)', '/api/dashboard(.*)'])
 const isOnboardingRoute = createRouteMatcher(['/onboarding(.*)'])
 
@@ -31,6 +32,12 @@ export default clerkMiddleware(async (auth, request) => {
   if (userId && isAuthRoute(request)) {
     const isOnboarded = request.cookies.get('memron_onboarded')?.value === 'true'
     return NextResponse.redirect(new URL(isOnboarded ? '/dashboard' : '/onboarding', request.url))
+  }
+
+  // Allow SSO callback to handle its own logic - don't redirect from middleware
+  // The callback page will handle user sync and proper routing
+  if (isSSOCallbackRoute(request)) {
+    return NextResponse.next()
   }
 
   // Protect dashboard routes (pages AND /api/dashboard/* endpoints).

@@ -36,8 +36,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       dynamic
       signInUrl="/login"
       signUpUrl="/sign-up"
-      afterSignInUrl="/dashboard"
-      afterSignUpUrl="/dashboard"
     >
       <html lang="en" data-theme="dark">
         <head>
