@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import {
   getUserFromPostgres,
   getOrganizationByUserId,
@@ -18,10 +18,10 @@ import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from 
  */
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const rl = checkRateLimit(userId, 'buckets', CACHE_PROFILES.buckets);
+    const rl = checkRateLimit(authUser.uid, 'buckets', CACHE_PROFILES.buckets);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -30,8 +30,8 @@ export async function GET(request: NextRequest) {
     }
 
     const orgId = request.nextUrl.searchParams.get('orgId') || null;
-    const cacheKey = `buckets:${userId}:${orgId || 'default'}`;
-    const data = await cachedQuery(cacheKey, () => fetchBuckets(userId, orgId), CACHE_PROFILES.buckets);
+    const cacheKey = `buckets:${authUser.uid}:${orgId || 'default'}`;
+    const data = await cachedQuery(cacheKey, () => fetchBuckets(authUser.uid, orgId), CACHE_PROFILES.buckets);
     return NextResponse.json(data);
   } catch (error: unknown) {
     console.error('[Dashboard API] Buckets error:', error instanceof Error ? error.message : 'Unknown');
@@ -42,11 +42,11 @@ export async function GET(request: NextRequest) {
 /**
  * Primary bucket fetcher — tries Supabase first, falls back to primary PG.
  */
-async function fetchBuckets(clerkId: string, targetOrgId: string | null = null) {
+async function fetchBuckets(userIdOrFirebaseUid: string, targetOrgId: string | null = null) {
   // Try Supabase first (canonical source for MCP-written data)
   if (isSupabaseConfigured()) {
     try {
-      const result = await fetchBucketsFromSupabase(clerkId, targetOrgId);
+      const result = await fetchBucketsFromSupabase(userIdOrFirebaseUid, targetOrgId);
       if (result) return result;
     } catch (err: any) {
       console.warn('[Buckets] Supabase read failed, trying primary PG:', err.message);
@@ -54,11 +54,11 @@ async function fetchBuckets(clerkId: string, targetOrgId: string | null = null) 
   }
 
   // Fallback: read from primary PG (buckets table exists there too)
-  return fetchBucketsFromPrimaryPG(clerkId);
+  return fetchBucketsFromPrimaryPG(userIdOrFirebaseUid);
 }
 
-async function fetchBucketsFromSupabase(clerkId: string, targetOrgId: string | null) {
-  const supaUser = await resolveSupabaseUser(clerkId, targetOrgId);
+async function fetchBucketsFromSupabase(userIdOrFirebaseUid: string, targetOrgId: string | null) {
+  const supaUser = await resolveSupabaseUser(userIdOrFirebaseUid, targetOrgId);
   if (!supaUser) return null; // User not synced to Supabase yet
 
   const { id: uid, orgId } = supaUser;
@@ -122,9 +122,9 @@ async function fetchBucketsFromSupabase(clerkId: string, targetOrgId: string | n
  * Fallback: read buckets from primary Aiven PG.
  * This handles the case where Supabase is down or user hasn't been synced.
  */
-async function fetchBucketsFromPrimaryPG(clerkId: string) {
+async function fetchBucketsFromPrimaryPG(userIdOrFirebaseUid: string) {
   try {
-    const dbUser = await getUserFromPostgres(clerkId);
+    const dbUser = await getUserFromPostgres(userIdOrFirebaseUid);
     if (!dbUser) return { buckets: [] };
 
     const org = await getOrganizationByUserId(dbUser.id);
@@ -173,10 +173,10 @@ async function fetchBucketsFromPrimaryPG(clerkId: string) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const dbUser = await getUserFromPostgres(userId);
+    const dbUser = await getUserFromPostgres(authUser.uid);
     if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const org = await getOrganizationByUserId(dbUser.id);
@@ -223,7 +223,7 @@ export async function POST(request: NextRequest) {
     // Mirror to Supabase
     syncBucketToSupabase({
       bucketId: result.bucket!.bucket_id,
-      ownerClerkId: userId,
+      ownerFirebaseUid: authUser.uid,
       name,
       slug,
       description: body.description?.trim() || null,
@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
     }).catch((e: any) => console.warn('[Dashboard API] Supabase bucket sync (non-fatal):', e.message));
 
     // Invalidate cache so next GET returns fresh data
-    invalidateEndpoint(userId, 'buckets');
+    invalidateEndpoint(authUser.uid, 'buckets');
 
     return NextResponse.json({
       success: true,
@@ -256,10 +256,10 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const dbUser = await getUserFromPostgres(userId);
+    const dbUser = await getUserFromPostgres(authUser.uid);
     if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json();
@@ -277,7 +277,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    invalidateEndpoint(userId, 'buckets');
+    invalidateEndpoint(authUser.uid, 'buckets');
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('[Dashboard API] Bucket delete error:', error.message);

@@ -1,6 +1,7 @@
 'use client';
 
-import { useUser, useClerk } from '@clerk/nextjs';
+import { useAuth } from '@/components/auth-provider';
+import { signOut } from '@/lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import { useUserSync } from '@/lib/hooks/use-user-sync';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
@@ -41,8 +42,7 @@ const TIME_FILTERS = [
 ];
 
 export default function DashboardPage() {
-  const { user, isLoaded } = useUser();
-  const { signOut } = useClerk();
+  const { user, isLoaded } = useAuth();
   const router = useRouter();
   const { isReady } = useUserSync();
 
@@ -246,7 +246,7 @@ export default function DashboardPage() {
     document.cookie = 'memron_onboarded=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
     await signOut();
     router.push('/');
-  }, [signOut, router]);
+  }, [router]);
 
   /* ── Area chart data — adapts to current time range ──
    * Returns up to 24 points regardless of the raw data size so the SVG
@@ -1502,9 +1502,9 @@ export default function DashboardPage() {
                 <div className="mm-srow">
                   <div>
                     <span className="mm-srow-label">Two-Factor Authentication</span>
-                    <span className="mm-srow-hint">Configure 2FA through your Clerk profile</span>
+                    <span className="mm-srow-hint">Enhanced account protection (coming soon)</span>
                   </div>
-                  <span className="mm-srow-val mm-srow-muted">Managed via Clerk</span>
+                  <span className="mm-srow-val mm-srow-muted">Not configured</span>
                 </div>
               </div>
             </div>

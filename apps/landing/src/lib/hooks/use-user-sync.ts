@@ -5,13 +5,13 @@
 // Features:
 // - Syncs once per session using sessionStorage (persists across page navigations)
 // - Retries up to 2 times on failure with exponential backoff
-// - Silent fallback — the webhook handles sync as backup
+// - Silent fallback — the session management handles sync
 // - Also checks onboarding status and sets cookie
 
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useAuth } from '@/components/auth-provider';
 import { useRouter } from 'next/navigation';
 
 const MAX_RETRIES = 2;
@@ -39,7 +39,7 @@ function getCookie(name: string): string | null {
  * flash of content before a potential redirect to /onboarding.
  */
 export function useUserSync(): { isReady: boolean } {
-    const { user, isLoaded } = useUser();
+    const { user, isLoaded } = useAuth();
     const router = useRouter();
     const retryCount = useRef(0);
     const isSyncing = useRef(false);
@@ -94,7 +94,7 @@ export function useUserSync(): { isReady: boolean } {
         
         // Check sessionStorage to prevent duplicate syncs across navigations
         const syncedUserId = typeof window !== 'undefined' ? sessionStorage.getItem(SYNC_KEY) : null;
-        if (syncedUserId === user?.id) {
+        if (syncedUserId === user?.uid) {
             return; // Already synced this session
         }
 
@@ -104,13 +104,14 @@ export function useUserSync(): { isReady: boolean } {
             const response = await fetch('/api/user/sync', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
             });
 
             if (response.ok) {
                 const data = await response.json();
                     // Mark as synced in sessionStorage
-                if (typeof window !== 'undefined' && user?.id) {
-                    sessionStorage.setItem(SYNC_KEY, user.id);
+                if (typeof window !== 'undefined' && user?.uid) {
+                    sessionStorage.setItem(SYNC_KEY, user.uid);
                 }
                 
                 // Check onboarding status and set cookie
@@ -140,7 +141,7 @@ export function useUserSync(): { isReady: boolean } {
         }
 
         isSyncing.current = false;
-    }, [user?.id, checkOnboardingStatus]);
+    }, [user?.uid, checkOnboardingStatus]);
 
     useEffect(() => {
         // Only run after user is loaded
@@ -148,7 +149,7 @@ export function useUserSync(): { isReady: boolean } {
 
         const syncedUserId = typeof window !== 'undefined' ? sessionStorage.getItem(SYNC_KEY) : null;
 
-        if (syncedUserId === user.id) {
+        if (syncedUserId === user.uid) {
             // Already synced this browser session, but cookie may have been cleared.
             // If no onboarding cookie, re-run the status check so the server can heal it.
             const hasOnboardedCookie = getCookie('memron_onboarded') === 'true';

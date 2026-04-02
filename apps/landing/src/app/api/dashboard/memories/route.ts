@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
 import { cachedQuery, checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
 
@@ -11,10 +11,10 @@ import { cachedQuery, checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
  */
 export async function GET(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const rl = checkRateLimit(clerkId, 'memories', CACHE_PROFILES.memories);
+    const rl = checkRateLimit(authUser.uid, 'memories', CACHE_PROFILES.memories);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -23,8 +23,8 @@ export async function GET(request: NextRequest) {
     }
 
     const orgId = request.nextUrl.searchParams.get('orgId') || null;
-    const cacheKey = `memories:${clerkId}:${orgId || 'default'}`;
-    const data = await cachedQuery(cacheKey, () => fetchMemories(clerkId, orgId), CACHE_PROFILES.memories);
+    const cacheKey = `memories:${authUser.uid}:${orgId || 'default'}`;
+    const data = await cachedQuery(cacheKey, () => fetchMemories(authUser.uid, orgId), CACHE_PROFILES.memories);
     return NextResponse.json(data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -33,8 +33,8 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function fetchMemories(clerkId: string, targetOrgId: string | null = null) {
-  const supaUser = await resolveSupabaseUser(clerkId, targetOrgId);
+async function fetchMemories(userIdOrFirebaseUid: string, targetOrgId: string | null = null) {
+  const supaUser = await resolveSupabaseUser(userIdOrFirebaseUid, targetOrgId);
   if (!supaUser) return { memories: [] };
 
   const { id: uid, orgId } = supaUser;

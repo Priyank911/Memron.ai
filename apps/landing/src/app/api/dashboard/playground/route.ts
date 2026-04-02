@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import { checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
 import { runRAGPipeline, isGroqConfigured } from '@/lib/rag';
 import { saveInteraction } from '@/lib/playground-history';
@@ -13,10 +13,10 @@ import { saveInteraction } from '@/lib/playground-history';
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(req);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const rl = checkRateLimit(clerkId, 'playground', CACHE_PROFILES.memories);
+    const rl = checkRateLimit(authUser.uid, 'playground', CACHE_PROFILES.memories);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 });
     }
 
-    const result = await runRAGPipeline({ clerkId, rawQuery, bucket, chatHistory });
+    const result = await runRAGPipeline({ clerkId: authUser.uid, rawQuery, bucket, chatHistory });
 
     if (!result.ok) {
       return NextResponse.json({
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     let generatedTitle: string | undefined;
     try {
       const saveResult = await saveInteraction({
-        clerkId,
+        clerkId: authUser.uid,
         sessionId,
         bucket,
         query: rawQuery.trim(),

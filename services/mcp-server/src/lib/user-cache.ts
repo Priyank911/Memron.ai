@@ -12,7 +12,8 @@
 interface CachedUser {
   id: number;
   universal_id: string;
-  clerk_id: string;
+  firebase_uid: string | null;
+  clerk_id: string | null;
   email: string;
   first_name: string | null;
   last_name: string | null;

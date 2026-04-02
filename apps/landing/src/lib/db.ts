@@ -10,7 +10,10 @@ import { syncUserToSupabase } from './supabase-sync';
 // ─── Types ──────────────────────────────────────────────────
 
 export interface UserData {
-    clerkId: string;
+    /** Firebase UID (new users) */
+    firebaseUid?: string;
+    /** Clerk ID (legacy users - for backwards compatibility) */
+    clerkId?: string;
     email: string;
     firstName?: string | null;
     lastName?: string | null;
@@ -29,7 +32,7 @@ export interface SyncResult {
 // ─── Config ─────────────────────────────────────────────────
 
 /** Timeout for individual DB operations (ms). Prevents one slow DB from blocking the entire sync. */
-const DB_TIMEOUT_MS = 5000;
+const DB_TIMEOUT_MS = 8000; // Increased from 5s to 8s for slow connections
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -60,12 +63,28 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  *
  * Each write has an independent timeout so a slow/hung connection
  * to one database does not block the other.
+ * 
+ * Migration note: Now supports both firebaseUid (new) and clerkId (legacy).
+ * Use firebaseUid for new users; clerkId is kept for backwards compatibility.
  */
 export async function syncUser(userData: UserData): Promise<SyncResult> {
+    // Get the user identifier (prefer firebaseUid, fall back to clerkId)
+    const userId = userData.firebaseUid || userData.clerkId || '';
+    if (!userId) {
+        return {
+            success: false,
+            postgres: { success: false, error: 'No user ID provided' },
+            firebase: { success: false, error: 'No user ID provided' },
+            source: 'none',
+        };
+    }
+
     // Fire both writes concurrently, each with its own timeout
+    // Build a save-compatible payload where clerkId is guaranteed to be a string
+    const savePayload = { ...userData, clerkId: userId };
     const [pgResult, fbResult] = await Promise.allSettled([
-        withTimeout(saveUserToPostgres(userData), DB_TIMEOUT_MS, 'PostgreSQL write'),
-        withTimeout(saveUserToFirebase(userData), DB_TIMEOUT_MS, 'Firebase write'),
+        withTimeout(saveUserToPostgres(savePayload), DB_TIMEOUT_MS, 'PostgreSQL write'),
+        withTimeout(saveUserToFirebase(savePayload), DB_TIMEOUT_MS, 'Firebase write'),
     ]);
 
     const postgres = pgResult.status === 'fulfilled'
@@ -88,11 +107,11 @@ export async function syncUser(userData: UserData): Promise<SyncResult> {
     if (source === 'both') {
         // success — silent
     } else if (source !== 'none') {
-        console.warn(`[DualDB] ⚠️ User ${userData.clerkId} synced to ${source} only`);
+        console.warn(`[DualDB] ⚠️ User ${userId} synced to ${source} only`);
         if (!postgres.success) console.warn(`[DualDB] PostgreSQL error: ${postgres.error}`);
         if (!firebase.success) console.warn(`[DualDB] Firebase error: ${firebase.error}`);
     } else {
-        console.error(`[DualDB] ❌ User ${userData.clerkId} failed to sync to ANY database`);
+        console.error(`[DualDB] ❌ User ${userId} failed to sync to ANY database`);
         console.error(`[DualDB] PostgreSQL: ${postgres.error}`);
         console.error(`[DualDB] Firebase: ${firebase.error}`);
     }
@@ -102,7 +121,7 @@ export async function syncUser(userData: UserData): Promise<SyncResult> {
     // latest user record, even when the primary PG is a different instance.
     if (success) {
         syncUserToSupabase({
-            clerkId: userData.clerkId,
+            clerkId: userId, // Using userId (firebase_uid or clerk_id) for compatibility
             email: userData.email,
             firstName: userData.firstName,
             lastName: userData.lastName,
@@ -125,10 +144,13 @@ export async function syncUser(userData: UserData): Promise<SyncResult> {
  * in the background so both DBs converge without blocking the response.
  */
 function scheduleBackfill(userData: UserData, missingIn: 'postgres' | 'firebase'): void {
+    const userId = userData.firebaseUid || userData.clerkId || '';
+    if (!userId) return;
+    const payload = { ...userData, clerkId: userId };
     const task =
         missingIn === 'postgres'
-            ? withTimeout(saveUserToPostgres(userData), DB_TIMEOUT_MS, 'Backfill PostgreSQL')
-            : withTimeout(saveUserToFirebase(userData), DB_TIMEOUT_MS, 'Backfill Firebase');
+            ? withTimeout(saveUserToPostgres(payload), DB_TIMEOUT_MS, 'Backfill PostgreSQL')
+            : withTimeout(saveUserToFirebase(payload), DB_TIMEOUT_MS, 'Backfill Firebase');
 
     task
         .then((r) => {
@@ -145,11 +167,15 @@ function scheduleBackfill(userData: UserData, missingIn: 'postgres' | 'firebase'
 
 /**
  * Normalize user data from either source into a common shape for backfill.
+ * Supports both firebase_uid (new) and clerk_id (legacy) fields.
  */
 function toUserData(raw: any): UserData | null {
     if (!raw) return null;
+    const firebaseUid = raw.firebase_uid || raw.firebaseUid;
+    const clerkId = raw.clerkId || raw.clerk_id;
     return {
-        clerkId: raw.clerkId || raw.clerk_id,
+        firebaseUid: firebaseUid || undefined,
+        clerkId: clerkId || undefined,
         email: raw.email,
         firstName: raw.firstName ?? raw.first_name ?? null,
         lastName: raw.lastName ?? raw.last_name ?? null,

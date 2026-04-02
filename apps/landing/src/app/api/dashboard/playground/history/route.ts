@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import {
   listSessions,
   getSessionMessages,
@@ -20,8 +20,8 @@ import {
  */
 export async function GET(req: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(req);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
     const action = searchParams.get('action') || 'list';
@@ -30,26 +30,26 @@ export async function GET(req: NextRequest) {
       const q = searchParams.get('q')?.trim();
       if (!q) return NextResponse.json({ error: 'Query parameter "q" is required' }, { status: 400 });
       const bucket = searchParams.get('bucket') || null;
-      const results = await searchHistory(clerkId, q, bucket);
+      const results = await searchHistory(authUser.uid, q, bucket);
       return NextResponse.json({ ok: true, results });
     }
 
     if (action === 'messages') {
       const sessionId = searchParams.get('sessionId')?.trim();
       if (!sessionId) return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
-      const messages = await getSessionMessages(clerkId, sessionId);
+      const messages = await getSessionMessages(authUser.uid, sessionId);
       return NextResponse.json({ ok: true, messages });
     }
 
     if (action === 'title') {
       const sessionId = searchParams.get('sessionId')?.trim();
       if (!sessionId) return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
-      const title = await getSessionTitle(clerkId, sessionId);
+      const title = await getSessionTitle(authUser.uid, sessionId);
       return NextResponse.json({ ok: true, title });
     }
 
     // Default: list sessions
-    const sessions = await listSessions(clerkId);
+    const sessions = await listSessions(authUser.uid);
     return NextResponse.json({ ok: true, sessions });
   } catch (error: unknown) {
     console.error('[History API] Error:', error instanceof Error ? error.message : 'Unknown');
@@ -62,14 +62,14 @@ export async function GET(req: NextRequest) {
  */
 export async function DELETE(req: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(req);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
     const sessionId = searchParams.get('sessionId')?.trim();
     if (!sessionId) return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
 
-    const deleted = await deleteSession(clerkId, sessionId);
+    const deleted = await deleteSession(authUser.uid, sessionId);
     return NextResponse.json({ ok: true, deleted });
   } catch (error: unknown) {
     console.error('[History API] Error:', error instanceof Error ? error.message : 'Unknown');
@@ -83,8 +83,8 @@ export async function DELETE(req: NextRequest) {
  */
 export async function PATCH(req: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(req);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
@@ -93,12 +93,12 @@ export async function PATCH(req: NextRequest) {
     if (body.action === 'title') {
       const title = typeof body.title === 'string' ? body.title.trim() : '';
       if (!title) return NextResponse.json({ error: 'title is required' }, { status: 400 });
-      const ok = await updateSessionTitle(clerkId, sessionId, title);
+      const ok = await updateSessionTitle(authUser.uid, sessionId, title);
       return NextResponse.json({ ok });
     }
 
     if (body.action === 'pin') {
-      const pinned = await toggleSessionPin(clerkId, sessionId);
+      const pinned = await toggleSessionPin(authUser.uid, sessionId);
       return NextResponse.json({ ok: true, pinned });
     }
 

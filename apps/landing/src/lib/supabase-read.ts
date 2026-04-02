@@ -12,7 +12,7 @@
  *   Dashboard        ──reads───▸  Supabase (this module) for memory data
  *                    ──reads───▸  Aiven (postgres.ts) for user/auth data
  *
- * Security: Queries are always scoped by user_id resolved via clerk_id.
+ * Security: Queries are always scoped by user_id resolved via firebase_uid.
  * No cross-user data is ever exposed.
  */
 
@@ -22,7 +22,7 @@ import { Pool, QueryResult } from 'pg';
 
 const SUPA_HOST = process.env.SUPABASE_PG_HOST || '';
 const SUPA_PORT = parseInt(process.env.SUPABASE_PG_PORT || '5432', 10);
-const SUPA_DB   = process.env.SUPABASE_PG_DATABASE || 'postgres';
+const SUPA_DB = process.env.SUPABASE_PG_DATABASE || 'postgres';
 const SUPA_USER = process.env.SUPABASE_PG_USER || '';
 const SUPA_PASS = process.env.SUPABASE_PG_PASSWORD || '';
 
@@ -106,7 +106,7 @@ export async function isSupabaseHealthy(): Promise<boolean> {
 // ─── User resolution ─────────────────────────────────────────
 
 /**
- * Resolve a Clerk user ID to the Supabase user record.
+ * Resolve a Firebase user ID to the Supabase user record.
  * Returns { id, email, org_id } or null if not found.
  *
  * This is critical because user IDs differ between Aiven and Supabase:
@@ -114,8 +114,10 @@ export async function isSupabaseHealthy(): Promise<boolean> {
  *   Supabase: priyanktechpanchal@gmail.com → id=3
  *
  * Dashboard must use the Supabase user_id when querying memories.
+ * 
+ * Lookup order: firebase_uid → email fallback (for migrated users).
  */
-export async function resolveSupabaseUser(clerkId: string, targetOrgUuid?: string | null): Promise<{
+export async function resolveSupabaseUser(firebaseUid: string, targetOrgUuid?: string | null): Promise<{
   id: number;
   email: string;
   orgId: number | null;
@@ -123,10 +125,19 @@ export async function resolveSupabaseUser(clerkId: string, targetOrgUuid?: strin
   if (!pool) return null;
 
   try {
-    const userRes = await pool.query(
-      'SELECT id, email FROM users WHERE clerk_id = $1 AND is_active = true LIMIT 1',
-      [clerkId],
+    // Try firebase_uid first (new users)
+    let userRes = await pool.query(
+      'SELECT id, email FROM users WHERE firebase_uid = $1 AND is_active = true LIMIT 1',
+      [firebaseUid],
     );
+
+    // Fallback to clerk_id for migrated users (they may still have clerk_id set)
+    if (!userRes.rows[0]) {
+      userRes = await pool.query(
+        'SELECT id, email FROM users WHERE clerk_id = $1 AND is_active = true LIMIT 1',
+        [firebaseUid],
+      );
+    }
 
     if (!userRes.rows[0]) return null;
 

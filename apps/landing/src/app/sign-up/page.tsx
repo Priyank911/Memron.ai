@@ -1,206 +1,298 @@
 'use client';
 
-import { useSignUp, useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
+import { useAuth } from '@/components/auth-provider';
+import {
+  signInWithGoogle,
+  signInWithGithub,
+  createAccountWithEmail,
+  createSession,
+  resendVerificationEmail,
+  getFirebaseAuth,
+} from '@/lib/firebase-client';
+import { formatFirebaseError, isSilentError } from '@/lib/firebase-errors';
+import { useCallback } from 'react';
 
 export default function SignUpPage() {
-  const { isLoaded, signUp, setActive } = useSignUp();
+  const { user, isLoaded, firebaseUser } = useAuth();
+  const authLoading = !isLoaded;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [verifying, setVerifying] = useState(false);
-  const [otp, setOtp] = useState<string[]>(Array(6).fill(''));
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const [otpError, setOtpError] = useState('');
-  const [otpVerifying, setOtpVerifying] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
-  const { isSignedIn } = useAuth();
 
-  // Track whether we're handling the post-verification redirect ourselves
-  // to prevent the isSignedIn effect from racing with the verify redirect
+  // Track sign-up phase: 'form' | 'verifying' | 'verified'
+  // IMPORTANT: keep SSR/client initial render identical to avoid hydration mismatch.
+  const [phase, setPhase] = useState<'form' | 'verifying' | 'verified'>('form');
+  const [verifyEmail, setVerifyEmail] = useState('');
+  
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resending, setResending] = useState(false);
+
+  // Track whether we're handling post-auth redirect ourselves
   const redirectingRef = useRef(false);
 
-  // Redirect if already signed in (client-side fallback; middleware handles server-side)
+  // Restore persisted verification state on client after hydration.
   useEffect(() => {
-    if (isSignedIn && !redirectingRef.current && !verifying) {
-      // User is signed in but landed on sign-up page.
-      // Check onboarding cookie: if onboarded → dashboard, otherwise → onboarding
-      const isOnboarded = document.cookie.includes('memron_onboarded=true');
-      router.replace(isOnboarded ? '/dashboard' : '/onboarding');
+    const savedPhase = localStorage.getItem('memron_verification_phase');
+    const savedEmail = localStorage.getItem('memron_verification_email') || '';
+    if (savedPhase === 'verifying' || savedPhase === 'verified') {
+      setPhase(savedPhase);
     }
-  }, [isSignedIn, verifying, router]);
-
-  // ─── OTP helpers ───────────────────────────────────────────
-  const otpValue = otp.join('');
-
-  const handleOtpChange = useCallback((index: number, value: string) => {
-    // Allow only digits
-    const digit = value.replace(/\D/g, '').slice(-1);
-    setOtp(prev => {
-      const next = [...prev];
-      next[index] = digit;
-      return next;
-    });
-    setOtpError('');
-    setError('');
-    // Auto-focus next box
-    if (digit && index < 5) {
-      otpRefs.current[index + 1]?.focus();
+    if (savedEmail) {
+      setVerifyEmail(savedEmail);
     }
   }, []);
 
-  const handleOtpKeyDown = useCallback((index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      otpRefs.current[index - 1]?.focus();
-    }
-    if (e.key === 'ArrowLeft' && index > 0) {
-      e.preventDefault();
-      otpRefs.current[index - 1]?.focus();
-    }
-    if (e.key === 'ArrowRight' && index < 5) {
-      e.preventDefault();
-      otpRefs.current[index + 1]?.focus();
-    }
-  }, [otp]);
-
-  const handleOtpPaste = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (!pasted) return;
-    setOtp(prev => {
-      const next = [...prev];
-      for (let i = 0; i < 6; i++) next[i] = pasted[i] || '';
-      return next;
-    });
-    setOtpError('');
-    setError('');
-    // Focus the last filled box or the next empty one
-    const focusIdx = Math.min(pasted.length, 5);
-    setTimeout(() => otpRefs.current[focusIdx]?.focus(), 0);
-  }, []);
-
-  // Auto-verify when all 6 digits are filled
+  // Persist phase and email to localStorage whenever they change
   useEffect(() => {
-    if (otpValue.length !== 6 || !verifying || !isLoaded || otpVerifying) return;
-
-    const verify = async () => {
-      setOtpVerifying(true);
-      setError('');
-      setOtpError('');
-      try {
-        const completeSignUp = await signUp.attemptEmailAddressVerification({ code: otpValue });
-        if (completeSignUp.status === 'complete') {
-          // Prevent the isSignedIn effect from firing a competing redirect
-          redirectingRef.current = true;
-          await setActive({ session: completeSignUp.createdSessionId });
-
-          // Sync user to our databases before navigating so that the
-          // onboarding page can find the user record immediately
-          try {
-            await fetch('/api/user/sync', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-            });
-          } catch {
-            // Non-blocking — onboarding page retries this anyway
-          }
-
-          // New sign-up always needs onboarding; go there directly
-          // (avoids the brief dashboard flash)
-          router.replace('/onboarding');
-        }
-      } catch (err: any) {
-        const msg = err.errors?.[0]?.message || 'Invalid verification code';
-        const code = err.errors?.[0]?.code || '';
-
-        // "Session already exists" means the sign-up actually succeeded and
-        // Clerk already activated a session. Treat this as success.
-        if (
-          msg.toLowerCase().includes('session already exists') ||
-          msg.toLowerCase().includes('session_exists') ||
-          code === 'session_exists'
-        ) {
-          redirectingRef.current = true;
-
-          // Sync user to our databases
-          try {
-            await fetch('/api/user/sync', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-            });
-          } catch {
-            // Non-blocking
-          }
-
-          router.replace('/onboarding');
-          return;
-        }
-
-        setOtpError(msg);
-        // Clear all boxes and refocus the first one so user can retry
-        setOtp(Array(6).fill(''));
-        setTimeout(() => otpRefs.current[0]?.focus(), 100);
-      } finally {
-        setOtpVerifying(false);
+    if (typeof window !== 'undefined') {
+      if (phase === 'verifying' || phase === 'verified') {
+        localStorage.setItem('memron_verification_phase', phase);
+      } else {
+        localStorage.removeItem('memron_verification_phase');
       }
-    };
-
-    verify();
-  }, [otpValue, verifying, isLoaded, otpVerifying, router, setActive, signUp]);
-
-  // Focus first OTP box on mount
-  useEffect(() => {
-    if (verifying) {
-      setTimeout(() => otpRefs.current[0]?.focus(), 200);
     }
-  }, [verifying]);
+  }, [phase]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (verifyEmail) {
+        localStorage.setItem('memron_verification_email', verifyEmail);
+      } else {
+        localStorage.removeItem('memron_verification_email');
+      }
+    }
+  }, [verifyEmail]);
+
+  // On mount: if user is signed in but email not verified, show verification page
+  useEffect(() => {
+    if (isLoaded && user && firebaseUser) {
+      const isOAuthUser = firebaseUser.providerData.some(p => p.providerId !== 'password');
+      
+      // If email user and not verified, automatically show verification screen
+      if (!isOAuthUser && !firebaseUser.emailVerified && firebaseUser.email) {
+        setVerifyEmail(firebaseUser.email);
+        setPhase('verifying');
+        document.cookie = 'memron_email_verified=false; path=/; max-age=432000; SameSite=Lax';
+      } else if (firebaseUser.emailVerified && phase === 'verifying') {
+        // Email is verified - clean up localStorage and allow redirect
+        localStorage.removeItem('memron_verification_phase');
+        localStorage.removeItem('memron_verification_email');
+        document.cookie = 'memron_email_verified=true; path=/; max-age=432000; SameSite=Lax';
+      }
+    }
+  }, [isLoaded, user, firebaseUser, phase]);
+
+  // Sync user to database after successful auth
+  const syncUserToDb = useCallback(async () => {
+    try {
+      await fetch('/api/user/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+    } catch {
+      // Non-blocking — onboarding page retries this anyway
+    }
+  }, []);
+
+  // Check email verification status periodically when in verify phase
+  const checkVerification = useCallback(async () => {
+    if (!firebaseUser) return false;
+    
+    try {
+      // Force refresh the user to get latest emailVerified status
+      await firebaseUser.reload();
+      const refreshedUser = getFirebaseAuth().currentUser;
+      
+      if (refreshedUser?.emailVerified) {
+        // Email is now verified - show success state briefly
+        setPhase('verified');
+        redirectingRef.current = true;
+        
+        // Clean up localStorage
+        localStorage.removeItem('memron_verification_phase');
+        localStorage.removeItem('memron_verification_email');
+        document.cookie = 'memron_email_verified=true; path=/; max-age=432000; SameSite=Lax';
+        
+        await syncUserToDb();
+        // Brief delay to show success message
+        setTimeout(() => {
+          router.replace('/onboarding');
+        }, 1500);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('[SignUp] Error checking verification:', err);
+      return false;
+    }
+  }, [firebaseUser, router, syncUserToDb]);
+
+  // Periodic verification check when in verifying phase
+  useEffect(() => {
+    if (phase !== 'verifying' || !firebaseUser) return;
+    
+    // Initial check
+    checkVerification();
+    
+    // Check every 3 seconds
+    const interval = setInterval(checkVerification, 3000);
+    
+    return () => clearInterval(interval);
+  }, [phase, firebaseUser, checkVerification]);
+
+  // Cooldown timer for resend button
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(c => c - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
+
+  // Redirect if already signed in (and verified for email users)
+  useEffect(() => {
+    if (user && !redirectingRef.current && !authLoading) {
+      // IMPORTANT: If we're on the verification phase, DON'T redirect
+      if (phase === 'verifying') {
+        return; // Stay on verification page
+      }
+
+      // For OAuth users (Google, GitHub), they're auto-verified
+      const isOAuthUser = firebaseUser?.providerData.some(p => p.providerId !== 'password');
+      
+      // Only redirect if:
+      // 1. User is OAuth (Google/GitHub) OR
+      // 2. User's email is verified
+      if (isOAuthUser || firebaseUser?.emailVerified) {
+        const isOnboarded = document.cookie.includes('memron_onboarded=true');
+        router.replace(isOnboarded ? '/dashboard' : '/onboarding');
+      }
+    }
+  }, [user, authLoading, router, firebaseUser, phase]);
 
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isLoaded) return;
 
     try {
       setIsLoading(true);
       setError('');
-      await signUp.create({
-        emailAddress: email,
-        password,
-        firstName,
-        lastName,
-      });
 
-      // Send verification email
-      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
-      setVerifying(true);
-      setOtp(Array(6).fill(''));
-      setOtpError('');
+      // Build display name from first and last name
+      const displayName = [firstName, lastName].filter(Boolean).join(' ') || undefined;
+
+      // Create account with Firebase
+      // Firebase will send email verification automatically and set display name
+      await createAccountWithEmail(
+        email,
+        password,
+        displayName
+      );
+
+      // Create session cookie (uses current auth user internally)
+      await createSession();
+
+      // Store email for verification page
+      setVerifyEmail(email);
+      
+      // Show verification page - don't redirect yet
+      // User needs to verify email first
+      setPhase('verifying');
+      document.cookie = 'memron_email_verified=false; path=/; max-age=432000; SameSite=Lax';
+      setResendCooldown(60); // Start with 60s cooldown since email was just sent
+
     } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Failed to sign up');
+      console.error('[SignUp] Email sign-up failed:', err);
+      const errorMessage = formatFirebaseError(err);
+      if (errorMessage) {
+        setError(errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleOAuthSignUp = async (strategy: 'oauth_google' | 'oauth_github') => {
-    if (!isLoaded) return;
+  // Resend verification email handler
+  const handleResendVerification = async () => {
+    if (resendCooldown > 0 || resending) return;
+    
+    try {
+      setResending(true);
+      setError('');
+      await resendVerificationEmail();
+      setResendCooldown(60);
+    } catch (err: any) {
+      console.error('[SignUp] Resend failed:', err);
+      if (err.code === 'auth/too-many-requests') {
+        setError('Too many attempts. Please wait a few minutes.');
+      } else {
+        setError('Failed to resend verification email. Please try again.');
+      }
+    } finally {
+      setResending(false);
+    }
+  };
 
+  // Go back to form from verification
+  const handleChangeEmail = () => {
+    setPhase('form');
+    setVerifyEmail('');
+    setError('');
+  };
+
+  const handleOAuthSignUp = async (provider: 'google' | 'github') => {
     try {
       setIsLoading(true);
-      await signUp.authenticateWithRedirect({
-        strategy,
-        redirectUrl: '/sso-callback',
-        redirectUrlComplete: '/sso-callback',
-      });
+      setError('');
+
+      // Sign in with OAuth provider
+      const userCredential = provider === 'google'
+        ? await signInWithGoogle()
+        : await signInWithGithub();
+
+      // Create session cookie (uses current auth user internally)
+      await createSession();
+
+      // Prevent racing redirect
+      redirectingRef.current = true;
+
+      // Sync user to our databases
+      await syncUserToDb();
+
+      // Check if this is a new user (first sign-in)
+      // For OAuth, we can check the creationTime vs lastSignInTime
+      const metadata = userCredential.user.metadata;
+      const isNewUser = metadata.creationTime === metadata.lastSignInTime;
+
+      // Navigate based on whether this is a new user
+      if (isNewUser) {
+        router.replace('/onboarding');
+      } else {
+        const isOnboarded = document.cookie.includes('memron_onboarded=true');
+        router.replace(isOnboarded ? '/dashboard' : '/onboarding');
+      }
+
     } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Failed to sign up');
+      console.error('[SignUp] OAuth sign-up failed:', err);
+      
+      // Check if user just closed the popup - silently return
+      if (isSilentError(err)) {
+        // User closed popup, just reset state, no error message
+        return;
+      }
+      
+      const errorMessage = formatFirebaseError(err);
+      if (errorMessage) {
+        setError(errorMessage);
+      }
+    } finally {
       setIsLoading(false);
     }
   };
@@ -264,134 +356,435 @@ export default function SignUpPage() {
     fontFamily: "'Inter', sans-serif",
   };
 
-  // ─── VERIFICATION SCREEN ──────────────────────────────────
-  if (verifying) {
+  // ─── VERIFICATION PAGE (Compact, White Theme) ────────────────────────────────────
+  if (phase === 'verifying' || phase === 'verified') {
+    const isVerified = phase === 'verified';
+    
     return (
-      <div className="signup-page" style={{
+      <div className="verify-page" style={{
         display: 'flex',
         minHeight: '100vh',
         width: '100%',
-        fontFamily: "'Inter', system-ui, sans-serif",
+        fontFamily: "'Inter', 'Space Grotesk', system-ui, -apple-system, sans-serif",
         overflow: 'hidden',
         background: '#ffffff',
       }}>
+
+        {/* ===================== LEFT PANEL — WHITE ===================== */}
         <div style={{
-          flex: 1,
+          flex: '0 0 48%',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
           alignItems: 'center',
           background: '#ffffff',
-          padding: '3rem 2.5rem',
+          padding: '2rem',
+          position: 'relative',
+          zIndex: 10,
         }}>
-          <div style={{ width: '100%', maxWidth: '400px', textAlign: 'center', animation: 'loginFadeUp 0.65s cubic-bezier(0.16,1,0.3,1) forwards' }}>
+          {/* Subtle corner glow */}
+          <div style={{
+            position: 'absolute',
+            top: '-60px',
+            right: '-60px',
+            width: '200px',
+            height: '200px',
+            borderRadius: '50%',
+            background: isVerified 
+              ? 'radial-gradient(circle, rgba(34,197,94,0.06) 0%, transparent 70%)'
+              : 'radial-gradient(circle, rgba(99,102,241,0.04) 0%, transparent 70%)',
+            pointerEvents: 'none',
+          }} />
+
+          <div style={{
+            width: '100%',
+            maxWidth: '360px',
+            animation: 'verifyFadeUp 0.5s ease',
+          }}>
+
             {/* Logo */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '2rem' }}>
-              <Image src="/logo_b.png" alt="Memron" width={40} height={40} style={{ objectFit: 'contain' }} />
-              <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: '1.35rem', fontWeight: 700, color: '#09090b' }}>Memron</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.5rem' }}>
+              <Image src="/logo_b.png" alt="Memron" width={36} height={36} style={{ objectFit: 'contain' }} />
+              <span style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: '1.2rem',
+                fontWeight: 700,
+                color: '#09090b',
+                letterSpacing: '-0.025em',
+              }}>Memron</span>
             </div>
 
-            {/* Email icon */}
+            {/* Icon + Heading */}
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '12px', 
+              marginBottom: '0.75rem' 
+            }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: '10px',
+                background: isVerified ? 'rgba(34,197,94,0.1)' : 'rgba(99,102,241,0.08)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                {isVerified ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="M22 7l-10 5L2 7" />
+                  </svg>
+                )}
+              </div>
+              <h1 style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontSize: '1.5rem',
+                fontWeight: 700,
+                color: '#09090b',
+                letterSpacing: '-0.02em',
+                margin: 0,
+              }}>
+                {isVerified ? 'Email verified!' : 'Check your email'}
+              </h1>
+            </div>
+
+            {/* Description */}
+            <p style={{
+              fontSize: '0.88rem',
+              color: '#71717a',
+              lineHeight: 1.5,
+              marginBottom: '1.25rem',
+            }}>
+              {isVerified 
+                ? 'Your email has been verified successfully. Redirecting you now...'
+                : <>We sent a verification link to <strong style={{ color: '#3f3f46' }}>{verifyEmail}</strong></>
+              }
+            </p>
+
+            {/* Status badge */}
             <div style={{
               display: 'inline-flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              width: '64px',
-              height: '64px',
-              background: '#eef2ff',
-              borderRadius: '50%',
-              marginBottom: '1.5rem',
+              gap: 8,
+              padding: '8px 14px',
+              background: isVerified ? 'rgba(34,197,94,0.08)' : '#fafafa',
+              border: isVerified ? '1px solid rgba(34,197,94,0.2)' : '1px solid #e4e4e7',
+              borderRadius: '8px',
+              marginBottom: '1.25rem',
             }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="M22 7l-10 5L2 7" />
-              </svg>
+              {isVerified ? (
+                <>
+                  <div style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: '#22c55e',
+                  }} />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#16a34a' }}>
+                    Verified — redirecting...
+                  </span>
+                </>
+              ) : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ animation: 'verifySpin 1s linear infinite' }}>
+                    <circle cx="12" cy="12" r="10" stroke="#e4e4e7" strokeWidth="2" />
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#52525b' }}>
+                    Waiting for verification
+                  </span>
+                </>
+              )}
             </div>
 
-            <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: '1.65rem', fontWeight: 700, color: '#09090b', marginBottom: '0.4rem' }}>
-              Check your email
-            </h1>
-            <p style={{ fontSize: '0.9rem', color: '#71717a', marginBottom: '2rem', fontFamily: "'Inter', sans-serif" }}>
-              We sent a verification code to <span style={{ color: '#09090b', fontWeight: 600 }}>{email}</span>
-            </p>
-
-            {error && <div style={errorBoxStyle}>{error}</div>}
-            {otpError && (
-              <div style={errorBoxStyle}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
-                  {otpError}
+            {/* Instructions (only show when not verified) */}
+            {!isVerified && (
+              <div style={{
+                background: '#fafafa',
+                border: '1px solid #e4e4e7',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                marginBottom: '1.25rem',
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {[
+                    { num: '1', text: 'Open the email from Memron' },
+                    { num: '2', text: 'Click the verification link' },
+                    { num: '3', text: 'Return here — we\'ll detect it automatically' },
+                  ].map((step) => (
+                    <div key={step.num} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: '50%',
+                        background: '#e4e4e7',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        color: '#71717a',
+                        flexShrink: 0,
+                      }}>{step.num}</div>
+                      <span style={{ fontSize: '0.82rem', color: '#52525b' }}>{step.text}</span>
+                    </div>
+                  ))}
                 </div>
+                <p style={{
+                  fontSize: '0.75rem',
+                  color: '#a1a1aa',
+                  marginTop: '10px',
+                  marginBottom: 0,
+                }}>
+                  💡 Can't find it? Check your spam folder.
+                </p>
               </div>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'left' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <label style={labelStyle}>Verification Code</label>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                  {otp.map((digit, i) => (
-                    <input
-                      key={i}
-                      ref={el => { otpRefs.current[i] = el; }}
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      value={digit}
-                      onChange={e => handleOtpChange(i, e.target.value)}
-                      onKeyDown={e => handleOtpKeyDown(i, e)}
-                      onPaste={i === 0 ? handleOtpPaste : undefined}
-                      maxLength={1}
-                      disabled={otpVerifying}
-                      style={{
-                        width: 48, height: 56, textAlign: 'center' as const,
-                        fontSize: '1.35rem', fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif",
-                        color: '#09090b', background: otpVerifying ? '#f4f4f5' : '#fafafa',
-                        border: `1.5px solid ${otpError ? '#fca5a5' : digit ? '#6366f1' : '#e4e4e7'}`,
-                        borderRadius: 10, outline: 'none',
-                        transition: 'border-color 0.2s, box-shadow 0.2s',
-                        caretColor: '#6366f1',
-                      }}
-                      onFocus={e => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.12)'; }}
-                      onBlur={e => { e.currentTarget.style.borderColor = digit ? '#6366f1' : '#e4e4e7'; e.currentTarget.style.boxShadow = 'none'; }}
-                    />
-                  ))}
-                </div>
+            {/* Error message */}
+            {error && (
+              <div style={errorBoxStyle}>{error}</div>
+            )}
+
+            {/* Actions (only show when not verified) */}
+            {!isVerified && (
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={handleResendVerification}
+                  disabled={resendCooldown > 0 || resending}
+                  style={{
+                    flex: 1,
+                    height: 42,
+                    border: 'none',
+                    borderRadius: '8px',
+                    background: resendCooldown > 0 ? '#e4e4e7' : '#09090b',
+                    color: resendCooldown > 0 ? '#71717a' : '#fff',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    cursor: resendCooldown > 0 || resending ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  {resending ? 'Sending...' : resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend email'}
+                </button>
+                <button
+                  onClick={handleChangeEmail}
+                  style={{
+                    height: 42,
+                    padding: '0 16px',
+                    border: '1.5px solid #e4e4e7',
+                    borderRadius: '8px',
+                    background: 'transparent',
+                    color: '#52525b',
+                    fontSize: '0.85rem',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Change email
+                </button>
               </div>
+            )}
+          </div>
+        </div>
 
-              {/* Auto-verifying indicator */}
-              {otpVerifying && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#6366f1', fontSize: '0.85rem', fontWeight: 500, fontFamily: "'Inter', sans-serif" }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: 'spin 0.7s linear infinite' }}>
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity=".2"/>
-                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-                  </svg>
-                  Verifying...
+        {/* ===================== RIGHT PANEL — DARK ===================== */}
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'flex-start',
+          background: '#09090b',
+          position: 'relative',
+          padding: '3rem',
+          overflow: 'hidden',
+        }}>
+          {/* Animated gradient orbs */}
+          <div style={{
+            position: 'absolute',
+            top: '-25%',
+            right: '-15%',
+            width: '550px',
+            height: '550px',
+            borderRadius: '50%',
+            background: isVerified
+              ? 'radial-gradient(circle, rgba(34,197,94,0.10) 0%, transparent 70%)'
+              : 'radial-gradient(circle, rgba(99,102,241,0.10) 0%, transparent 70%)',
+            animation: 'verifyFloat 9s ease-in-out infinite',
+            pointerEvents: 'none',
+          }} />
+          <div style={{
+            position: 'absolute',
+            bottom: '-20%',
+            left: '-10%',
+            width: '450px',
+            height: '450px',
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%)',
+            animation: 'verifyFloat 12s ease-in-out infinite reverse',
+            pointerEvents: 'none',
+          }} />
+
+          {/* Watermark logo */}
+          <Image
+            src="/logo_w.png"
+            alt=""
+            width={280}
+            height={280}
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              objectFit: 'contain',
+              opacity: 0.06,
+              pointerEvents: 'none',
+            }}
+          />
+
+          {/* Content */}
+          <div style={{
+            position: 'relative',
+            zIndex: 1,
+            width: '100%',
+            maxWidth: '520px',
+            animation: 'verifyFadeUp 0.65s 0.15s cubic-bezier(0.16,1,0.3,1) both',
+          }}>
+            {/* Brand label */}
+            <div style={{
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              color: isVerified ? '#22c55e' : '#6366f1',
+              textTransform: 'uppercase',
+              letterSpacing: '0.14em',
+              marginBottom: '0.6rem',
+              fontFamily: "'Inter', sans-serif",
+            }}>
+              {isVerified ? 'Verification Complete' : 'Email Verification'}
+            </div>
+
+            {/* Headline */}
+            <h2 style={{
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontSize: '2.25rem',
+              fontWeight: 700,
+              color: '#fafafa',
+              letterSpacing: '-0.03em',
+              lineHeight: 1.2,
+              marginBottom: '0.75rem',
+            }}>
+              {isVerified 
+                ? 'Welcome to Memron!' 
+                : 'Check your inbox'}
+            </h2>
+
+            {/* Description */}
+            <p style={{
+              fontSize: '0.9rem',
+              color: '#a1a1aa',
+              lineHeight: 1.7,
+              marginBottom: '2.25rem',
+              maxWidth: '440px',
+              fontFamily: "'Inter', sans-serif",
+            }}>
+              {isVerified
+                ? 'Your email has been verified. We\'re setting up your workspace now...'
+                : 'Click the verification link we sent to complete your account setup and start building with AI memory.'}
+            </p>
+
+            {/* Feature highlights */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {[
+                {
+                  icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+                  title: 'Secure & Encrypted',
+                  desc: 'AES-256 encryption for all your data',
+                },
+                {
+                  icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>,
+                  title: 'Lightning Fast',
+                  desc: 'Sub-100ms retrieval with vector search',
+                },
+                {
+                  icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></svg>,
+                  title: 'Smart Context',
+                  desc: 'Automatic relevance ranking for agents',
+                },
+              ].map((feature, i) => (
+                <div key={i} style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '12px',
+                  opacity: 0,
+                  animation: `verifyFadeUp 0.5s ${0.3 + i * 0.1}s cubic-bezier(0.16,1,0.3,1) forwards`,
+                }}>
+                  <div style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: '8px',
+                    background: 'rgba(99,102,241,0.1)',
+                    border: '1px solid rgba(99,102,241,0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#818cf8',
+                    flexShrink: 0,
+                  }}>
+                    {feature.icon}
+                  </div>
+                  <div>
+                    <div style={{
+                      fontSize: '0.88rem',
+                      fontWeight: 600,
+                      color: '#fafafa',
+                      marginBottom: '2px',
+                      fontFamily: "'Inter', sans-serif",
+                    }}>{feature.title}</div>
+                    <div style={{
+                      fontSize: '0.8rem',
+                      color: '#71717a',
+                      fontFamily: "'Inter', sans-serif",
+                    }}>{feature.desc}</div>
+                  </div>
                 </div>
-              )}
-
-              <button
-                type="button"
-                onClick={() => { setVerifying(false); setError(''); setOtpError(''); setOtp(Array(6).fill('')); }}
-                style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '0.85rem', cursor: 'pointer', fontFamily: "'Inter', sans-serif", fontWeight: 500 }}
-              >
-                ← Back to sign up
-              </button>
+              ))}
             </div>
           </div>
         </div>
 
+        {/* Styles */}
         <style>{`
-          @keyframes loginFadeUp {
-            from { opacity: 0; transform: translateY(18px); }
-            to   { opacity: 1; transform: translateY(0); }
+          @keyframes verifyFadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
           }
-          @keyframes spin {
+          @keyframes verifySpin {
             to { transform: rotate(360deg); }
           }
-          .signup-page input::placeholder { color: #a1a1aa !important; }
-          .signup-page input:focus { outline: none !important; }
+          @keyframes verifyPulse {
+            0%, 100% { opacity: 0.5; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.05); }
+          }
+          @keyframes verifyCheckPop {
+            0% { opacity: 0; transform: scale(0.5); }
+            50% { transform: scale(1.1); }
+            100% { opacity: 1; transform: scale(1); }
+          }
+          @keyframes verifyFloat {
+            0%, 100% { transform: translate(0, 0); }
+            33% { transform: translate(30px, -30px); }
+            66% { transform: translate(-20px, 20px); }
+          }
         `}</style>
-        <div id="clerk-captcha" style={{ position: 'fixed', bottom: 0, right: 0, zIndex: 9999 }} />
       </div>
     );
   }
@@ -579,7 +972,7 @@ export default function SignUpPage() {
               <button
                 suppressHydrationWarning
                 type="button"
-                onClick={() => handleOAuthSignUp('oauth_google')}
+                onClick={() => handleOAuthSignUp('google')}
                 disabled={isLoading}
                 style={{
                   flex: 1, height: '46px', border: '1.5px solid #e4e4e7', borderRadius: '10px',
@@ -600,7 +993,7 @@ export default function SignUpPage() {
               <button
                 suppressHydrationWarning
                 type="button"
-                onClick={() => handleOAuthSignUp('oauth_github')}
+                onClick={() => handleOAuthSignUp('github')}
                 disabled={isLoading}
                 style={{
                   flex: 1, height: '46px', border: '1.5px solid #e4e4e7', borderRadius: '10px',
@@ -741,7 +1134,6 @@ export default function SignUpPage() {
           .signup-page > div:first-child { padding: 2rem 1.5rem !important; }
         }
       `}</style>
-      <div id="clerk-captcha" style={{ position: 'fixed', bottom: 0, right: 0, zIndex: 9999 }} />
     </div>
   );
 }

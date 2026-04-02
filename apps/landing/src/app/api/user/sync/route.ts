@@ -6,51 +6,57 @@ export const runtime = 'nodejs';
 // This is a simpler alternative to webhooks — works immediately on the client side
 
 import { NextRequest, NextResponse } from 'next/server';
-import { auth, currentUser } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
+import { getFirebaseUser } from '@/lib/firebase-admin';
 import { syncUser } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
     try {
-        // Authenticate the request via Clerk
-        const { userId } = await auth();
+        // Authenticate the request via Firebase session cookie
+        const authUser = await auth(req);
 
-        if (!userId) {
+        if (!authUser) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
             );
         }
 
-        // Get full user data from Clerk
-        const user = await currentUser();
+        // Get full user data from Firebase
+        const firebaseUser = await getFirebaseUser(authUser.uid);
 
-        if (!user) {
+        if (!firebaseUser) {
             return NextResponse.json(
-                { error: 'User not found in Clerk' },
+                { error: 'User not found in Firebase' },
                 { status: 404 }
             );
         }
 
-        const primaryEmail = user.emailAddresses.find(
-            (e) => e.id === user.primaryEmailAddressId
-        )?.emailAddress || user.emailAddresses[0]?.emailAddress;
-
-        if (!primaryEmail) {
+        if (!firebaseUser.email) {
             return NextResponse.json(
                 { error: 'User has no email address' },
                 { status: 400 }
             );
         }
 
+        // Parse name from Firebase display name
+        const displayName = firebaseUser.displayName || '';
+        const [firstName = '', ...lastNameParts] = displayName.split(' ');
+        const lastName = lastNameParts.join(' ');
+        
+        // Determine provider from Firebase
+        const providerData = firebaseUser.providerData?.[0];
+        const provider = providerData?.providerId?.replace('.com', '') || 'email';
+
         // Sync to both databases
         const result = await syncUser({
-            clerkId: user.id,
-            email: primaryEmail,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            fullName: user.fullName,
-            imageUrl: user.imageUrl,
-            provider: user.externalAccounts?.[0]?.provider || 'email',
+            firebaseUid: authUser.uid,
+            email: firebaseUser.email,
+            firstName: firstName || null,
+            lastName: lastName || null,
+            fullName: displayName || null,
+            imageUrl: firebaseUser.photoURL || null,
+            provider: provider,
         });
 
         return NextResponse.json({

@@ -203,6 +203,21 @@ async function _bootstrap(): Promise<void> {
     await exec(`CREATE INDEX IF NOT EXISTS idx_buckets_user ON buckets(user_id)`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_buckets_org ON buckets(org_id)`);
 
+    // Firebase Auth migration — add firebase_uid column, make clerk_id nullable
+    await exec(`
+      DO $$ BEGIN
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS firebase_uid VARCHAR(255) UNIQUE;
+      EXCEPTION WHEN duplicate_column THEN NULL;
+      END $$
+    `);
+    await exec(`
+      DO $$ BEGIN
+        ALTER TABLE users ALTER COLUMN clerk_id DROP NOT NULL;
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid)`);
+
     // key_hash MUST be unique (ON CONFLICT depends on it).
     // Drop any pre-existing non-unique index before creating the unique one.
     await exec(`
@@ -265,8 +280,8 @@ export async function syncUserToSupabase(data: {
     const result = await exec(
       `INSERT INTO users (clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-       ON CONFLICT (clerk_id) DO UPDATE SET
-         email       = EXCLUDED.email,
+       ON CONFLICT (email) DO UPDATE SET
+         clerk_id    = EXCLUDED.clerk_id,
          first_name  = EXCLUDED.first_name,
          last_name   = EXCLUDED.last_name,
          full_name   = EXCLUDED.full_name,
@@ -299,7 +314,8 @@ export async function syncUserToSupabase(data: {
 export async function syncOrgToSupabase(data: {
   name: string;
   slug: string;
-  ownerClerkId: string;
+  ownerFirebaseUid?: string;
+  ownerClerkId?: string;  // Legacy fallback
   orgUuid?: string | null;
   logoUrl?: string | null;
   description?: string | null;
@@ -309,12 +325,11 @@ export async function syncOrgToSupabase(data: {
   try {
     await ensureSupabaseSchema();
 
-    // Resolve owner user_id in Supabase
-    const userRes = await exec(
-      'SELECT id FROM users WHERE clerk_id = $1',
-      [data.ownerClerkId],
-    );
-    const ownerId = userRes?.rows[0]?.id;
+    // Resolve owner user_id in Supabase (try firebase_uid first, then clerk_id)
+    const ownerId = data.ownerFirebaseUid
+      ? (await exec('SELECT id FROM users WHERE firebase_uid = $1', [data.ownerFirebaseUid]))?.rows[0]?.id
+      : (await exec('SELECT id FROM users WHERE clerk_id = $1', [data.ownerClerkId]))?.rows[0]?.id;
+    
     if (!ownerId) {
       return { success: false, error: 'User not found in Supabase — sync user first' };
     }
@@ -373,7 +388,8 @@ export async function syncApiKeyToSupabase(data: {
   keyPrefix: string;
   keyHash: string;
   name: string;
-  ownerClerkId: string;
+  ownerFirebaseUid?: string;
+  ownerClerkId?: string;  // Legacy fallback
   scopes?: string[];
   expiresAt?: Date | null;
 }): Promise<{ success: boolean; error?: string }> {
@@ -382,12 +398,11 @@ export async function syncApiKeyToSupabase(data: {
   try {
     await ensureSupabaseSchema();
 
-    // Resolve user_id + org_id from Supabase
-    const userRes = await exec(
-      'SELECT id FROM users WHERE clerk_id = $1',
-      [data.ownerClerkId],
-    );
-    const userId = userRes?.rows[0]?.id;
+    // Resolve user_id + org_id from Supabase (try firebase_uid first, then clerk_id)
+    const userId = data.ownerFirebaseUid
+      ? (await exec('SELECT id FROM users WHERE firebase_uid = $1', [data.ownerFirebaseUid]))?.rows[0]?.id
+      : (await exec('SELECT id FROM users WHERE clerk_id = $1', [data.ownerClerkId]))?.rows[0]?.id;
+    
     if (!userId) {
       return { success: false, error: 'User not found in Supabase — sync user first' };
     }
@@ -505,7 +520,8 @@ export async function createUserMainBucket(data: {
  */
 export async function syncBucketToSupabase(data: {
   bucketId: string;
-  ownerClerkId: string;
+  ownerFirebaseUid?: string;
+  ownerClerkId?: string;  // Legacy fallback
   name: string;
   slug: string;
   description?: string | null;
@@ -516,11 +532,11 @@ export async function syncBucketToSupabase(data: {
   try {
     await ensureSupabaseSchema();
 
-    const userRes = await exec(
-      'SELECT id FROM users WHERE clerk_id = $1',
-      [data.ownerClerkId],
-    );
-    const userId = userRes?.rows[0]?.id;
+    // Look up user by firebase_uid first, then fall back to clerk_id
+    const userId = data.ownerFirebaseUid
+      ? (await exec('SELECT id FROM users WHERE firebase_uid = $1', [data.ownerFirebaseUid]))?.rows[0]?.id
+      : (await exec('SELECT id FROM users WHERE clerk_id = $1', [data.ownerClerkId]))?.rows[0]?.id;
+    
     if (!userId) {
       return { success: false, error: 'User not found in Supabase' };
     }

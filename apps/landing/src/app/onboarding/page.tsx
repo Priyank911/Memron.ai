@@ -1,6 +1,6 @@
 'use client';
 
-import { useUser } from '@clerk/nextjs';
+import { useAuth } from '@/components/auth-provider';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useState, useEffect } from 'react';
@@ -79,12 +79,16 @@ function Terminal({ apiKey }: { apiKey: string }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function OnboardingPage() {
-  const { user, isLoaded } = useUser();
+  const { user, isLoaded, firebaseUser } = useAuth();
   const router = useRouter();
+  
+  // Derive authLoading for compatibility
+  const authLoading = !isLoaded;
 
   const [step,        setStep]        = useState(1);
   const [anim,        setAnim]        = useState(false);
   const [error,       setError]       = useState('');
+  const [errorRetryable, setErrorRetryable] = useState(false);
   const [busy,        setBusy]        = useState(false);
   const [checking,    setChecking]    = useState(true);  // true while initial DB status check runs
 
@@ -102,8 +106,25 @@ export default function OnboardingPage() {
   const [keyAlreadyGenerated, setKeyAlreadyGenerated] = useState(false);
   const [existingKeyPrefix,   setExistingKeyPrefix]   = useState('');
 
+  // SECURITY: Block unverified email users from accessing onboarding
   useEffect(() => {
-    if (user?.fullName && !orgName) setOrgName(`${user.fullName}'s Workspace`);
+    if (!isLoaded || !user) return;
+
+    // Check if user has verified email
+    if (firebaseUser) {
+      const isOAuthUser = firebaseUser.providerData.some(p => p.providerId !== 'password');
+      
+      // If email user (not OAuth) and email is NOT verified, redirect to sign-up
+      if (!isOAuthUser && !firebaseUser.emailVerified) {
+        console.warn('[Onboarding] Blocking unverified user, redirecting to sign-up');
+        router.replace('/sign-up');
+        return;
+      }
+    }
+  }, [isLoaded, user, firebaseUser, router]);
+
+  useEffect(() => {
+    if (user?.displayName && !orgName) setOrgName(`${user.displayName}'s Workspace`);
   }, [user, orgName]);
 
   useEffect(() => {
@@ -155,35 +176,48 @@ export default function OnboardingPage() {
 
   const go = (n: number) => {
     setAnim(true);
-    setTimeout(() => { setStep(n); setAnim(false); setError(''); }, 180);
+    setTimeout(() => { setStep(n); setAnim(false); setError(''); setErrorRetryable(false); }, 180);
   };
 
   // step 1
   const createOrg = async () => {
-    if (!orgName.trim() || orgName.trim().length < 2) { setError('At least 2 characters required'); return; }
-    setBusy(true); setError('');
+    if (!orgName.trim() || orgName.trim().length < 2) { setError('At least 2 characters required'); setErrorRetryable(false); return; }
+    setBusy(true); setError(''); setErrorRetryable(false);
     try {
       const r = await fetch('/api/onboarding', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ step: 'create-organization', data: { orgName: orgName.trim(), orgDescription: orgDesc.trim() } }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'Failed');
+      if (!r.ok) {
+        const isDbError = r.status === 503 || d.error?.toLowerCase().includes('database') || d.error?.toLowerCase().includes('timeout');
+        setErrorRetryable(isDbError);
+        throw new Error(d.error || 'Failed');
+      }
       setOrg(d.organization); go(2);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { 
+      setError(e.message);
+      if (!errorRetryable && (e.message?.toLowerCase().includes('database') || e.message?.toLowerCase().includes('timeout') || e.message?.toLowerCase().includes('unavailable'))) {
+        setErrorRetryable(true);
+      }
+    }
     finally { setBusy(false); }
   };
 
   // step 2
   const genKey = async () => {
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setErrorRetryable(false);
     try {
       const r = await fetch('/api/onboarding', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ step: 'generate-api-key', data: { keyName: 'Default API Key' } }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'Failed');
+      if (!r.ok) {
+        const isDbError = r.status === 503 || d.error?.toLowerCase().includes('database') || d.error?.toLowerCase().includes('timeout');
+        setErrorRetryable(isDbError);
+        throw new Error(d.error || 'Failed');
+      }
       if (d.alreadyExists) {
         // Key was generated in a previous session — full key is gone, show recovery UI
         setKeyAlreadyGenerated(true);
@@ -191,7 +225,12 @@ export default function OnboardingPage() {
       } else {
         setApiKey(d.apiKey); setShowKey(true);
       }
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { 
+      setError(e.message);
+      if (!errorRetryable && (e.message?.toLowerCase().includes('database') || e.message?.toLowerCase().includes('timeout') || e.message?.toLowerCase().includes('unavailable'))) {
+        setErrorRetryable(true);
+      }
+    }
     finally { setBusy(false); }
   };
 
@@ -203,16 +242,26 @@ export default function OnboardingPage() {
 
   // step 3 / complete
   const finish = async () => {
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setErrorRetryable(false);
     try {
       const r = await fetch('/api/onboarding', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ step: 'complete', data: {} }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'Failed');
+      if (!r.ok) {
+        const isDbError = r.status === 503 || d.error?.toLowerCase().includes('database') || d.error?.toLowerCase().includes('timeout');
+        setErrorRetryable(isDbError);
+        throw new Error(d.error || 'Failed');
+      }
       router.replace('/dashboard');
-    } catch (e: any) { setError(e.message); setBusy(false); }
+    } catch (e: any) { 
+      setError(e.message);
+      if (!errorRetryable && (e.message?.toLowerCase().includes('database') || e.message?.toLowerCase().includes('timeout') || e.message?.toLowerCase().includes('unavailable'))) {
+        setErrorRetryable(true);
+      }
+      setBusy(false); 
+    }
   };
 
   if (!isLoaded || checking) {
@@ -279,12 +328,12 @@ export default function OnboardingPage() {
 
           {/* User chip */}
           <div style={S.chip}>
-            {user?.imageUrl && (
-              <img src={user.imageUrl} alt="" style={S.avatar} />
+            {user?.photoURL && (
+              <img src={user.photoURL} alt="" style={S.avatar} />
             )}
             <div style={{ minWidth: 0, flex: 1 }}>
-              <p style={S.chipName}>{user?.fullName || user?.firstName || 'Welcome'}</p>
-              <p style={S.chipEmail}>{user?.emailAddresses[0]?.emailAddress}</p>
+              <p style={S.chipName}>{user?.displayName || 'Welcome'}</p>
+              <p style={S.chipEmail}>{user?.email}</p>
             </div>
           </div>
         </aside>
@@ -302,8 +351,36 @@ export default function OnboardingPage() {
             {/* Error */}
             {error && (
               <div style={S.errBox}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
-                {error}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+                  <span style={{ flex: 1 }}>{error}</span>
+                </div>
+                {errorRetryable && (
+                  <button
+                    onClick={() => {
+                      setError('');
+                      setErrorRetryable(false);
+                      if (step === 1) createOrg();
+                      else if (step === 2 && !apiKey) genKey();
+                      else if (step === 3) finish();
+                    }}
+                    disabled={busy}
+                    style={{
+                      padding: '6px 12px',
+                      background: 'rgba(239,68,68,0.15)',
+                      border: '1px solid rgba(239,68,68,0.3)',
+                      borderRadius: 6,
+                      color: '#ef4444',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      cursor: busy ? 'not-allowed' : 'pointer',
+                      opacity: busy ? 0.5 : 1,
+                      fontFamily: "'Inter',sans-serif",
+                    }}
+                  >
+                    {busy ? 'Retrying...' : 'Retry'}
+                  </button>
+                )}
               </div>
             )}
 

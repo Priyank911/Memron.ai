@@ -1,6 +1,6 @@
 'use client';
 
-import { useUser } from '@clerk/nextjs';
+import { useAuth } from '@/components/auth-provider';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -16,12 +16,15 @@ interface Bucket {
 }
 
 export default function PlaygroundPage() {
-  const { user, isLoaded } = useUser();
+  const { user, isLoaded } = useAuth();
   const router = useRouter();
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [totalMemories, setTotalMemories] = useState(0);
   const [totalTokens, setTotalTokens] = useState(0);
   const [loading, setLoading] = useState(true);
+  
+  // Derive authLoading for compatibility
+  const authLoading = !isLoaded;
 
   const fetchData = useCallback(async () => {
     const opts: RequestInit = { credentials: 'include' };
@@ -74,7 +77,7 @@ export default function PlaygroundPage() {
       buckets={buckets}
       totalMemories={totalMemories}
       totalTokens={totalTokens}
-      userName={user?.firstName || 'there'}
+      userName={user?.displayName?.split(' ')[0] || 'there'}
       onBack={() => router.push('/dashboard')}
     />
   );

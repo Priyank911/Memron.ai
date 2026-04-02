@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import {
   getUserFromPostgres,
   getNotifications,
@@ -12,12 +12,12 @@ import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from 
  * GET /api/dashboard/notifications — Get notifications + unread count
  * Protected by: auth + rate limiter + server-side cache (10s TTL).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const rl = checkRateLimit(clerkId, 'notifications', CACHE_PROFILES.notifications);
+    const rl = checkRateLimit(authUser.uid, 'notifications', CACHE_PROFILES.notifications);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -25,9 +25,9 @@ export async function GET() {
       );
     }
 
-    const cacheKey = `notifications:${clerkId}`;
+    const cacheKey = `notifications:${authUser.uid}`;
     const data = await cachedQuery(cacheKey, async () => {
-      const user = await getUserFromPostgres(clerkId);
+      const user = await getUserFromPostgres(authUser.uid);
       if (!user) return { notifications: [], unreadCount: 0 };
 
       const [notifications, unreadCount] = await Promise.all([
@@ -63,10 +63,10 @@ export async function GET() {
  */
 export async function PATCH(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const user = await getUserFromPostgres(clerkId);
+    const user = await getUserFromPostgres(authUser.uid);
     if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json().catch(() => ({}));
@@ -75,7 +75,7 @@ export async function PATCH(request: NextRequest) {
     await markNotificationsRead(user.id, notifIds);
 
     // Invalidate the cache so next GET is fresh
-    invalidateEndpoint(clerkId, 'notifications');
+    invalidateEndpoint(authUser.uid, 'notifications');
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

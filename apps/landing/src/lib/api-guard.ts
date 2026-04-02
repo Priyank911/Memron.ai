@@ -2,7 +2,7 @@
  * API Route Guard — Wraps Next.js API handlers with production-grade protections.
  *
  * Provides:
- *   - Authentication (Clerk)
+ *   - Authentication (Firebase)
  *   - Rate limiting (sliding window per user)
  *   - Response caching (TTL + stale-while-revalidate)
  *   - Request coalescing (dedup concurrent identical requests)
@@ -19,28 +19,83 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { verifySessionCookie } from './firebase-admin';
 import { cachedQuery, checkRateLimit, invalidateEndpoint, type CacheConfig } from './api-cache';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface AuthResult {
+  uid: string;
+  email?: string;
+  emailVerified?: boolean;
+}
 
 interface GuardedRouteOptions<T> {
   /** Cache/rate-limit profile. Omit for no caching (writes). */
   cache?: CacheConfig;
   /** The endpoint name for cache key scoping */
   endpoint?: string;
-  /** The actual handler. Receives clerkUserId + optional request. */
+  /** The actual handler. Receives firebaseUid + optional request. */
   handler: (userId: string, request?: NextRequest) => Promise<T>;
   /** If true, invalidate cache for this endpoint after success (for mutations) */
   invalidateAfter?: boolean;
 }
 
+// ─── Auth Helper ─────────────────────────────────────────────────────────────
+
+/**
+ * Authenticate request using Firebase session cookie
+ * Returns user info or null if not authenticated
+ */
+export async function auth(request?: NextRequest): Promise<AuthResult | null> {
+  // Get session cookie from request
+  const sessionCookie = request?.cookies.get('__session')?.value;
+  
+  if (!sessionCookie || sessionCookie === 'undefined' || sessionCookie === 'null') {
+    return null;
+  }
+
+  // Quick JWT format check (3 dot-separated segments)
+  const parts = sessionCookie.split('.');
+  if (parts.length !== 3 || parts.some(p => p.length === 0)) {
+    return null;
+  }
+
+  const user = await verifySessionCookie(sessionCookie);
+  if (!user) {
+    return null;
+  }
+
+  return {
+    uid: user.uid,
+    email: user.email,
+    emailVerified: user.emailVerified,
+  };
+}
+
+/**
+ * Get Firebase user ID from request
+ * Throws if not authenticated
+ */
+export async function requireAuth(request: NextRequest): Promise<AuthResult> {
+  const user = await auth(request);
+  if (!user) {
+    throw new Error('Unauthorized');
+  }
+  return user;
+}
+
+// ─── Guarded Route Helper ────────────────────────────────────────────────────
+
 export function guardedRoute<T>(opts: GuardedRouteOptions<T>) {
-  return async (request?: NextRequest): Promise<NextResponse> => {
+  return async (request: NextRequest): Promise<NextResponse> => {
     try {
-      // 1. Authenticate
-      const { userId } = await auth();
-      if (!userId) {
+      // 1. Authenticate using Firebase session cookie
+      const user = await auth(request);
+      if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
+      const userId = user.uid;
 
       // 2. Rate limit
       if (opts.cache) {

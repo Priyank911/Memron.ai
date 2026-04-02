@@ -1,9 +1,11 @@
 'use client';
 
-import { useSignIn, useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
+import { useAuth } from '@/components/auth-provider';
+import { signInWithGoogle, signInWithGithub, signInWithEmail, createSession } from '@/lib/firebase-client';
+import { formatFirebaseError, isSilentError } from '@/lib/firebase-errors';
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -141,8 +143,7 @@ function LoginTransition({ phase }: { phase: Exclude<LoginPhase, 'form'> }) {
 
 // ─── Main login component ─────────────────────────────────────
 export default function LoginPage() {
-  const { isLoaded, signIn, setActive } = useSignIn();
-  const { isSignedIn } = useAuth();
+  const { user, isLoaded: authLoading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -150,14 +151,12 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loginPhase, setLoginPhase] = useState<LoginPhase>('form');
-  const [emailOtpMode, setEmailOtpMode] = useState(false);
-  const [emailOtpCode, setEmailOtpCode] = useState('');
   const router = useRouter();
   const redirectingRef = useRef(false);
 
   // Redirect if user lands on this page already signed in
   useEffect(() => {
-    if (!isSignedIn || redirectingRef.current) return;
+    if (authLoading || !user || redirectingRef.current) return;
     redirectingRef.current = true;
     setLoginPhase('syncing');
 
@@ -203,7 +202,7 @@ export default function LoginPage() {
     })();
 
     return () => { clearTimeout(timeout); controller.abort(); };
-  }, [isSignedIn, router]);
+  }, [user, authLoading, router]);
 
   /**
    * Resolve destination after login — sets cookie before navigating
@@ -259,154 +258,86 @@ export default function LoginPage() {
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isLoaded) return;
 
     try {
       setIsLoading(true);
       setError('');
       setLoginPhase('authenticating');
 
-      let result = await signIn.create({
-        identifier: email,
-        password,
-      });
-
-      // Handle multi-step auth — Clerk may require explicit first-factor verification
-      if (result.status === 'needs_first_factor') {
-        result = await signIn.attemptFirstFactor({
-          strategy: 'password',
-          password,
-        });
-      }
-
-      if (result.status === 'needs_second_factor') {
-        // Skip MFA — fall back to email OTP which bypasses TOTP
-        const freshSignIn = await signIn.create({ identifier: email });
-        const emailFactor = freshSignIn.supportedFirstFactors?.find(
-          (f: any) => f.strategy === 'email_code',
-        ) as any;
-
-        if (!emailFactor?.emailAddressId) {
-          setLoginPhase('form');
-          setError('Email verification is not available. Please contact support.');
-          return;
-        }
-
-        await signIn.prepareFirstFactor({
-          strategy: 'email_code',
-          emailAddressId: emailFactor.emailAddressId,
-        });
-
+      // Sign in with Firebase — returns UserCredential directly
+      const result = await signInWithEmail(email, password);
+      
+      if (!result.user) {
         setLoginPhase('form');
-        setEmailOtpMode(true);
-        setEmailOtpCode('');
-        setError('');
+        setError('Failed to sign in');
         return;
       }
 
-      if (result.status === 'complete') {
-        redirectingRef.current = true;
-        await setActive({ session: result.createdSessionId });
+      // Create session cookie (uses current auth user internally)
+      redirectingRef.current = true;
+      await createSession();
+      
+      const dest = await resolveAndNavigate();
 
-        const dest = await resolveAndNavigate();
+      // Show "ready" phase briefly before navigating
+      setLoginPhase('ready');
+      await delay(700);
 
-        // Show "ready" phase briefly before navigating
-        setLoginPhase('ready');
-        await delay(700);
-
-        // Navigate — cookie is already set, middleware will pass through
-        router.replace(dest);
-      } else {
-        // Unexpected status — don't leave the user stuck
-        setLoginPhase('form');
-        setError('Sign-in could not be completed. Please try again.');
-      }
+      // Navigate — cookie is already set, middleware will pass through
+      router.replace(dest);
     } catch (err: any) {
       setLoginPhase('form');
-      setError(err.errors?.[0]?.message || 'Failed to sign in');
+      const errorMessage = formatFirebaseError(err);
+      if (errorMessage) {
+        setError(errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleOAuthSignIn = async (strategy: 'oauth_google' | 'oauth_github') => {
-    if (!isLoaded) return;
-
-    try {
-      setIsLoading(true);
-      await signIn.authenticateWithRedirect({
-        strategy,
-        redirectUrl: '/sso-callback',
-        redirectUrlComplete: '/sso-callback',
-      });
-    } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Failed to sign in');
-      setIsLoading(false);
-    }
-  };
-
-
-
-
-
-  const handleEmailOtpSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isLoaded || !signIn) return;
-
+  const handleOAuthSignIn = async (provider: 'google' | 'github') => {
     try {
       setIsLoading(true);
       setError('');
       setLoginPhase('authenticating');
 
-      const result = await signIn.attemptFirstFactor({
-        strategy: 'email_code',
-        code: emailOtpCode.trim(),
-      });
+      const result = provider === 'google' 
+        ? await signInWithGoogle() 
+        : await signInWithGithub();
 
-      if (result.status === 'complete') {
-        redirectingRef.current = true;
-        await setActive({ session: result.createdSessionId });
-        const dest = await resolveAndNavigate();
-        setLoginPhase('ready');
-        await delay(700);
-        router.replace(dest);
-      } else {
+      if (!result.user) {
         setLoginPhase('form');
-        setError('Verification could not be completed. Please try again.');
+        setError(`Failed to sign in with ${provider}`);
+        return;
       }
+
+      // Create session cookie (uses current auth user internally)
+      redirectingRef.current = true;
+      await createSession();
+
+      const dest = await resolveAndNavigate();
+
+      // Show "ready" phase briefly before navigating
+      setLoginPhase('ready');
+      await delay(700);
+
+      // Navigate
+      router.replace(dest);
     } catch (err: any) {
       setLoginPhase('form');
-      setError(err.errors?.[0]?.message || 'Invalid code. Check your email and try again.');
+      // Check if user just closed the popup - silently return
+      if (isSilentError(err)) {
+        // User closed popup, just reset state, no error message
+        return;
+      }
+      const errorMessage = formatFirebaseError(err);
+      if (errorMessage) {
+        setError(errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleResendEmailOtp = async () => {
-    if (!isLoaded || !signIn) return;
-    try {
-      setError('');
-      const freshSignIn = await signIn.create({ identifier: email });
-      const emailFactor = freshSignIn.supportedFirstFactors?.find(
-        (f: any) => f.strategy === 'email_code',
-      ) as any;
-      if (emailFactor?.emailAddressId) {
-        await signIn.prepareFirstFactor({
-          strategy: 'email_code',
-          emailAddressId: emailFactor.emailAddressId,
-        });
-      }
-      setError('');
-      setEmailOtpCode('');
-    } catch {
-      setError('Failed to resend code. Try again.');
-    }
-  };
-
-  const handleBackToLogin = () => {
-    setEmailOtpMode(false);
-    setEmailOtpCode('');
-    setError('');
   };
 
   // Show transition overlay when not in form phase
@@ -467,155 +398,6 @@ export default function LoginPage() {
           </div>
 
           {/* Heading */}
-          {emailOtpMode ? (
-            <>
-              <h1 style={{
-                fontFamily: "'Space Grotesk', sans-serif",
-                fontSize: '1.85rem',
-                fontWeight: 700,
-                color: '#09090b',
-                letterSpacing: '-0.03em',
-                marginBottom: '0.4rem',
-              }}>Check your email</h1>
-              <p style={{
-                fontSize: '0.92rem',
-                color: '#71717a',
-                lineHeight: 1.55,
-                marginBottom: '2rem',
-                fontFamily: "'Inter', sans-serif",
-              }}>
-                We sent a verification code to <strong style={{ color: '#09090b' }}>{email}</strong>. Enter it below to sign in.
-              </p>
-
-              {error && (
-                <div style={{
-                  padding: '10px 14px',
-                  marginBottom: '1rem',
-                  background: '#fef2f2',
-                  border: '1px solid #fecaca',
-                  borderRadius: '10px',
-                  color: '#dc2626',
-                  fontSize: '0.85rem',
-                  fontFamily: "'Inter', sans-serif",
-                }}>{error}</div>
-              )}
-
-              <form onSubmit={handleEmailOtpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <label htmlFor="email-otp" style={{
-                    fontSize: '0.78rem',
-                    fontWeight: 600,
-                    color: '#3f3f46',
-                    letterSpacing: '0.02em',
-                    fontFamily: "'Inter', sans-serif",
-                  }}>Verification code</label>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    background: '#fafafa',
-                    border: '1.5px solid #e4e4e7',
-                    borderRadius: '10px',
-                    padding: '0 14px',
-                    height: '48px',
-                  }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="2" y="4" width="20" height="16" rx="2" />
-                      <path d="M22 7l-10 5L2 7" />
-                    </svg>
-                    <input
-                      id="email-otp"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      autoFocus
-                      maxLength={6}
-                      value={emailOtpCode}
-                      onChange={(e) => setEmailOtpCode(e.target.value.replace(/\D/g, ''))}
-                      placeholder="000000"
-                      required
-                      style={{
-                        flex: 1,
-                        border: 'none',
-                        background: 'transparent',
-                        fontSize: '1.2rem',
-                        color: '#09090b',
-                        outline: 'none',
-                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                        letterSpacing: '0.35em',
-                        textAlign: 'center',
-                        boxShadow: 'none',
-                      }}
-                      onFocus={(e) => e.target.style.boxShadow = 'none'}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading || emailOtpCode.length !== 6}
-                  style={{
-                    width: '100%',
-                    height: '48px',
-                    border: 'none',
-                    borderRadius: '10px',
-                    background: '#09090b',
-                    color: '#fff',
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: '0.92rem',
-                    fontWeight: 600,
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    opacity: isLoading || emailOtpCode.length !== 6 ? 0.6 : 1,
-                    outline: 'none',
-                  }}
-                  onMouseOver={(e) => { if (!isLoading) { (e.target as HTMLElement).style.background = '#18181b'; } }}
-                  onMouseOut={(e) => { (e.target as HTMLElement).style.background = '#09090b'; }}
-                  onFocus={(e) => { (e.target as HTMLElement).style.outline = 'none'; (e.target as HTMLElement).style.boxShadow = 'none'; }}
-                >
-                  {isLoading ? 'Verifying...' : 'Verify & Sign in'}
-                </button>
-
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
-                  <button
-                    type="button"
-                    onClick={handleResendEmailOtp}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#6366f1',
-                      fontSize: '0.84rem',
-                      fontWeight: 500,
-                      cursor: 'pointer',
-                      fontFamily: "'Inter', sans-serif",
-                      padding: '4px 0',
-                    }}
-                  >
-                    Resend code
-                  </button>
-                </div>
-              </form>
-
-              <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-                <button
-                  type="button"
-                  onClick={handleBackToLogin}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#6366f1',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    fontFamily: "'Inter', sans-serif",
-                    padding: 0,
-                  }}
-                >
-                  ← Back to sign in
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
           <h1 style={{
             fontFamily: "'Space Grotesk', sans-serif",
             fontSize: '1.85rem',
@@ -841,7 +623,7 @@ export default function LoginPage() {
               <button
                 suppressHydrationWarning
                 type="button"
-                onClick={() => handleOAuthSignIn('oauth_google')}
+                onClick={() => handleOAuthSignIn('google')}
                 disabled={isLoading}
                 style={{
                   flex: 1,
@@ -893,7 +675,7 @@ export default function LoginPage() {
               <button
                 suppressHydrationWarning
                 type="button"
-                onClick={() => handleOAuthSignIn('oauth_github')}
+                onClick={() => handleOAuthSignIn('github')}
                 disabled={isLoading}
                 style={{
                   flex: 1,
@@ -943,8 +725,6 @@ export default function LoginPage() {
               <a href="/sign-up" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 600 }}>Sign up</a>
             </p>
           </div>
-            </>
-          )}
         </div>
       </div>
 
@@ -1198,8 +978,6 @@ export default function LoginPage() {
           }
         }
       `}</style>
-      {/* Clerk CAPTCHA widget mount point */}
-      <div id="clerk-captcha" style={{ position: 'fixed', bottom: 0, right: 0, zIndex: 9999 }} />
     </div>
   );
 }

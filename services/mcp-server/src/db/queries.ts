@@ -694,7 +694,8 @@ export async function revokeAllRefreshTokens(userId: number, clientId: string): 
 export interface UserRow {
   id: number;
   universal_id: string;
-  clerk_id: string;
+  firebase_uid: string | null;
+  clerk_id: string | null;
   email: string;
   first_name: string | null;
   last_name: string | null;
@@ -729,6 +730,7 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
       user: {
         id: cached.id,
         universal_id: cached.universal_id,
+        firebase_uid: cached.firebase_uid,
         clerk_id: cached.clerk_id,
         email: cached.email,
         first_name: cached.first_name,
@@ -753,6 +755,7 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
         user: {
           id: result.id,
           universal_id: result.universal_id,
+          firebase_uid: result.firebase_uid,
           clerk_id: result.clerk_id,
           email: result.email,
           first_name: result.first_name,
@@ -788,7 +791,8 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
       const userData: CachedUser = {
         id: row.id,
         universal_id: row.universal_id,
-        clerk_id: row.clerk_id,
+        firebase_uid: row.firebase_uid ?? null,
+        clerk_id: row.clerk_id ?? null,
         email: row.email,
         first_name: row.first_name,
         last_name: row.last_name,
@@ -829,6 +833,7 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
       user: {
         id: userData.id,
         universal_id: userData.universal_id,
+        firebase_uid: userData.firebase_uid,
         clerk_id: userData.clerk_id,
         email: userData.email,
         first_name: userData.first_name,

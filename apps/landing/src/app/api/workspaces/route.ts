@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import {
   getUserFromPostgres,
   getUserOrganizations,
@@ -14,12 +14,12 @@ import { checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
 /**
  * GET /api/workspaces — List all workspaces (organizations) for the current user
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const dbUser = await getUserFromPostgres(clerkId);
+    const dbUser = await getUserFromPostgres(authUser.uid);
     if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const orgs = await getUserOrganizations(dbUser.id);
@@ -46,11 +46,11 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     // Rate limit
-    const rl = checkRateLimit(clerkId, 'workspace-create', CACHE_PROFILES.stats);
+    const rl = checkRateLimit(authUser.uid, 'workspace-create', CACHE_PROFILES.stats);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const dbUser = await getUserFromPostgres(clerkId);
+    const dbUser = await getUserFromPostgres(authUser.uid);
     if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json();
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
       await syncOrgToSupabase({
         name: result.organization!.name,
         slug: result.organization!.slug,
-        ownerClerkId: clerkId,
+        ownerFirebaseUid: authUser.uid,
         orgUuid: result.organization!.org_id,
         description: description?.trim() || null,
       });
@@ -134,10 +134,10 @@ export async function POST(request: NextRequest) {
  */
 export async function PATCH(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const dbUser = await getUserFromPostgres(clerkId);
+    const dbUser = await getUserFromPostgres(authUser.uid);
     if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json();

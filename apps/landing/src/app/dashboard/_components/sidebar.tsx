@@ -82,11 +82,9 @@ interface SidebarProps {
   theme: ThemeMode;
   onThemeChange: (t: ThemeMode) => void;
   user: {
-    fullName?: string | null;
-    firstName?: string | null;
-    username?: string | null;
-    imageUrl?: string;
-    emailAddresses?: { emailAddress: string }[];
+    displayName?: string | null;
+    photoURL?: string | null;
+    email?: string | null;
   } | null;
 }
 
@@ -116,8 +114,19 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
     return () => document.removeEventListener('mousedown', handler);
   }, [userMenuOpen]);
 
-  const displayName = user?.fullName || user?.username || user?.firstName || 'User';
-  const email = user?.emailAddresses?.[0]?.emailAddress || '';
+  // Extract best display name with fallbacks
+  const getDisplayName = () => {
+    if (user?.displayName) return user.displayName;
+    // Fallback: extract name from email (before @)
+    if (user?.email) {
+      const emailName = user.email.split('@')[0];
+      // Capitalize first letter
+      return emailName.charAt(0).toUpperCase() + emailName.slice(1);
+    }
+    return 'User';
+  };
+  const displayName = getDisplayName();
+  const email = user?.email || '';
 
   return (
     <aside className="mm-sidebar">
@@ -201,8 +210,8 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
         {/* User trigger */}
         <button className="mm-sb-user-trigger" onClick={() => setUserMenuOpen(p => !p)}>
           <div className="mm-sb-user-avatar">
-            {user?.imageUrl ? (
-              <Image src={user.imageUrl} alt="" width={32} height={32} style={{ borderRadius: '50%', objectFit: 'cover' }} />
+            {user?.photoURL ? (
+              <Image src={user.photoURL} alt="" width={32} height={32} style={{ borderRadius: '50%', objectFit: 'cover' }} />
             ) : (
               <div className="mm-sb-avatar-fallback">{displayName[0]}</div>
             )}

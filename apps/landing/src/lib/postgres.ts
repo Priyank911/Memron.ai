@@ -26,7 +26,8 @@ const pool = isPgConfigured ? new Pool({
     ssl: sslConfig,
     max: 10, // Maximum connections in pool
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000, // Fail fast — Supabase is the primary; PG is fallback
+    connectionTimeoutMillis: 10000, // Increased from 2s to 10s for slow/remote connections
+    statement_timeout: 10000, // Max time for query execution (10s)
 }) : null;
 
 // Schema initialization state - use global to persist across hot reloads
@@ -255,6 +256,7 @@ export async function initializeSchema(): Promise<void> {
 
     const createIndexes = `
     CREATE INDEX IF NOT EXISTS idx_users_clerk_id ON users(clerk_id);
+    CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_universal_id ON users(universal_id);
     CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
@@ -324,6 +326,12 @@ export async function initializeSchema(): Promise<void> {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='onboarded_at') THEN
         ALTER TABLE users ADD COLUMN onboarded_at TIMESTAMPTZ;
       END IF;
+      -- Migration: Add firebase_uid column for Firebase Auth
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='firebase_uid') THEN
+        ALTER TABLE users ADD COLUMN firebase_uid VARCHAR(255) UNIQUE;
+      END IF;
+      -- Migration: Make clerk_id nullable (for new users who only have firebase_uid)
+      ALTER TABLE users ALTER COLUMN clerk_id DROP NOT NULL;
     END;
     $$;
   `;
@@ -531,7 +539,8 @@ export async function initializeSchema(): Promise<void> {
 export interface PgUser {
     id: number;
     universal_id: string;
-    clerk_id: string;
+    clerk_id: string | null;
+    firebase_uid: string | null;
     email: string;
     first_name: string | null;
     last_name: string | null;
@@ -576,9 +585,11 @@ export interface PgApiKey {
 
 /**
  * Save or update a user in PostgreSQL (upsert)
+ * Supports both firebaseUid (new) and clerkId (legacy) for backwards compatibility.
  */
 export async function saveUserToPostgres(userData: {
-    clerkId: string;
+    firebaseUid?: string;
+    clerkId?: string;
     email: string;
     firstName?: string | null;
     lastName?: string | null;
@@ -593,33 +604,70 @@ export async function saveUserToPostgres(userData: {
         };
     }
 
+    // Need at least one identifier
+    const firebaseUid = userData.firebaseUid || null;
+    const clerkId = userData.clerkId || null;
+    if (!firebaseUid && !clerkId) {
+        return { 
+            success: false, 
+            error: 'Either firebaseUid or clerkId is required' 
+        };
+    }
+
     try {
         // Ensure schema exists before first write
         await ensureSchemaForWrite();
 
-        const result = await pool.query(
-            `INSERT INTO users (clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-       ON CONFLICT (clerk_id) DO UPDATE SET
-         email = EXCLUDED.email,
-         first_name = EXCLUDED.first_name,
-         last_name = EXCLUDED.last_name,
-         full_name = EXCLUDED.full_name,
-         image_url = EXCLUDED.image_url,
-         last_login_at = NOW()
-       RETURNING *`,
-            [
-                userData.clerkId,
-                userData.email,
-                userData.firstName || null,
-                userData.lastName || null,
-                userData.fullName || null,
-                userData.imageUrl || null,
-                userData.provider || 'email',
-            ]
-        );
-
-        return { success: true, user: result.rows[0] as PgUser };
+        // Use firebase_uid as primary key if available, otherwise fall back to clerk_id
+        if (firebaseUid) {
+            const result = await pool.query(
+                `INSERT INTO users (firebase_uid, clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+           ON CONFLICT (firebase_uid) DO UPDATE SET
+             email = EXCLUDED.email,
+             first_name = COALESCE(EXCLUDED.first_name, users.first_name),
+             last_name = COALESCE(EXCLUDED.last_name, users.last_name),
+             full_name = COALESCE(EXCLUDED.full_name, users.full_name),
+             image_url = COALESCE(EXCLUDED.image_url, users.image_url),
+             last_login_at = NOW()
+           RETURNING *`,
+                [
+                    firebaseUid,
+                    clerkId,
+                    userData.email,
+                    userData.firstName || null,
+                    userData.lastName || null,
+                    userData.fullName || null,
+                    userData.imageUrl || null,
+                    userData.provider || 'email',
+                ]
+            );
+            return { success: true, user: result.rows[0] as PgUser };
+        } else {
+            // Legacy path: use clerk_id
+            const result = await pool.query(
+                `INSERT INTO users (clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+           ON CONFLICT (clerk_id) DO UPDATE SET
+             email = EXCLUDED.email,
+             first_name = COALESCE(EXCLUDED.first_name, users.first_name),
+             last_name = COALESCE(EXCLUDED.last_name, users.last_name),
+             full_name = COALESCE(EXCLUDED.full_name, users.full_name),
+             image_url = COALESCE(EXCLUDED.image_url, users.image_url),
+             last_login_at = NOW()
+           RETURNING *`,
+                [
+                    clerkId,
+                    userData.email,
+                    userData.firstName || null,
+                    userData.lastName || null,
+                    userData.fullName || null,
+                    userData.imageUrl || null,
+                    userData.provider || 'email',
+                ]
+            );
+            return { success: true, user: result.rows[0] as PgUser };
+        }
     } catch (error: any) {
         console.error('[PostgreSQL] Failed to save user:', error.message);
         return { success: false, error: error.message };
@@ -627,10 +675,11 @@ export async function saveUserToPostgres(userData: {
 }
 
 /**
- * Get a user from PostgreSQL by clerkId
+ * Get a user from PostgreSQL by userId (firebase_uid or clerk_id)
+ * Tries firebase_uid first, then falls back to clerk_id for legacy users.
  */
 export async function getUserFromPostgres(
-    clerkId: string
+    userId: string
 ): Promise<PgUser | null> {
     if (!pool) return null;
 
@@ -641,10 +690,21 @@ export async function getUserFromPostgres(
 
     try {
         await ensureSchema();
-        const result = await pool.query(
-            'SELECT * FROM users WHERE clerk_id = $1',
-            [clerkId]
+        
+        // Try firebase_uid first (new users)
+        let result = await pool.query(
+            'SELECT * FROM users WHERE firebase_uid = $1',
+            [userId]
         );
+        
+        // Fall back to clerk_id (legacy users)
+        if (result.rows.length === 0) {
+            result = await pool.query(
+                'SELECT * FROM users WHERE clerk_id = $1',
+                [userId]
+            );
+        }
+        
         globalForSchema.pgConnectionOk = true;
         globalForSchema.pgCheckedAt = Date.now();
         return result.rows.length > 0 ? (result.rows[0] as PgUser) : null;
@@ -942,15 +1002,29 @@ export async function revokeApiKey(keyId: string, userId: number): Promise<boole
 /**
  * Mark user as onboarded and record the timestamp
  */
-export async function markUserOnboarded(clerkId: string): Promise<boolean> {
+/**
+ * Mark user as onboarded
+ * Supports both firebase_uid (new) and clerk_id (legacy) lookups.
+ */
+export async function markUserOnboarded(userId: string): Promise<boolean> {
     if (!pool) return false;
 
     try {
         await ensureSchema();
-        const result = await pool.query(
-            'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE clerk_id = $1',
-            [clerkId]
+        
+        // Try firebase_uid first, then clerk_id
+        let result = await pool.query(
+            'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE firebase_uid = $1',
+            [userId]
         );
+        
+        if ((result.rowCount ?? 0) === 0) {
+            result = await pool.query(
+                'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE clerk_id = $1',
+                [userId]
+            );
+        }
+        
         return (result.rowCount ?? 0) > 0;
     } catch (error: any) {
         console.error('[PostgreSQL] Failed to mark user onboarded:', error.message);
@@ -960,16 +1034,26 @@ export async function markUserOnboarded(clerkId: string): Promise<boolean> {
 
 /**
  * Check if user is onboarded
+ * Supports both firebase_uid (new) and clerk_id (legacy) lookups.
  */
-export async function isUserOnboarded(clerkId: string): Promise<boolean> {
+export async function isUserOnboarded(userId: string): Promise<boolean> {
     if (!pool) return false;
 
     try {
         await ensureSchema();
-        const result = await pool.query(
-            'SELECT is_onboarded FROM users WHERE clerk_id = $1',
-            [clerkId]
+        
+        // Try firebase_uid first, then clerk_id
+        let result = await pool.query(
+            'SELECT is_onboarded FROM users WHERE firebase_uid = $1',
+            [userId]
         );
+        
+        if (result.rows.length === 0) {
+            result = await pool.query(
+                'SELECT is_onboarded FROM users WHERE clerk_id = $1',
+                [userId]
+            );
+        }
         return result.rows.length > 0 && result.rows[0].is_onboarded === true;
     } catch (error: any) {
         console.error('[PostgreSQL] Failed to check onboarding status:', error.message);

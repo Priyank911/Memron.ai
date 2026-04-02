@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import { supaQuery, resolveSupabaseUser } from '@/lib/supabase-read';
 import { getUserFromPostgres, createNotification } from '@/lib/postgres';
 import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
@@ -15,11 +15,11 @@ import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from 
  */
 export async function POST(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     // Rate limit sharing to 10 requests per minute
-    const rl = checkRateLimit(clerkId, 'buckets', { ...CACHE_PROFILES.buckets, rateLimit: 10 });
+    const rl = checkRateLimit(authUser.uid, 'buckets', { ...CACHE_PROFILES.buckets, rateLimit: 10 });
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -28,13 +28,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Resolve sender in SUPABASE (same DB the bucket list comes from)
-    const supaSender = await resolveSupabaseUser(clerkId);
+    const supaSender = await resolveSupabaseUser(authUser.uid);
     if (!supaSender) {
       return NextResponse.json({ error: 'User not found in database' }, { status: 404 });
     }
 
     // Also get Aiven user for notifications (postgres.ts operates on Aiven)
-    const aivenSender = await getUserFromPostgres(clerkId);
+    const aivenSender = await getUserFromPostgres(authUser.uid);
 
     const body = await request.json().catch(() => ({}));
     const { bucketId, bucketSlug, email, message } = body;
@@ -300,7 +300,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    invalidateEndpoint(clerkId, 'buckets');
+    invalidateEndpoint(authUser.uid, 'buckets');
 
     return NextResponse.json({
       success: true,
@@ -321,12 +321,12 @@ export async function POST(request: NextRequest) {
 /**
  * GET /api/dashboard/buckets/share — List bucket shares (sent & received)
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const rl = checkRateLimit(clerkId, 'buckets', CACHE_PROFILES.buckets);
+    const rl = checkRateLimit(authUser.uid, 'buckets', CACHE_PROFILES.buckets);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -335,9 +335,9 @@ export async function GET() {
     }
 
     const data = await cachedQuery(
-      `bucket-shares:${clerkId}`,
+      `bucket-shares:${authUser.uid}`,
       async () => {
-        const supaUser = await resolveSupabaseUser(clerkId);
+        const supaUser = await resolveSupabaseUser(authUser.uid);
         if (!supaUser) return { sent: [], received: [] };
 
     const [sentRes, receivedRes] = await Promise.all([

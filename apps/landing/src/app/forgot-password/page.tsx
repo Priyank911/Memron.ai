@@ -1,67 +1,14 @@
 'use client';
 
-import { useSignIn } from '@clerk/nextjs';
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState } from 'react';
 import Image from 'next/image';
+import { sendPasswordReset } from '@/lib/firebase-client';
 
 export default function ForgotPasswordPage() {
-  const { isLoaded, signIn } = useSignIn();
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [resetStage, setResetStage] = useState<'email' | 'code' | 'complete'>('email');
-  const [otp, setOtp] = useState<string[]>(Array(6).fill(''));
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const [otpError, setOtpError] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-
-  // ─── OTP helpers ─────────────────────────────────────────────
-  const otpValue = otp.join('');
-
-  const handleOtpChange = useCallback((index: number, value: string) => {
-    const digit = value.replace(/\D/g, '').slice(-1);
-    setOtp(prev => {
-      const next = [...prev];
-      next[index] = digit;
-      return next;
-    });
-    setOtpError('');
-    setError('');
-    if (digit && index < 5) {
-      otpRefs.current[index + 1]?.focus();
-    }
-  }, []);
-
-  const handleOtpKeyDown = useCallback((index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      otpRefs.current[index - 1]?.focus();
-    }
-    if (e.key === 'ArrowLeft' && index > 0) { e.preventDefault(); otpRefs.current[index - 1]?.focus(); }
-    if (e.key === 'ArrowRight' && index < 5) { e.preventDefault(); otpRefs.current[index + 1]?.focus(); }
-  }, [otp]);
-
-  const handleOtpPaste = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (!pasted) return;
-    setOtp(prev => {
-      const next = [...prev];
-      for (let i = 0; i < 6; i++) next[i] = pasted[i] || '';
-      return next;
-    });
-    setOtpError('');
-    setError('');
-    setTimeout(() => otpRefs.current[Math.min(pasted.length, 5)]?.focus(), 0);
-  }, []);
-
-  // Focus first OTP box when entering code stage
-  useEffect(() => {
-    if (resetStage === 'code') {
-      setTimeout(() => otpRefs.current[0]?.focus(), 200);
-    }
-  }, [resetStage]);
+  const [emailSent, setEmailSent] = useState(false);
 
   // ─── Shared styles ─────────────────────────────────────────
   const inputStyle: React.CSSProperties = {
@@ -91,47 +38,32 @@ export default function ForgotPasswordPage() {
     borderRadius: '10px', color: '#dc2626', fontSize: '0.85rem', fontFamily: "'Inter', sans-serif",
   };
 
-  const successBoxStyle: React.CSSProperties = {
-    padding: '10px 14px', marginBottom: '1rem', background: '#f0fdf4', border: '1px solid #bbf7d0',
-    borderRadius: '10px', color: '#16a34a', fontSize: '0.85rem', fontFamily: "'Inter', sans-serif",
-  };
-
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isLoaded) return;
 
     try {
       setIsLoading(true);
       setError('');
-      await signIn.create({ strategy: 'reset_password_email_code', identifier: email });
-      setSuccess('Check your email for a verification code');
-      setResetStage('code');
+      
+      await sendPasswordReset(email);
+      setEmailSent(true);
+      
     } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Failed to send reset email');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isLoaded) return;
-
-    try {
-      setIsLoading(true);
-      setError('');
-      const result = await signIn.attemptFirstFactor({
-        strategy: 'reset_password_email_code',
-        code: otpValue,
-        password: newPassword,
-      });
-
-      if (result.status === 'complete') {
-        setSuccess('Password reset successfully!');
-        setResetStage('complete');
+      console.error('[ForgotPassword] Error:', err);
+      
+      // Map Firebase error codes to user-friendly messages
+      const errorCode = err.code || '';
+      let message = err.message || 'Failed to send reset email';
+      
+      if (errorCode === 'auth/user-not-found') {
+        message = 'No account found with this email address.';
+      } else if (errorCode === 'auth/invalid-email') {
+        message = 'Please enter a valid email address.';
+      } else if (errorCode === 'auth/too-many-requests') {
+        message = 'Too many requests. Please try again later.';
       }
-    } catch (err: any) {
-      setError(err.errors?.[0]?.message || 'Failed to reset password');
+      
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -139,7 +71,7 @@ export default function ForgotPasswordPage() {
 
   // ─── Render different stages ──────────────────────────────
   const renderForm = () => {
-    if (resetStage === 'complete') {
+    if (emailSent) {
       return (
         <div style={{ textAlign: 'center' }}>
           {/* Success icon */}
@@ -148,15 +80,27 @@ export default function ForgotPasswordPage() {
             width: '64px', height: '64px', background: '#f0fdf4', borderRadius: '50%', marginBottom: '1.5rem',
           }}>
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 6L9 17l-5-5" />
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M22 7l-10 5L2 7" />
             </svg>
           </div>
 
           <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: '1.65rem', fontWeight: 700, color: '#09090b', marginBottom: '0.4rem' }}>
-            Password Reset!
+            Check Your Email
           </h1>
           <p style={{ fontSize: '0.9rem', color: '#71717a', marginBottom: '2rem', fontFamily: "'Inter', sans-serif" }}>
-            Your password has been reset successfully. Sign in with your new password.
+            We've sent a password reset link to <span style={{ color: '#09090b', fontWeight: 600 }}>{email}</span>. Click the link in the email to reset your password.
+          </p>
+
+          <p style={{ fontSize: '0.85rem', color: '#a1a1aa', marginBottom: '1.5rem', fontFamily: "'Inter', sans-serif" }}>
+            Didn't receive the email? Check your spam folder or{' '}
+            <button
+              type="button"
+              onClick={() => { setEmailSent(false); setError(''); }}
+              style={{ background: 'none', border: 'none', color: '#6366f1', cursor: 'pointer', fontWeight: 600, fontFamily: "'Inter', sans-serif", fontSize: 'inherit' }}
+            >
+              try again
+            </button>
           </p>
 
           <a href="/login" style={{
@@ -165,151 +109,47 @@ export default function ForgotPasswordPage() {
             fontFamily: "'Inter', sans-serif", fontSize: '0.92rem', fontWeight: 600, textDecoration: 'none',
             transition: 'background 0.25s',
           }}>
-            Continue to Sign In
+            Back to Sign In
           </a>
         </div>
       );
     }
 
-    if (resetStage === 'code') {
-      return (
-        <>
-          {/* Key icon */}
-          <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: '64px', height: '64px', background: '#eef2ff', borderRadius: '50%', marginBottom: '1rem',
-            }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-              </svg>
-            </div>
-
-            <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: '1.65rem', fontWeight: 700, color: '#09090b', marginBottom: '0.4rem' }}>
-              Reset Password
-            </h1>
-            <p style={{ fontSize: '0.9rem', color: '#71717a', fontFamily: "'Inter', sans-serif" }}>
-              Enter the code sent to <span style={{ color: '#09090b', fontWeight: 600 }}>{email}</span>
-            </p>
-          </div>
-
-          {success && <div style={successBoxStyle}>{success}</div>}
-          {error && <div style={errorBoxStyle}>{error}</div>}
-          {otpError && (
-            <div style={errorBoxStyle}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
-                {otpError}
-              </div>
-            </div>
-          )}
-
-          <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={labelStyle}>Verification Code</label>
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                {otp.map((digit, i) => (
-                  <input
-                    key={i}
-                    ref={el => { otpRefs.current[i] = el; }}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    value={digit}
-                    onChange={e => handleOtpChange(i, e.target.value)}
-                    onKeyDown={e => handleOtpKeyDown(i, e)}
-                    onPaste={i === 0 ? handleOtpPaste : undefined}
-                    maxLength={1}
-                    disabled={isLoading}
-                    style={{
-                      width: 48, height: 56, textAlign: 'center' as const,
-                      fontSize: '1.35rem', fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif",
-                      color: '#09090b', background: isLoading ? '#f4f4f5' : '#fafafa',
-                      border: `1.5px solid ${otpError ? '#fca5a5' : digit ? '#6366f1' : '#e4e4e7'}`,
-                      borderRadius: 10, outline: 'none',
-                      transition: 'border-color 0.2s, box-shadow 0.2s',
-                      caretColor: '#6366f1',
-                    }}
-                    onFocus={e => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.12)'; }}
-                    onBlur={e => { e.currentTarget.style.borderColor = digit ? '#6366f1' : '#e4e4e7'; e.currentTarget.style.boxShadow = 'none'; }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={labelStyle}>New Password</label>
-              <div style={{ ...inputWrapStyle, position: 'relative' }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0110 0v4" />
-                </svg>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Min. 8 characters"
-                  required
-                  minLength={8}
-                  style={inputStyle}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#a1a1aa', padding: '4px', display: 'flex' }}
-                >
-                  {showPassword ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                    </svg>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <button type="submit" disabled={isLoading || otpValue.length !== 6} style={btnStyle}>
-              {isLoading ? 'Resetting...' : 'Reset Password'}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setResetStage('email'); setError(''); setSuccess(''); setOtp(Array(6).fill('')); setOtpError(''); }}
-              style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: '0.85rem', cursor: 'pointer', fontFamily: "'Inter', sans-serif", fontWeight: 500 }}
-            >
-              ← Back
-            </button>
-          </form>
-        </>
-      );
-    }
-
-    // ─── Email stage (default) ───────────────────────────────
+    // Email entry form
     return (
       <>
-        <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: '1.85rem', fontWeight: 700, color: '#09090b', letterSpacing: '-0.03em', marginBottom: '0.4rem' }}>
-          Forgot Password?
+        {/* Lock icon */}
+        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: '64px', height: '64px', background: '#eef2ff', borderRadius: '50%',
+          }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0110 0v4" />
+            </svg>
+          </div>
+        </div>
+
+        <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: '1.65rem', fontWeight: 700, color: '#09090b', marginBottom: '0.4rem', textAlign: 'center' }}>
+          Reset your password
         </h1>
-        <p style={{ fontSize: '0.92rem', color: '#71717a', lineHeight: 1.55, marginBottom: '2rem', fontFamily: "'Inter', sans-serif" }}>
-          No worries! Enter your email and we'll send you a reset code.
+        <p style={{ fontSize: '0.9rem', color: '#71717a', marginBottom: '2rem', fontFamily: "'Inter', sans-serif", textAlign: 'center' }}>
+          Enter your email and we'll send you a link to reset your password.
         </p>
 
         {error && <div style={errorBoxStyle}>{error}</div>}
 
-        <form onSubmit={handleRequestReset} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
+        <form onSubmit={handleRequestReset} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-            <label style={labelStyle}>Email Address</label>
+            <label style={labelStyle}>Email</label>
             <div style={inputWrapStyle}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="2" y="4" width="20" height="16" rx="2" />
                 <path d="M22 7l-10 5L2 7" />
               </svg>
               <input
+                suppressHydrationWarning
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -320,16 +160,16 @@ export default function ForgotPasswordPage() {
             </div>
           </div>
 
-          <button type="submit" disabled={isLoading} style={btnStyle}>
-            {isLoading ? 'Sending...' : 'Send Reset Code'}
+          <button suppressHydrationWarning type="submit" disabled={isLoading} style={btnStyle}>
+            {isLoading ? 'Sending...' : 'Send Reset Link'}
           </button>
-
-          <div style={{ textAlign: 'center' }}>
-            <a href="/login" style={{ fontSize: '0.85rem', color: '#6366f1', textDecoration: 'none', fontWeight: 500, fontFamily: "'Inter', sans-serif" }}>
-              ← Back to sign in
-            </a>
-          </div>
         </form>
+
+        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+          <a href="/login" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 600, fontSize: '0.85rem', fontFamily: "'Inter', sans-serif" }}>
+            ← Back to Sign In
+          </a>
+        </div>
       </>
     );
   };

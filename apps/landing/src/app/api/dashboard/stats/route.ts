@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
 import { cachedQuery, checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
 
@@ -7,15 +7,16 @@ import { cachedQuery, checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
  * GET /api/dashboard/stats — Real-time dashboard statistics
  *
  * Protected by: auth + rate limiter + server-side cache (30s TTL, 60s SWR).
- * Reads from Supabase (MCP database). User-scoped via clerk_id resolution.
+ * Reads from Supabase (MCP database). User-scoped via firebase_uid resolution.
  */
 export async function GET(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const user = await auth(request);
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const firebaseUid = user.uid;
 
     // Rate limit
-    const rl = checkRateLimit(clerkId, 'stats', CACHE_PROFILES.stats);
+    const rl = checkRateLimit(firebaseUid, 'stats', CACHE_PROFILES.stats);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -28,9 +29,9 @@ export async function GET(request: NextRequest) {
     const orgId = searchParams.get('orgId') || null;
 
     // Cache key scoped to user + time range + workspace
-    const cacheKey = `stats:${clerkId}:${range}:${orgId || 'default'}`;
+    const cacheKey = `stats:${firebaseUid}:${range}:${orgId || 'default'}`;
 
-    const payload = await cachedQuery(cacheKey, () => fetchStats(clerkId, range, orgId), CACHE_PROFILES.stats);
+    const payload = await cachedQuery(cacheKey, () => fetchStats(firebaseUid, range, orgId), CACHE_PROFILES.stats);
     return NextResponse.json(payload);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -46,13 +47,13 @@ const EMPTY_STATS = {
   memoryDelta: 0, previousMemories: 0, range: '30d', mcpFetchChart: [],
 };
 
-async function fetchStats(clerkId: string, range: string, targetOrgId: string | null = null) {
+async function fetchStats(firebaseUid: string, range: string, targetOrgId: string | null = null) {
   const intervalMap: Record<string, string> = {
     today: '1 day', '7d': '7 days', '30d': '30 days', quarter: '90 days', year: '365 days',
   };
   const interval = intervalMap[range] || '30 days';
 
-  const supaUser = await resolveSupabaseUser(clerkId, targetOrgId);
+  const supaUser = await resolveSupabaseUser(firebaseUid, targetOrgId);
   if (!supaUser) return { ...EMPTY_STATS, range };
 
   const { id: uid, orgId } = supaUser;

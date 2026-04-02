@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@/lib/api-guard';
 import { supaQuery, resolveSupabaseUser } from '@/lib/supabase-read';
 import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
 
@@ -9,12 +9,12 @@ import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from 
  * DELETE /api/dashboard/webhooks — Delete a webhook endpoint
  */
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const rl = checkRateLimit(clerkId, 'webhooks', CACHE_PROFILES.webhooks);
+    const rl = checkRateLimit(authUser.uid, 'webhooks', CACHE_PROFILES.webhooks);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -22,9 +22,9 @@ export async function GET() {
       );
     }
 
-    const cacheKey = `webhooks:${clerkId}`;
+    const cacheKey = `webhooks:${authUser.uid}`;
     const data = await cachedQuery(cacheKey, async () => {
-      const supaUser = await resolveSupabaseUser(clerkId);
+      const supaUser = await resolveSupabaseUser(authUser.uid);
       if (!supaUser) return { webhooks: [] };
 
       const { id: uid } = supaUser;
@@ -56,12 +56,12 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supaUser = await resolveSupabaseUser(clerkId);
+    const supaUser = await resolveSupabaseUser(authUser.uid);
     if (!supaUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json();
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
     const w = res.rows[0];
 
     // Invalidate cache
-    invalidateEndpoint(clerkId, 'webhooks');
+    invalidateEndpoint(authUser.uid, 'webhooks');
 
     return NextResponse.json({
       webhook: {
@@ -128,12 +128,12 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supaUser = await resolveSupabaseUser(clerkId);
+    const supaUser = await resolveSupabaseUser(authUser.uid);
     if (!supaUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json();
@@ -150,7 +150,7 @@ export async function DELETE(request: Request) {
       [webhookId, uid],
     );
 
-    invalidateEndpoint(clerkId, 'webhooks');
+    invalidateEndpoint(authUser.uid, 'webhooks');
     return NextResponse.json({ success: true });
   } catch (e: any) {
     console.error('[Webhooks DELETE]', e.message);
@@ -158,12 +158,12 @@ export async function DELETE(request: Request) {
   }
 }
 
-export async function PATCH(request: Request) {
+export async function PATCH(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supaUser = await resolveSupabaseUser(clerkId);
+    const supaUser = await resolveSupabaseUser(authUser.uid);
     if (!supaUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json();
@@ -180,7 +180,7 @@ export async function PATCH(request: Request) {
       [isActive, webhookId, uid],
     );
 
-    invalidateEndpoint(clerkId, 'webhooks');
+    invalidateEndpoint(authUser.uid, 'webhooks');
     return NextResponse.json({ success: true });
   } catch (e: any) {
     console.error('[Webhooks PATCH]', e.message);

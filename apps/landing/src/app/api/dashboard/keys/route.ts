@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
 import {
   getUserFromPostgres,
   getApiKeysByUserId,
@@ -14,12 +14,12 @@ import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from 
 /**
  * GET /api/dashboard/keys — List all API keys for the current user
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { userId: clerkId } = await auth();
-    if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const rl = checkRateLimit(clerkId, 'keys', CACHE_PROFILES.keys);
+    const rl = checkRateLimit(authUser.uid, 'keys', CACHE_PROFILES.keys);
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -28,9 +28,9 @@ export async function GET() {
     }
 
     const data = await cachedQuery(
-      `keys:${clerkId}`,
+      `keys:${authUser.uid}`,
       async () => {
-        const dbUser = await getUserFromPostgres(clerkId);
+        const dbUser = await getUserFromPostgres(authUser.uid);
         if (!dbUser) return { keys: [] };
 
         const keys = await getApiKeysByUserId(dbUser.id);
@@ -60,10 +60,10 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const dbUser = await getUserFromPostgres(userId);
+    const dbUser = await getUserFromPostgres(authUser.uid);
     if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const org = await getOrganizationByUserId(dbUser.id);
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       keyPrefix: apiKey.prefix,
       keyHash: apiKey.hash,
       name: keyName,
-      ownerClerkId: userId,
+      ownerFirebaseUid: authUser.uid,
       scopes: body.scopes || ['memory:read', 'memory:write', 'memory:delete'],
     }).catch((e: any) => {
       console.error('[Dashboard API] Supabase key sync FAILED:', e.message);
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
       console.warn('[Dashboard API] Supabase sync error (key saved to primary):', syncResult.error);
     }
 
-    invalidateEndpoint(userId, 'keys');
+    invalidateEndpoint(authUser.uid, 'keys');
 
     return NextResponse.json({
       success: true,
@@ -146,10 +146,10 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const dbUser = await getUserFromPostgres(userId);
+    const dbUser = await getUserFromPostgres(authUser.uid);
     if (!dbUser) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const body = await request.json();
@@ -165,10 +165,10 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Mirror revocation to Supabase (non-blocking)
-    revokeApiKeyInSupabase(keyId, userId)
+    revokeApiKeyInSupabase(keyId, authUser.uid)
       .catch((e: any) => console.warn('[Dashboard API] Supabase key revoke (non-fatal):', e.message));
 
-    invalidateEndpoint(userId, 'keys');
+    invalidateEndpoint(authUser.uid, 'keys');
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('[Dashboard API] Key revoke error:', error.message);

@@ -4,7 +4,7 @@
  * Creates ALL tables required by the full Memron stack:
  *
  * Shared / landing-app tables:
- * - users: User accounts (Clerk-backed)
+ * - users: User accounts (Firebase Auth backed)
  * - organizations: Workspaces / teams
  * - api_keys: API keys for MCP auth
  * - org_members: Organization membership
@@ -31,7 +31,8 @@ const MIGRATIONS = [
   `CREATE TABLE IF NOT EXISTS users (
     id              SERIAL PRIMARY KEY,
     universal_id    UUID DEFAULT gen_random_uuid() UNIQUE NOT NULL,
-    clerk_id        VARCHAR(255) UNIQUE NOT NULL,
+    firebase_uid    VARCHAR(255) UNIQUE,
+    clerk_id        VARCHAR(255) UNIQUE,
     email           VARCHAR(255) UNIQUE NOT NULL,
     first_name      VARCHAR(255),
     last_name       VARCHAR(255),
@@ -84,6 +85,7 @@ const MIGRATIONS = [
   )`,
 
   // Shared table indexes
+  // Note: idx_users_firebase_uid is created AFTER the ALTER TABLE below (line ~115)
   `CREATE INDEX IF NOT EXISTS idx_users_clerk_id ON users(clerk_id)`,
   `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`,
   `CREATE INDEX IF NOT EXISTS idx_users_universal_id ON users(universal_id)`,
@@ -103,7 +105,19 @@ const MIGRATIONS = [
        DROP INDEX idx_api_keys_hash;
      END IF;
    END $$`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
+   `CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
+
+  // ─── Firebase Auth Migration (add firebase_uid to existing users table) ───
+  `DO $$ BEGIN
+     ALTER TABLE users ADD COLUMN IF NOT EXISTS firebase_uid VARCHAR(255) UNIQUE;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+  `DO $$ BEGIN
+     ALTER TABLE users ALTER COLUMN clerk_id DROP NOT NULL;
+   EXCEPTION WHEN others THEN NULL;
+   END $$`,
+  // Now that the column exists, create the index
+  `CREATE INDEX IF NOT EXISTS idx_users_firebase_uid ON users(firebase_uid)`,
 
   // ═══════════════════════════════════════════════════════════
   // MCP SERVER TABLES

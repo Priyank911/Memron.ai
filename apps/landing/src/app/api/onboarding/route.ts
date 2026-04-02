@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth, currentUser } from '@clerk/nextjs/server';
+import { auth } from '@/lib/api-guard';
+import { getFirebaseUser } from '@/lib/firebase-admin';
 import { 
     getUserFromPostgres, 
     createOrganization, 
@@ -22,20 +23,34 @@ import {
 // POST /api/onboarding - Complete onboarding process
 export async function POST(request: NextRequest) {
     try {
-        const { userId } = await auth();
+        const authUser = await auth(request);
         
-        if (!userId) {
+        if (!authUser) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
             );
         }
+        const firebaseUid = authUser.uid;
 
-        const user = await currentUser();
-        if (!user) {
+        // Get full user details from Firebase
+        const firebaseUser = await getFirebaseUser(firebaseUid);
+        if (!firebaseUser) {
             return NextResponse.json(
                 { error: 'User not found' },
                 { status: 404 }
+            );
+        }
+
+        // SECURITY: Block unverified email users from onboarding
+        // OAuth users (Google, GitHub) are auto-verified
+        const providerData = firebaseUser.providerData?.[0];
+        const isOAuthUser = providerData?.providerId && providerData.providerId !== 'password';
+        
+        if (!isOAuthUser && !firebaseUser.emailVerified) {
+            return NextResponse.json(
+                { error: 'Email verification required. Please verify your email before onboarding.' },
+                { status: 403 }
             );
         }
 
@@ -44,28 +59,48 @@ export async function POST(request: NextRequest) {
 
         // Get user from database — auto-sync on first visit (covers brand-new registrations
         // where the background /api/user/sync hasn't fired yet)
-        let dbUser = await getUserFromPostgres(userId);
+        let dbUser = await getUserFromPostgres(firebaseUid);
         if (!dbUser) {
-            const primaryEmail =
-                user.emailAddresses.find(e => e.id === user.primaryEmailAddressId)?.emailAddress ||
-                user.emailAddresses[0]?.emailAddress;
-            if (primaryEmail) {
-                await syncUser({
-                    clerkId: user.id,
-                    email: primaryEmail,
-                    firstName: user.firstName,
-                    lastName: user.lastName,
-                    fullName: user.fullName,
-                    imageUrl: user.imageUrl,
-                    provider: user.externalAccounts?.[0]?.provider || 'email',
-                });
-                dbUser = await getUserFromPostgres(userId);
+            if (firebaseUser.email) {
+                // Parse name from Firebase display name
+                const displayName = firebaseUser.displayName || '';
+                const [firstName = '', ...lastNameParts] = displayName.split(' ');
+                const lastName = lastNameParts.join(' ');
+                
+                // Determine provider from Firebase
+                const providerData = firebaseUser.providerData?.[0];
+                const provider = providerData?.providerId?.replace('.com', '') || 'email';
+                
+                // Try syncing with retry logic (2 attempts)
+                for (let attempt = 1; attempt <= 2; attempt++) {
+                    const syncResult = await syncUser({
+                        firebaseUid: firebaseUid,
+                        email: firebaseUser.email,
+                        firstName: firstName || null,
+                        lastName: lastName || null,
+                        fullName: displayName || null,
+                        imageUrl: firebaseUser.photoURL || null,
+                        provider: provider,
+                    });
+                    
+                    if (syncResult.success) {
+                        break;
+                    }
+                    
+                    // If first attempt fails, wait 1s before retry
+                    if (attempt === 1 && !syncResult.success) {
+                        console.log('[Onboarding API] First sync attempt failed, retrying in 1s...');
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                }
+                
+                dbUser = await getUserFromPostgres(firebaseUid);
             }
         }
         if (!dbUser) {
             return NextResponse.json(
-                { error: 'Could not create user record. Please try again.' },
-                { status: 500 }
+                { error: 'Could not create user record. Database may be temporarily unavailable. Please try again in a moment.' },
+                { status: 503 }
             );
         }
 
@@ -105,7 +140,7 @@ export async function POST(request: NextRequest) {
 
                 // Mirror organization to Firebase immediately (Step 1 sync)
                 saveOrganizationToFirebase({
-                    clerkId: userId,
+                    clerkId: firebaseUid, // Using firebaseUid in place of clerkId for compatibility
                     orgId: orgResult.organization!.org_id,
                     name: orgResult.organization!.name,
                     slug: orgResult.organization!.slug,
@@ -117,7 +152,7 @@ export async function POST(request: NextRequest) {
                 syncOrgToSupabase({
                     name: orgResult.organization!.name,
                     slug: orgResult.organization!.slug,
-                    ownerClerkId: userId,
+                    ownerClerkId: firebaseUid, // Using firebaseUid
                     orgUuid: orgResult.organization!.org_id,
                     description: orgDescription?.trim() || null,
                 }).catch((e: any) => console.warn('[Onboarding API] Supabase org sync (non-fatal):', e.message));
@@ -181,7 +216,7 @@ export async function POST(request: NextRequest) {
                 // Mirror API key metadata to Firebase immediately (Step 2 sync)
                 // NOTE: only prefix is stored — NEVER hash or full key
                 saveApiKeyToFirebase({
-                    clerkId: userId,
+                    clerkId: firebaseUid, // Using firebaseUid
                     keyId: saveResult.apiKey!.key_id,
                     keyPrefix: apiKey.prefix,
                     keyName: data.keyName || 'Default API Key',
@@ -195,7 +230,7 @@ export async function POST(request: NextRequest) {
                     keyPrefix: apiKey.prefix,
                     keyHash: apiKey.hash,
                     name: data.keyName || 'Default API Key',
-                    ownerClerkId: userId,
+                    ownerClerkId: firebaseUid, // Using firebaseUid
                     scopes: ['memory:read', 'memory:write', 'memory:delete'],
                 }).catch((e: any) => console.error('[Onboarding API] Supabase key sync FAILED:', e.message));
 
@@ -217,7 +252,7 @@ export async function POST(request: NextRequest) {
 
             case 'complete': {
                 // Mark user as onboarded in PostgreSQL
-                const success = await markUserOnboarded(userId);
+                const success = await markUserOnboarded(firebaseUid);
 
                 if (!success) {
                     return NextResponse.json(
@@ -235,7 +270,7 @@ export async function POST(request: NextRequest) {
 
                     if (org) {
                         await saveOnboardingProfile({
-                            clerkId: userId,
+                            clerkId: firebaseUid, // Using firebaseUid
                             universalId: dbUser.universal_id,
                             email: dbUser.email,
                             fullName: dbUser.full_name,
@@ -260,7 +295,7 @@ export async function POST(request: NextRequest) {
 
                     if (org && latestKey) {
                         fullOnboardingSyncToSupabase({
-                            clerkId: userId,
+                            clerkId: firebaseUid, // Using firebaseUid
                             email: dbUser.email,
                             firstName: dbUser.first_name,
                             lastName: dbUser.last_name,
@@ -314,18 +349,36 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/onboarding - Get onboarding status
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
-        const { userId } = await auth();
+        const authUser = await auth(request);
         
-        if (!userId) {
+        if (!authUser) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
             );
         }
+        const firebaseUid = authUser.uid;
 
-        const dbUser = await getUserFromPostgres(userId);
+        // SECURITY: Check email verification for email users
+        const firebaseUser = await getFirebaseUser(firebaseUid);
+        if (firebaseUser) {
+            const providerData = firebaseUser.providerData?.[0];
+            const isOAuthUser = providerData?.providerId && providerData.providerId !== 'password';
+            
+            if (!isOAuthUser && !firebaseUser.emailVerified) {
+                return NextResponse.json(
+                    { 
+                        error: 'Email verification required',
+                        emailVerified: false,
+                    },
+                    { status: 403 }
+                );
+            }
+        }
+
+        const dbUser = await getUserFromPostgres(firebaseUid);
         
         if (!dbUser) {
             return NextResponse.json({
