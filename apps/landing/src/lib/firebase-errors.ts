@@ -93,6 +93,14 @@ export function getFirebaseErrorInfo(error: unknown): FirebaseErrorInfo {
       action: 'Please allow popups for this site and try again.',
     };
   }
+
+  if (code === 'auth/unauthorized-domain' || code === 'auth/unauthorized-continue-uri') {
+    return {
+      title: 'Domain not allowlisted',
+      message: 'This deployment domain is not yet authorized in Firebase Auth.',
+      action: 'Add this domain to Firebase Authentication > Settings > Authorized domains, then try again.',
+    };
+  }
   
   // Account exists with different credential
   if (code === 'auth/account-exists-with-different-credential') {

@@ -16,6 +16,7 @@ import {
   GoogleAuthProvider,
   GithubAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -67,6 +68,14 @@ googleProvider.addScope('profile');
 const githubProvider = new GithubAuthProvider();
 githubProvider.addScope('user:email');
 
+function getActionContinueUrl(path: string): string {
+  const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (explicit) {
+    return `${explicit.replace(/\/$/, '')}${path}`;
+  }
+  return `${window.location.origin}${path}`;
+}
+
 // ─── Authentication Functions ────────────────────────────────────────────────
 
 /**
@@ -74,7 +83,19 @@ githubProvider.addScope('user:email');
  */
 export async function signInWithGoogle(): Promise<UserCredential> {
   const auth = getFirebaseAuth();
-  return signInWithPopup(auth, googleProvider);
+  try {
+    return await signInWithPopup(auth, googleProvider);
+  } catch (error: any) {
+    // Production fallback for popup issues on hosted domains/browsers.
+    if (
+      error?.code === 'auth/popup-blocked' ||
+      error?.code === 'auth/unauthorized-domain' ||
+      error?.code === 'auth/operation-not-supported-in-this-environment'
+    ) {
+      await signInWithRedirect(auth, googleProvider);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -82,7 +103,18 @@ export async function signInWithGoogle(): Promise<UserCredential> {
  */
 export async function signInWithGithub(): Promise<UserCredential> {
   const auth = getFirebaseAuth();
-  return signInWithPopup(auth, githubProvider);
+  try {
+    return await signInWithPopup(auth, githubProvider);
+  } catch (error: any) {
+    if (
+      error?.code === 'auth/popup-blocked' ||
+      error?.code === 'auth/unauthorized-domain' ||
+      error?.code === 'auth/operation-not-supported-in-this-environment'
+    ) {
+      await signInWithRedirect(auth, githubProvider);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -117,7 +149,7 @@ export async function createAccountWithEmail(
   // Send verification email - redirect to verification success page (not onboarding)
   if (credential.user) {
     await sendEmailVerification(credential.user, {
-      url: `${window.location.origin}/verify-success`,
+      url: getActionContinueUrl('/verify-success'),
       handleCodeInApp: false,
     });
   }
@@ -137,7 +169,7 @@ export async function resendVerificationEmail(): Promise<void> {
   }
   
   await sendEmailVerification(user, {
-    url: `${window.location.origin}/verify-success`,
+    url: getActionContinueUrl('/verify-success'),
     handleCodeInApp: false,
   });
 }
@@ -148,7 +180,7 @@ export async function resendVerificationEmail(): Promise<void> {
 export async function sendPasswordReset(email: string): Promise<void> {
   const auth = getFirebaseAuth();
   await sendPasswordResetEmail(auth, email, {
-    url: `${window.location.origin}/login`,
+    url: getActionContinueUrl('/login'),
   });
 }
 
