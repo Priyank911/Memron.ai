@@ -100,15 +100,15 @@ export function ArchitectureLayers() {
         }
 
         [data-theme='light'] .arch-root {
-          --arch-text: #111318;
-          --arch-muted: #686c76;
-          --arch-faint: #a1a5ad;
-          --arch-panel: rgba(255, 255, 255, 0.88);
-          --arch-border: rgba(15, 18, 24, 0.12);
-          --engine-line: #686d78;
-          --engine-line-soft: #a0a5ae;
-          --engine-fill: rgba(45, 49, 58, 0.05);
-          --engine-fill-strong: rgba(45, 49, 58, 0.10);
+          --arch-text: #10141c;
+          --arch-muted: #414a59;
+          --arch-faint: #687386;
+          --arch-panel: rgba(255, 255, 255, 0.98);
+          --arch-border: rgba(30, 41, 59, 0.26);
+          --engine-line: #3f4a5c;
+          --engine-line-soft: #667286;
+          --engine-fill: rgba(51, 65, 85, 0.14);
+          --engine-fill-strong: rgba(51, 65, 85, 0.24);
         }
 
         .arch-header {
