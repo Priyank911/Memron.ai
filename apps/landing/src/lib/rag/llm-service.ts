@@ -1,8 +1,8 @@
 /**
- * Groq LLM Service — Generates grounded answers using LLaMA-3.3-70b via Groq API.
+ * OpenAI LLM Service — Generates grounded answers using gpt-4o-mini via OpenAI API.
  *
  * Architecture:
- *   RAG context (memories) + user query → system prompt → Groq API → answer
+ *   RAG context (memories) + user query → system prompt → OpenAI API → answer
  *
  * Security measures:
  *   1. System prompt is immutable — user text never enters the system role
@@ -19,7 +19,7 @@
  *   context. If no context is provided, it must say so — never hallucinate.
  */
 
-import Groq from 'groq-sdk';
+import OpenAI from 'openai';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -42,22 +42,22 @@ export interface LLMResponse {
 
 // ─── Config ──────────────────────────────────────────────────
 
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = 'gpt-4o-mini';
 const MAX_OUTPUT_TOKENS = 1024;
 const TEMPERATURE = 0;       // Deterministic — no creative drift
 const TIMEOUT_MS = 15_000;   // 15s hard timeout
 
 // ─── Client singleton ────────────────────────────────────────
 
-const g = globalThis as unknown as { __groqClient?: Groq };
+const g = globalThis as unknown as { __openaiClient?: OpenAI };
 
-function getClient(): Groq | null {
-  const apiKey = process.env.GROQ_API_KEY;
+function getClient(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
-  if (!g.__groqClient) {
-    g.__groqClient = new Groq({ apiKey });
+  if (!g.__openaiClient) {
+    g.__openaiClient = new OpenAI({ apiKey });
   }
-  return g.__groqClient;
+  return g.__openaiClient;
 }
 
 // ─── System prompt ───────────────────────────────────────────
@@ -136,12 +136,12 @@ export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
   const start = Date.now();
   const client = getClient();
 
-  // If Groq is not configured, return a helpful fallback
+  // If OpenAI is not configured, return a helpful fallback
   if (!client) {
     return {
       answer: req.hasRelevantData
-        ? `I found ${req.memoryCount} relevant memories for your query, but the AI reasoning engine is not configured yet. Add your GROQ_API_KEY to enable intelligent answers.`
-        : 'The AI reasoning engine is not configured yet. Add your GROQ_API_KEY to enable intelligent answers.',
+        ? `I found ${req.memoryCount} relevant memories for your query, but the AI reasoning engine is not configured yet. Add your OPENAI_API_KEY to enable intelligent answers.`
+        : 'The AI reasoning engine is not configured yet. Add your OPENAI_API_KEY to enable intelligent answers.',
       model: 'none',
       tokensUsed: 0,
       grounded: false,
@@ -232,7 +232,7 @@ export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
       };
     }
 
-    console.error('[Groq LLM] Error:', err.message);
+    console.error('[OpenAI LLM] Error:', err.message);
     return {
       answer: 'An error occurred while processing your query. Please try again.',
       model: MODEL,
@@ -245,16 +245,14 @@ export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-function noMemoryMessage(bucket: string | null): string {
-  if (bucket) {
-    return `No relevant memories found in your "${bucket}" bucket for this query. Try searching across all buckets, or add new memories via the MCP server.`;
-  }
-  return 'No relevant memories found in your memory store for this query. Try adding memories through the MCP server first, then search for them here.';
+export function isOpenAIConfigured(): boolean {
+  return !!process.env.OPENAI_API_KEY;
 }
 
 /**
- * Check if Groq API is configured (for UI hints).
+ * Backwards compatibility alias
  */
 export function isGroqConfigured(): boolean {
-  return !!process.env.GROQ_API_KEY;
+  return isOpenAIConfigured();
 }
+

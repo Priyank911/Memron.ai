@@ -781,7 +781,7 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
         `SELECT u.*, ak.id as api_key_id, ak.scopes as key_scopes, ak.org_id as key_org_id
          FROM api_keys ak
          JOIN users u ON ak.user_id = u.id
-         WHERE ak.key_hash = $1 AND ak.is_active = true AND u.is_active = true`,
+         WHERE ak.key_hash = $1 AND ak.is_active = true AND (u.is_active IS NULL OR u.is_active = true)`,
         [keyHash],
       );
 

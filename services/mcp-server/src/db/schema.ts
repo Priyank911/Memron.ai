@@ -359,7 +359,8 @@ const MIGRATIONS = [
        'users','organizations','api_keys','org_members',
        'memories','mcp_oauth_clients','mcp_pending_auth',
        'mcp_auth_codes','mcp_refresh_tokens','forensic_snapshots',
-       'buckets','conversation_history'
+       'buckets','conversation_history','graph_nodes','graph_edges',
+       'pinned_facts'
      ] LOOP
        EXECUTE format('ALTER TABLE IF EXISTS %I ENABLE ROW LEVEL SECURITY', t);
        FOR r IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated') LOOP
@@ -765,6 +766,154 @@ const MIGRATIONS = [
      END IF;
    END;
    $$`,
+
+  // ═══════════════════════════════════════════════════════════
+  // GRAPH MEMORY & KNOWLEDGE TABLES
+  // ═══════════════════════════════════════════════════════════
+
+  // ─── Graph Nodes ───────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS graph_nodes (
+    id                  SERIAL PRIMARY KEY,
+    node_id             VARCHAR(64) UNIQUE NOT NULL,
+    user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    org_id              INTEGER,
+    workspace_id        VARCHAR(64),
+    agent_id            VARCHAR(255),
+    blind_name_hash     VARCHAR(64) NOT NULL,
+    entity_type         VARCHAR(50) NOT NULL DEFAULT 'concept',
+    encrypted_payload   BYTEA NOT NULL,
+    payload_iv          BYTEA NOT NULL,
+    payload_tag         BYTEA NOT NULL,
+    mention_count       INTEGER DEFAULT 1,
+    importance_score    REAL DEFAULT 0.5,
+    embedding           vector(768),
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, blind_name_hash)
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_graph_nodes_user ON graph_nodes(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_graph_nodes_hash ON graph_nodes(user_id, blind_name_hash)`,
+  `CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(entity_type)`,
+  
+  `DO $$ BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_indexes WHERE indexname = 'idx_graph_nodes_embedding'
+     ) THEN
+       CREATE INDEX idx_graph_nodes_embedding ON graph_nodes
+         USING hnsw (embedding vector_cosine_ops)
+         WITH (m = 16, ef_construction = 64);
+     END IF;
+   END $$`,
+
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgname = 'set_graph_nodes_updated_at'
+     ) THEN
+       CREATE TRIGGER set_graph_nodes_updated_at
+         BEFORE UPDATE ON graph_nodes
+         FOR EACH ROW
+         EXECUTE FUNCTION update_updated_at_column();
+     END IF;
+   END;
+   $$`,
+
+  // ─── Graph Edges ───────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS graph_edges (
+    id                  SERIAL PRIMARY KEY,
+    edge_id             VARCHAR(64) UNIQUE NOT NULL,
+    user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    source_node_id      VARCHAR(64) NOT NULL,
+    target_node_id      VARCHAR(64) NOT NULL,
+    relationship_type   VARCHAR(64) NOT NULL,
+    valid_from          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    valid_to            TIMESTAMPTZ,
+    observed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    recorded_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    strength            REAL DEFAULT 1.0,
+    evidence_count      INTEGER DEFAULT 1,
+    source_pointer_id   VARCHAR(12),
+    encrypted_metadata  BYTEA,
+    metadata_iv         BYTEA,
+    metadata_tag        BYTEA,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_node_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_node_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_graph_edges_type ON graph_edges(relationship_type)`,
+  `CREATE INDEX IF NOT EXISTS idx_graph_edges_temporal ON graph_edges(valid_from, valid_to)`,
+  `CREATE INDEX IF NOT EXISTS idx_graph_edges_active ON graph_edges(user_id) WHERE valid_to IS NULL`,
+
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgname = 'set_graph_edges_updated_at'
+     ) THEN
+       CREATE TRIGGER set_graph_edges_updated_at
+         BEFORE UPDATE ON graph_edges
+         FOR EACH ROW
+         EXECUTE FUNCTION update_updated_at_column();
+     END IF;
+   END;
+   $$`,
+
+  // ─── Pinned Facts ──────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS pinned_facts (
+    id              SERIAL PRIMARY KEY,
+    pin_id          VARCHAR(64) UNIQUE NOT NULL,
+    user_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    org_id          INTEGER,
+    workspace_id    VARCHAR(64),
+    label           VARCHAR(255) NOT NULL,
+    encrypted_content BYTEA NOT NULL,
+    content_iv      BYTEA NOT NULL,
+    content_tag     BYTEA NOT NULL,
+    priority        INTEGER DEFAULT 0,
+    is_active       BOOLEAN DEFAULT true,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+  )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_pinned_facts_user ON pinned_facts(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_pinned_facts_active ON pinned_facts(user_id) WHERE is_active = true`,
+
+  `DO $$
+   BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgname = 'set_pinned_facts_updated_at'
+     ) THEN
+       CREATE TRIGGER set_pinned_facts_updated_at
+         BEFORE UPDATE ON pinned_facts
+         FOR EACH ROW
+         EXECUTE FUNCTION update_updated_at_column();
+     END IF;
+   END;
+   $$`,
+
+  // ─── Column Additions (Idempotent) ─────────────────────────
+  `DO $$ BEGIN
+     ALTER TABLE atomic_memories ADD COLUMN content_encrypted BYTEA;
+     ALTER TABLE atomic_memories ADD COLUMN content_iv BYTEA;
+     ALTER TABLE atomic_memories ADD COLUMN content_tag BYTEA;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  `DO $$ BEGIN
+     ALTER TABLE episodes ADD COLUMN workspace_id VARCHAR(64);
+     ALTER TABLE episodes ADD COLUMN agent_id VARCHAR(255);
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  // ─── BM25 Full-Text Search ─────────────────────────────────
+  `DO $$ BEGIN
+     ALTER TABLE atomic_memories ADD COLUMN content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_content_tsv ON atomic_memories USING GIN (content_tsv)`
 ];
 
 /**

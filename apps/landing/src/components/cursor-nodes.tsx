@@ -183,42 +183,7 @@ export function CursorNodes() {
         ctx.fill();
       });
 
-      // Draw "memory" labels on connected nodes
-      const connectedArray = Array.from(newConnectedNodes);
-      connectedArray.slice(0, 3).forEach((nodeId, index) => {
-        const node = nodes.find(n => n.id === nodeId);
-        if (!node) return;
-        
-        const fade = getNavbarFade(node.y);
-        if (fade < 0.5) return;
-        
-        const labelOpacity = 0.5 * fade;
-        
-        // Draw small "memory" label box
-        ctx.font = '8px ui-monospace, monospace';
-        const text = 'memory';
-        const textWidth = ctx.measureText(text).width;
-        const boxPadding = 3;
-        const boxX = node.x + 8;
-        const boxY = node.y - 12;
-        
-        // Background pill
-        ctx.beginPath();
-        ctx.fillStyle = bgColor + (0.8 * labelOpacity) + ')';
-        drawRoundedRect(ctx, boxX - boxPadding, boxY - 8, textWidth + boxPadding * 2, 12, 3);
-        ctx.fill();
-        
-        // Border
-        ctx.beginPath();
-        ctx.strokeStyle = textColor + (0.2 * labelOpacity) + ')';
-        ctx.lineWidth = 0.5;
-        drawRoundedRect(ctx, boxX - boxPadding, boxY - 8, textWidth + boxPadding * 2, 12, 3);
-        ctx.stroke();
-        
-        // Text
-        ctx.fillStyle = textColor + labelOpacity + ')';
-        ctx.fillText(text, boxX, boxY);
-      });
+      // Connected nodes have subtle glow without distracting text labels
 
       // Draw cursor glow and "AI" label (only if not in navbar zone)
       const cursorFade = getNavbarFade(mouse.y);
@@ -236,37 +201,6 @@ export function CursorNodes() {
         ctx.arc(mouse.x, mouse.y, 45, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw "AI" label near cursor when connected to nodes
-        if (connectedArray.length > 0) {
-          const labelOpacity = 0.6 * cursorFade;
-          ctx.font = 'bold 7px ui-monospace, monospace';
-          const aiText = 'AI';
-          const aiWidth = ctx.measureText(aiText).width;
-          const aiBoxX = mouse.x + 18;
-          const aiBoxY = mouse.y - 4;
-          const aiPadding = 3;
-          
-          // AI label background
-          ctx.beginPath();
-          ctx.fillStyle = bgColor + (0.9 * labelOpacity) + ')';
-          drawRoundedRect(ctx, aiBoxX - aiPadding, aiBoxY - 7, aiWidth + aiPadding * 2, 11, 3);
-          ctx.fill();
-          
-          // AI label border with accent
-          ctx.beginPath();
-          ctx.strokeStyle = theme === 'light' 
-            ? `rgba(139, 92, 246, ${0.4 * labelOpacity})` 
-            : `rgba(139, 92, 246, ${0.5 * labelOpacity})`;
-          ctx.lineWidth = 0.8;
-          drawRoundedRect(ctx, aiBoxX - aiPadding, aiBoxY - 7, aiWidth + aiPadding * 2, 11, 3);
-          ctx.stroke();
-          
-          // AI text
-          ctx.fillStyle = theme === 'light' 
-            ? `rgba(139, 92, 246, ${labelOpacity})` 
-            : `rgba(167, 139, 250, ${labelOpacity})`;
-          ctx.fillText(aiText, aiBoxX, aiBoxY);
-        }
       }
 
       animationRef.current = requestAnimationFrame(animate);

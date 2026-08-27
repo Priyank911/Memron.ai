@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { sendPasswordReset } from '@/lib/firebase-client';
+import { useAuth } from '@/components/auth-provider';
 
 export default function ForgotPasswordPage() {
+  const { sendPasswordReset } = useAuth();
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -44,26 +45,13 @@ export default function ForgotPasswordPage() {
     try {
       setIsLoading(true);
       setError('');
-      
-      await sendPasswordReset(email);
+
+      await sendPasswordReset(email.trim());
       setEmailSent(true);
-      
+
     } catch (err: any) {
       console.error('[ForgotPassword] Error:', err);
-      
-      // Map Firebase error codes to user-friendly messages
-      const errorCode = err.code || '';
-      let message = err.message || 'Failed to send reset email';
-      
-      if (errorCode === 'auth/user-not-found') {
-        message = 'No account found with this email address.';
-      } else if (errorCode === 'auth/invalid-email') {
-        message = 'Please enter a valid email address.';
-      } else if (errorCode === 'auth/too-many-requests') {
-        message = 'Too many requests. Please try again later.';
-      }
-      
-      setError(message);
+      setError(err?.message || 'Failed to send reset email. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -176,30 +164,12 @@ export default function ForgotPasswordPage() {
 
   // ─── MAIN RENDER ───────────────────────────────────────────
   return (
-    <div className="forgot-page" style={{
-      display: 'flex',
-      minHeight: '100vh',
-      width: '100%',
-      fontFamily: "'Inter', 'Space Grotesk', system-ui, -apple-system, sans-serif",
-      overflow: 'hidden',
-      background: '#ffffff',
-    }}>
-
+    <div className="forgot-page auth-split-wrapper">
       {/* ===================== LEFT PANEL — WHITE ===================== */}
-      <div style={{
-        flex: '0 0 48%',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: '#ffffff',
-        padding: '3rem 2.5rem',
-        position: 'relative',
-        zIndex: 10,
-      }}>
+      <div className="auth-form-panel">
         <div style={{ position: 'absolute', top: '-80px', right: '-80px', width: '280px', height: '280px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(99,102,241,0.04) 0%, transparent 70%)', pointerEvents: 'none' }} />
 
-        <div style={{ width: '100%', maxWidth: '400px', animation: 'loginFadeUp 0.65s cubic-bezier(0.16,1,0.3,1) forwards' }}>
+        <div className="auth-form-inner" style={{ animation: 'loginFadeUp 0.65s cubic-bezier(0.16,1,0.3,1) forwards' }}>
           {/* Logo */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2.5rem' }}>
             <Image src="/logo_b.png" alt="Memron" width={40} height={40} style={{ objectFit: 'contain' }} />
@@ -211,10 +181,7 @@ export default function ForgotPasswordPage() {
       </div>
 
       {/* ===================== RIGHT PANEL — BLACK ===================== */}
-      <div style={{
-        flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
-        alignItems: 'flex-start', background: '#09090b', position: 'relative', padding: '3rem', overflow: 'hidden',
-      }}>
+      <div className="auth-hero-panel">
         {/* Gradient orbs */}
         <div style={{ position: 'absolute', top: '-25%', right: '-15%', width: '550px', height: '550px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(99,102,241,0.10) 0%, transparent 70%)', animation: 'loginFloat 9s ease-in-out infinite', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: '-20%', left: '-10%', width: '450px', height: '450px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%)', animation: 'loginFloat 12s ease-in-out infinite reverse', pointerEvents: 'none' }} />

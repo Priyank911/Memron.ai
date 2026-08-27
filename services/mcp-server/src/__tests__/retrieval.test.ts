@@ -1,12 +1,14 @@
-/**
- * Retrieval Layer Tests
- * Tests for packet builder and anti-hallucination system
- */
+process.env.ENCRYPTION_SECRET = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the database
 vi.mock('../db/client.js', () => ({
   query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+}));
+
+vi.mock('../db/queries-graph.js', () => ({
+  getPinnedFacts: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../db/queries-analysis.js', () => ({

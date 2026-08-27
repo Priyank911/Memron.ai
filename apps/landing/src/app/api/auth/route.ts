@@ -1,215 +1,111 @@
 /**
- * Auth API Routes
- * 
- * Handles session management for Firebase Authentication.
- * 
- * POST /api/auth - Create session (exchange ID token for cookie)
- * DELETE /api/auth - Sign out (clear session cookie)
- * GET /api/auth - Check session status
- * 
- * Security:
- * - Verifies ID token with Firebase Admin SDK
- * - Sets HTTP-only, secure, SameSite cookie
- * - Cookie expires in 5 days (Firebase session cookie limit)
+ * Auth API — Session status & logout (WorkOS AuthKit)
+ *
+ * GET    /api/auth  → current session claims (fresh from WorkOS when possible)
+ * DELETE /api/auth  → sign out (clear session cookie)
+ *
+ * The session itself is an AES-256-GCM sealed cookie created by
+ * /api/auth/login, /api/auth/signup, or /api/auth/callback.
  */
 
 export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getFirebaseAdminAuth } from '@/lib/firebase-admin';
+import { getWorkOS } from '@/lib/workos';
+import {
+  clearAuxiliaryCookies,
+  clearSessionCookie,
+  getSessionFromRequest,
+  sealSession,
+  setSessionCookie,
+} from '@/lib/session';
 
-// Session cookie duration: 5 days (Firebase maximum)
-const SESSION_DURATION_MS = 5 * 24 * 60 * 60 * 1000;
-
-/**
- * POST /api/auth
- * Create a session by exchanging Firebase ID token for session cookie
- */
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { idToken } = body;
-
-    if (!idToken || typeof idToken !== 'string') {
-      return NextResponse.json(
-        { error: 'Missing or invalid ID token' },
-        { status: 400 }
-      );
-    }
-
-    const adminAuth = getFirebaseAdminAuth();
-    if (!adminAuth) {
-      console.error('[Auth API] Firebase Admin not configured');
-      return NextResponse.json(
-        { error: 'Authentication service unavailable' },
-        { status: 503 }
-      );
-    }
-
-    // Verify the ID token
-    let decodedToken;
-    try {
-      decodedToken = await adminAuth.verifyIdToken(idToken);
-    } catch (error: any) {
-      console.error('[Auth API] Token verification failed:', error.message);
-      return NextResponse.json(
-        { error: 'Invalid ID token' },
-        { status: 401 }
-      );
-    }
-
-    // Create session cookie
-    let sessionCookie;
-    try {
-      sessionCookie = await adminAuth.createSessionCookie(idToken, {
-        expiresIn: SESSION_DURATION_MS,
-      });
-    } catch (error: any) {
-      console.error('[Auth API] Session cookie creation failed:', error.message);
-      return NextResponse.json(
-        { error: 'Failed to create session' },
-        { status: 500 }
-      );
-    }
-
-    // Build response with cookie
-    const response = NextResponse.json({
-      success: true,
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-      emailVerified: decodedToken.email_verified,
-    });
-
-    // Set the session cookie
-    response.cookies.set('__session', sessionCookie, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: SESSION_DURATION_MS / 1000, // maxAge is in seconds
-      path: '/',
-    });
-
-    // Mirror email verification state for middleware route decisions.
-    response.cookies.set('memron_email_verified', decodedToken.email_verified ? 'true' : 'false', {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: SESSION_DURATION_MS / 1000,
-      path: '/',
-    });
-
-    return response;
-  } catch (error: any) {
-    console.error('[Auth API] POST error:', error.message);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-/**
- * GET /api/auth
- * Check current session status
- */
 export async function GET(request: NextRequest) {
-  try {
-    const sessionCookie = request.cookies.get('__session')?.value;
+  const claims = getSessionFromRequest(request);
 
-    if (!sessionCookie) {
-      return NextResponse.json({
-        authenticated: false,
-        reason: 'No session cookie',
-      });
-    }
-
-    const adminAuth = getFirebaseAdminAuth();
-    if (!adminAuth) {
-      return NextResponse.json({
-        authenticated: false,
-        reason: 'Auth service unavailable',
-      });
-    }
-
-    try {
-      const decodedClaims = await adminAuth.verifySessionCookie(sessionCookie, true);
-      return NextResponse.json({
-        authenticated: true,
-        uid: decodedClaims.uid,
-        email: decodedClaims.email,
-        emailVerified: decodedClaims.email_verified,
-      });
-    } catch (error: any) {
-      return NextResponse.json({
-        authenticated: false,
-        reason: 'Invalid or expired session',
-      });
-    }
-  } catch (error: any) {
-    console.error('[Auth API] GET error:', error.message);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+  if (!claims) {
+    return NextResponse.json({ authenticated: false });
   }
+
+  // ── Freshness pass: re-fetch the user from WorkOS so emailVerified and
+  //    profile changes are reflected without requiring a new login.
+  //    Falls back to sealed claims on any failure (offline-safe).
+  let emailVerified = claims.emailVerified;
+  let firstName = claims.firstName;
+  let lastName = claims.lastName;
+  let imageUrl = claims.imageUrl;
+
+  const workos = getWorkOS();
+  if (workos) {
+    try {
+      const user = await workos.userManagement.getUser(claims.sub);
+      emailVerified = user.emailVerified;
+      firstName = user.firstName ?? null;
+      lastName = user.lastName ?? null;
+      imageUrl = user.profilePictureUrl ?? null;
+    } catch (error) {
+      // User might have been deleted or WorkOS is unreachable — keep sealed values.
+      console.warn(
+        '[Auth API] Freshness refresh skipped:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  const responseClaims = {
+    sub: claims.sub,
+    email: claims.email,
+    emailVerified,
+    firstName,
+    lastName,
+    fullName:
+      firstName || lastName ? [firstName, lastName].filter(Boolean).join(' ') : claims.fullName,
+    imageUrl,
+    provider: claims.provider,
+  };
+
+  const user = {
+    uid: responseClaims.sub,
+    email: responseClaims.email,
+    emailVerified: responseClaims.emailVerified,
+    firstName: responseClaims.firstName,
+    lastName: responseClaims.lastName,
+    displayName: responseClaims.fullName || responseClaims.email.split('@')[0],
+    photoURL: responseClaims.imageUrl,
+    providerId: responseClaims.provider,
+  };
+
+  // Re-seal when anything changed so subsequent requests skip the API call.
+  if (
+    emailVerified !== claims.emailVerified ||
+    firstName !== claims.firstName ||
+    lastName !== claims.lastName ||
+    imageUrl !== claims.imageUrl
+  ) {
+    const sealed = sealSession(responseClaims);
+    const response = NextResponse.json({ authenticated: true, user });
+    if (sealed) {
+      setSessionCookie(response, sealed);
+      // Heal the middleware helper cookie too.
+      response.cookies.set({
+        name: 'memron_email_verified',
+        value: emailVerified ? 'true' : 'false',
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60,
+        path: '/',
+      });
+    }
+    return response;
+  }
+
+  return NextResponse.json({ authenticated: true, user });
 }
 
-/**
- * DELETE /api/auth
- * Sign out - clear session cookie
- */
-export async function DELETE(request: NextRequest) {
-  try {
-    const sessionCookie = request.cookies.get('__session')?.value;
-
-    // Optionally revoke the session on Firebase side
-    if (sessionCookie) {
-      const adminAuth = getFirebaseAdminAuth();
-      if (adminAuth) {
-        try {
-          const decodedClaims = await adminAuth.verifySessionCookie(sessionCookie);
-          // Revoke all refresh tokens for this user (optional, more secure)
-          await adminAuth.revokeRefreshTokens(decodedClaims.sub);
-        } catch (error: any) {
-          // Session may already be invalid, continue with cookie removal
-          console.warn('[Auth API] Session revocation warning:', error.message);
-        }
-      }
-    }
-
-    // Clear the session cookie
-    const response = NextResponse.json({ success: true });
-    response.cookies.set('__session', '', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 0, // Expire immediately
-      path: '/',
-    });
-
-    // Also clear the onboarding cookie on signout
-    response.cookies.set('memron_onboarded', '', {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 0,
-      path: '/',
-    });
-
-    response.cookies.set('memron_email_verified', '', {
-      httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 0,
-      path: '/',
-    });
-
-    return response;
-  } catch (error: any) {
-    console.error('[Auth API] DELETE error:', error.message);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
+export async function DELETE() {
+  const response = NextResponse.json({ success: true });
+  clearSessionCookie(response);
+  clearAuxiliaryCookies(response);
+  return response;
 }

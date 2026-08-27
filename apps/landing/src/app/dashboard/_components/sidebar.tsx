@@ -1,12 +1,13 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard, MessageSquare, Key, Settings, Database,
   ChevronDown, ChevronRight, FolderPlus, Share2,
-  GitBranch, Bell, Webhook, CreditCard, HelpCircle,
+  GitBranch, Bell, Webhook, CreditCard, HelpCircle, BookOpen,
   LogOut, Sun, Moon, Monitor, Laptop, Sparkles,
 } from 'lucide-react';
 import type { OrgInfo } from './types';
@@ -157,7 +158,7 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
             {openSections[section.id] && (
               <div className="mm-sb-section-items">
                 {section.items.map((item) => {
-                  const isComingSoon = item.id === 'graph-memory' || item.id === 'webhooks';
+                  const isComingSoon = item.id === 'webhooks';
                   return isComingSoon ? (
                     <button
                       key={item.id}
@@ -202,6 +203,11 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
 
       {/* Bottom — User section with dropdown */}
       <div className="mm-sb-footer" ref={menuRef}>
+        <Link href="/docs" className="mm-sb-help" style={{ textDecoration: 'none' }}>
+          <BookOpen size={14} strokeWidth={1.7} />
+          <span>Documentation</span>
+        </Link>
+
         <button className="mm-sb-help" onClick={() => onNav('help')}>
           <HelpCircle size={14} strokeWidth={1.7} />
           <span>Help & Support</span>

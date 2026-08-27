@@ -4,8 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { useAuth } from '@/components/auth-provider';
-import { signInWithGoogle, signInWithGithub, signInWithEmail, createSession } from '@/lib/firebase-client';
-import { formatFirebaseError, isSilentError } from '@/lib/firebase-errors';
+import { signInWithProvider } from '@/lib/auth-client';
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -143,7 +142,7 @@ function LoginTransition({ phase }: { phase: Exclude<LoginPhase, 'form'> }) {
 
 // ─── Main login component ─────────────────────────────────────
 export default function LoginPage() {
-  const { user, isLoaded: authLoading } = useAuth();
+  const { user, isLoaded: authLoading, signInWithEmail } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -153,6 +152,30 @@ export default function LoginPage() {
   const [loginPhase, setLoginPhase] = useState<LoginPhase>('form');
   const router = useRouter();
   const redirectingRef = useRef(false);
+
+  // Surface errors redirected back from the OAuth callback route
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get('error');
+    if (!oauthError) return;
+
+    const messages: Record<string, string> = {
+      oauth_cancelled: '',
+      oauth_state_mismatch: 'Sign-in session expired. Please try again.',
+      oauth_missing_code: 'Sign-in was not completed. Please try again.',
+      oauth_exchange_failed: 'Could not complete sign-in with the provider. Please try again.',
+      oauth_failed: 'Could not complete sign-in with the provider. Please try again.',
+      auth_unconfigured: 'Authentication is temporarily unavailable. Please try again later.',
+      unknown_provider: 'Unsupported sign-in provider.',
+    };
+    const message = messages[oauthError] ?? 'Sign-in failed. Please try again.';
+    if (message) setError(message);
+
+    // Clean the URL so refresh doesn't re-show the error
+    params.delete('error');
+    const clean = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${clean ? `?${clean}` : ''}`);
+  }, []);
 
   // Redirect if user lands on this page already signed in
   useEffect(() => {
@@ -264,19 +287,17 @@ export default function LoginPage() {
       setError('');
       setLoginPhase('authenticating');
 
-      // Sign in with Firebase — returns UserCredential directly
-      const result = await signInWithEmail(email, password);
-      
-      if (!result.user) {
-        setLoginPhase('form');
-        setError('Failed to sign in');
+      // Authenticate against WorkOS — the server sets the session cookie.
+      redirectingRef.current = true;
+      const outcome = await signInWithEmail(email, password);
+
+      // Unverified account: the server re-sent the code — finish verification
+      // on the sign-up screen (which restores the verifying phase).
+      if (outcome === 'verification_required') {
+        router.replace(`/sign-up?verify=${encodeURIComponent(email)}`);
         return;
       }
 
-      // Create session cookie (uses current auth user internally)
-      redirectingRef.current = true;
-      await createSession();
-      
       const dest = await resolveAndNavigate();
 
       // Show "ready" phase briefly before navigating
@@ -287,56 +308,25 @@ export default function LoginPage() {
       router.replace(dest);
     } catch (err: any) {
       setLoginPhase('form');
-      const errorMessage = formatFirebaseError(err);
-      if (errorMessage) {
-        setError(errorMessage);
-      }
+      setError(err?.message || 'Failed to sign in. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleOAuthSignIn = async (provider: 'google' | 'github') => {
+  const handleOAuthSignIn = (provider: 'google' | 'github') => {
     try {
       setIsLoading(true);
       setError('');
       setLoginPhase('authenticating');
 
-      const result = provider === 'google' 
-        ? await signInWithGoogle() 
-        : await signInWithGithub();
-
-      if (!result.user) {
-        setLoginPhase('form');
-        setError(`Failed to sign in with ${provider}`);
-        return;
-      }
-
-      // Create session cookie (uses current auth user internally)
-      redirectingRef.current = true;
-      await createSession();
-
-      const dest = await resolveAndNavigate();
-
-      // Show "ready" phase briefly before navigating
-      setLoginPhase('ready');
-      await delay(700);
-
-      // Navigate
-      router.replace(dest);
-    } catch (err: any) {
-      setLoginPhase('form');
-      // Check if user just closed the popup - silently return
-      if (isSilentError(err)) {
-        // User closed popup, just reset state, no error message
-        return;
-      }
-      const errorMessage = formatFirebaseError(err);
-      if (errorMessage) {
-        setError(errorMessage);
-      }
-    } finally {
+      // Full-page redirect into the WorkOS hosted OAuth flow.
+      // The callback route seals the session and routes onward.
+      signInWithProvider(provider);
+    } catch {
       setIsLoading(false);
+      setLoginPhase('form');
+      setError(`Could not start ${provider} sign-in. Please try again.`);
     }
   };
 
@@ -346,27 +336,9 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="login-page" style={{
-      display: 'flex',
-      minHeight: '100vh',
-      width: '100%',
-      fontFamily: "'Inter', 'Space Grotesk', system-ui, -apple-system, sans-serif",
-      overflow: 'hidden',
-      background: '#ffffff',
-    }}>
-
+    <div className="login-page auth-split-wrapper">
       {/* ===================== LEFT PANEL — WHITE ===================== */}
-      <div style={{
-        flex: '0 0 48%',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: '#ffffff',
-        padding: '3rem 2.5rem',
-        position: 'relative',
-        zIndex: 10,
-      }}>
+      <div className="auth-form-panel">
         {/* Subtle corner glow */}
         <div style={{
           position: 'absolute',
@@ -379,9 +351,7 @@ export default function LoginPage() {
           pointerEvents: 'none',
         }} />
 
-        <div style={{
-          width: '100%',
-          maxWidth: '400px',
+        <div className="auth-form-inner" style={{
           animation: 'loginFadeUp 0.65s cubic-bezier(0.16,1,0.3,1) forwards',
         }}>
 
@@ -729,17 +699,7 @@ export default function LoginPage() {
       </div>
 
       {/* ===================== RIGHT PANEL — BLACK ===================== */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'flex-end',
-        alignItems: 'flex-start',
-        background: '#09090b',
-        position: 'relative',
-        padding: '3rem',
-        overflow: 'hidden',
-      }}>
+      <div className="auth-hero-panel">
         {/* Animated gradient orbs */}
         <div style={{
           position: 'absolute',

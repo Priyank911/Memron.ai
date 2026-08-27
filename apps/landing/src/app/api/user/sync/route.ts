@@ -2,61 +2,48 @@
 export const runtime = 'nodejs';
 
 // Direct user sync API endpoint
-// Called after successful sign-up/login to sync user data to both databases
-// This is a simpler alternative to webhooks — works immediately on the client side
+// Called after successful sign-up/login to sync user data to both databases.
+// Identity claims come from the WorkOS sealed session — no external lookup.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/api-guard';
-import { getFirebaseUser } from '@/lib/firebase-admin';
+import { getSessionFromRequest } from '@/lib/session';
+import { isOAuthProvider } from '@/lib/workos';
 import { syncUser } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
     try {
-        // Authenticate the request via Firebase session cookie
-        const authUser = await auth(req);
+        // Authenticate the request via the sealed session cookie
+        const session = await getSessionFromRequest(req);
 
-        if (!authUser) {
+        if (!session?.sub) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
             );
         }
 
-        // Get full user data from Firebase
-        const firebaseUser = await getFirebaseUser(authUser.uid);
-
-        if (!firebaseUser) {
-            return NextResponse.json(
-                { error: 'User not found in Firebase' },
-                { status: 404 }
-            );
-        }
-
-        if (!firebaseUser.email) {
+        if (!session.email) {
             return NextResponse.json(
                 { error: 'User has no email address' },
                 { status: 400 }
             );
         }
 
-        // Parse name from Firebase display name
-        const displayName = firebaseUser.displayName || '';
-        const [firstName = '', ...lastNameParts] = displayName.split(' ');
-        const lastName = lastNameParts.join(' ');
-        
-        // Determine provider from Firebase
-        const providerData = firebaseUser.providerData?.[0];
-        const provider = providerData?.providerId?.replace('.com', '') || 'email';
+        // OAuth users (Google/GitHub) are auto-verified by WorkOS.
+        const provider = isOAuthProvider(session.provider)
+            ? session.provider
+            : 'email';
 
-        // Sync to both databases
+        // Sync to both databases. `workosUserId` maps onto the same identity
+        // column used by previous providers, so lookups keep working.
         const result = await syncUser({
-            firebaseUid: authUser.uid,
-            email: firebaseUser.email,
-            firstName: firstName || null,
-            lastName: lastName || null,
-            fullName: displayName || null,
-            imageUrl: firebaseUser.photoURL || null,
-            provider: provider,
+            workosUserId: session.sub,
+            email: session.email,
+            firstName: session.firstName,
+            lastName: session.lastName,
+            fullName: session.fullName,
+            imageUrl: session.imageUrl,
+            provider,
         });
 
         return NextResponse.json({

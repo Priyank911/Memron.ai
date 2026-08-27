@@ -262,6 +262,89 @@ async function _bootstrap(): Promise<void> {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * Resolve or auto-provision a user in Supabase.
+ * Checks firebase_uid, clerk_id, and email, creating the user if missing.
+ */
+export async function resolveOrProvisionSupabaseUser(data: {
+  uid?: string | null;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  fullName?: string | null;
+  imageUrl?: string | null;
+  provider?: string | null;
+}): Promise<number | null> {
+  if (!supaPool) return null;
+
+  try {
+    await ensureSupabaseSchema();
+    const uid = data.uid;
+    const email = data.email;
+
+    // 1. Try matching by UID (firebase_uid or clerk_id)
+    if (uid) {
+      const byUid = await exec(
+        'SELECT id FROM users WHERE firebase_uid = $1 OR clerk_id = $1 LIMIT 1',
+        [uid],
+      );
+      if (byUid?.rows[0]?.id) return byUid.rows[0].id;
+    }
+
+    // 2. Try matching by Email
+    if (email) {
+      const byEmail = await exec(
+        'SELECT id FROM users WHERE email = $1 LIMIT 1',
+        [email],
+      );
+      if (byEmail?.rows[0]?.id) {
+        const existingId = byEmail.rows[0].id;
+        if (uid) {
+          await exec(
+            'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $1), clerk_id = COALESCE(clerk_id, $1) WHERE id = $2',
+            [uid, existingId],
+          );
+        }
+        return existingId;
+      }
+    }
+
+    // 3. Auto-provision user in Supabase
+    const userEmail = email || (uid ? `${uid}@memron.internal` : `user_${Date.now()}@memron.internal`);
+    const userUid = uid || `user_${Date.now()}`;
+    const name = data.fullName || [data.firstName, data.lastName].filter(Boolean).join(' ') || 'Memron User';
+
+    const insertResult = await exec(
+      `INSERT INTO users (
+        universal_id, clerk_id, firebase_uid, email, first_name, last_name, full_name, image_url, provider, is_active, is_onboarded, created_at, updated_at, last_login_at
+      )
+      VALUES (
+        gen_random_uuid(), $1, $1, $2, $3, $4, $5, $6, $7, true, true, NOW(), NOW(), NOW()
+      )
+      ON CONFLICT (email) DO UPDATE SET
+        clerk_id = EXCLUDED.clerk_id,
+        firebase_uid = EXCLUDED.firebase_uid,
+        full_name = COALESCE(EXCLUDED.full_name, users.full_name),
+        last_login_at = NOW()
+      RETURNING id`,
+      [
+        userUid,
+        userEmail,
+        data.firstName || null,
+        data.lastName || null,
+        name,
+        data.imageUrl || null,
+        data.provider || 'email',
+      ],
+    );
+
+    return insertResult?.rows[0]?.id || null;
+  } catch (err: any) {
+    logFail('resolveOrProvisionUser', err);
+    return null;
+  }
+}
+
+/**
  * Sync a user to Supabase.  Returns the Supabase user id.
  */
 export async function syncUserToSupabase(data: {
@@ -278,14 +361,15 @@ export async function syncUserToSupabase(data: {
   try {
     await ensureSupabaseSchema();
     const result = await exec(
-      `INSERT INTO users (clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      `INSERT INTO users (clerk_id, firebase_uid, email, first_name, last_name, full_name, image_url, provider, last_login_at)
+       VALUES ($1, $1, $2, $3, $4, $5, $6, $7, NOW())
        ON CONFLICT (email) DO UPDATE SET
-         clerk_id    = EXCLUDED.clerk_id,
-         first_name  = EXCLUDED.first_name,
-         last_name   = EXCLUDED.last_name,
-         full_name   = EXCLUDED.full_name,
-         image_url   = EXCLUDED.image_url,
+         clerk_id     = EXCLUDED.clerk_id,
+         firebase_uid = EXCLUDED.firebase_uid,
+         first_name   = EXCLUDED.first_name,
+         last_name    = EXCLUDED.last_name,
+         full_name    = EXCLUDED.full_name,
+         image_url    = EXCLUDED.image_url,
          last_login_at = NOW()
        RETURNING id`,
       [
@@ -316,6 +400,7 @@ export async function syncOrgToSupabase(data: {
   slug: string;
   ownerFirebaseUid?: string;
   ownerClerkId?: string;  // Legacy fallback
+  ownerEmail?: string;
   orgUuid?: string | null;
   logoUrl?: string | null;
   description?: string | null;
@@ -325,13 +410,14 @@ export async function syncOrgToSupabase(data: {
   try {
     await ensureSupabaseSchema();
 
-    // Resolve owner user_id in Supabase (try firebase_uid first, then clerk_id)
-    const ownerId = data.ownerFirebaseUid
-      ? (await exec('SELECT id FROM users WHERE firebase_uid = $1', [data.ownerFirebaseUid]))?.rows[0]?.id
-      : (await exec('SELECT id FROM users WHERE clerk_id = $1', [data.ownerClerkId]))?.rows[0]?.id;
+    // Resolve owner user_id in Supabase
+    const ownerId = await resolveOrProvisionSupabaseUser({
+      uid: data.ownerFirebaseUid || data.ownerClerkId,
+      email: data.ownerEmail,
+    });
     
     if (!ownerId) {
-      return { success: false, error: 'User not found in Supabase — sync user first' };
+      return { success: false, error: 'Failed to resolve or provision user in Supabase' };
     }
 
     // If an explicit Aiven org_id UUID is provided, use it instead of auto-generating
@@ -385,11 +471,14 @@ export async function syncOrgToSupabase(data: {
  * IMPORTANT: only the hash is stored — the raw key is NEVER sent.
  */
 export async function syncApiKeyToSupabase(data: {
+  keyId?: string | null;
   keyPrefix: string;
   keyHash: string;
   name: string;
-  ownerFirebaseUid?: string;
-  ownerClerkId?: string;  // Legacy fallback
+  ownerFirebaseUid?: string | null;
+  ownerClerkId?: string | null;  // Legacy fallback
+  ownerEmail?: string | null;
+  ownerName?: string | null;
   scopes?: string[];
   expiresAt?: Date | null;
 }): Promise<{ success: boolean; error?: string }> {
@@ -398,39 +487,87 @@ export async function syncApiKeyToSupabase(data: {
   try {
     await ensureSupabaseSchema();
 
-    // Resolve user_id + org_id from Supabase (try firebase_uid first, then clerk_id)
-    const userId = data.ownerFirebaseUid
-      ? (await exec('SELECT id FROM users WHERE firebase_uid = $1', [data.ownerFirebaseUid]))?.rows[0]?.id
-      : (await exec('SELECT id FROM users WHERE clerk_id = $1', [data.ownerClerkId]))?.rows[0]?.id;
+    // 1. Resolve or auto-provision user in Supabase
+    const userId = await resolveOrProvisionSupabaseUser({
+      uid: data.ownerFirebaseUid || data.ownerClerkId,
+      email: data.ownerEmail,
+      fullName: data.ownerName,
+    });
     
     if (!userId) {
-      return { success: false, error: 'User not found in Supabase — sync user first' };
+      return { success: false, error: 'Unable to resolve or provision user in Supabase' };
     }
 
-    const orgRes = await exec(
+    // 2. Ensure user has an organization in Supabase
+    let orgRes = await exec(
       'SELECT id FROM organizations WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 1',
       [userId],
     );
-    const orgId = orgRes?.rows[0]?.id ?? null;
+    let orgId = orgRes?.rows[0]?.id ?? null;
 
-    await exec(
-      `INSERT INTO api_keys (key_prefix, key_hash, name, user_id, org_id, scopes, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (key_hash) DO UPDATE SET
-         name      = EXCLUDED.name,
-         is_active = true,
-         scopes    = EXCLUDED.scopes
-       `,
-      [
-        data.keyPrefix,
-        data.keyHash,
-        data.name,
-        userId,
-        orgId,
-        data.scopes || ['memory:read', 'memory:write'],
-        data.expiresAt || null,
-      ],
-    );
+    if (!orgId) {
+      const newOrgSlug = `org-${userId}-${Date.now().toString(36)}`;
+      const newOrgRes = await exec(
+        `INSERT INTO organizations (name, slug, owner_id, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, true, NOW(), NOW())
+         ON CONFLICT (slug) DO UPDATE SET owner_id = EXCLUDED.owner_id
+         RETURNING id`,
+        ['Personal Workspace', newOrgSlug, userId],
+      );
+      orgId = newOrgRes?.rows[0]?.id ?? null;
+      if (orgId) {
+        await exec(
+          `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin') ON CONFLICT (org_id, user_id) DO NOTHING`,
+          [orgId, userId],
+        );
+      }
+    }
+
+    // 3. Insert or update API key
+    if (data.keyId) {
+      await exec(
+        `INSERT INTO api_keys (key_id, key_prefix, key_hash, name, user_id, org_id, scopes, expires_at, is_active, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW())
+         ON CONFLICT (key_hash) DO UPDATE SET
+           name       = EXCLUDED.name,
+           user_id    = EXCLUDED.user_id,
+           org_id     = EXCLUDED.org_id,
+           is_active  = true,
+           scopes     = EXCLUDED.scopes
+         `,
+        [
+          data.keyId,
+          data.keyPrefix,
+          data.keyHash,
+          data.name,
+          userId,
+          orgId,
+          data.scopes || ['memory:read', 'memory:write', 'memory:delete'],
+          data.expiresAt || null,
+        ],
+      );
+    } else {
+      await exec(
+        `INSERT INTO api_keys (key_prefix, key_hash, name, user_id, org_id, scopes, expires_at, is_active, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())
+         ON CONFLICT (key_hash) DO UPDATE SET
+           name       = EXCLUDED.name,
+           user_id    = EXCLUDED.user_id,
+           org_id     = EXCLUDED.org_id,
+           is_active  = true,
+           scopes     = EXCLUDED.scopes
+         `,
+        [
+          data.keyPrefix,
+          data.keyHash,
+          data.name,
+          userId,
+          orgId,
+          data.scopes || ['memory:read', 'memory:write', 'memory:delete'],
+          data.expiresAt || null,
+        ],
+      );
+    }
 
     logOk('api_key', data.keyPrefix);
     return { success: true };
@@ -441,22 +578,18 @@ export async function syncApiKeyToSupabase(data: {
 }
 
 /**
- * Revoke an API key in Supabase (by key_prefix + clerkId).
+ * Revoke an API key in Supabase (by key_id + uid).
  */
-export async function revokeApiKeyInSupabase(keyId: string, clerkId: string): Promise<boolean> {
+export async function revokeApiKeyInSupabase(keyId: string, uid: string): Promise<boolean> {
   if (!supaPool || isSameDatabase) return true;
 
   try {
     await ensureSupabaseSchema();
-    const userRes = await exec(
-      'SELECT id FROM users WHERE clerk_id = $1',
-      [clerkId],
-    );
-    const userId = userRes?.rows[0]?.id;
+    const userId = await resolveOrProvisionSupabaseUser({ uid });
     if (!userId) return false;
 
     await exec(
-      'UPDATE api_keys SET is_active = false WHERE key_id = $1 AND user_id = $2',
+      'UPDATE api_keys SET is_active = false WHERE (key_id::text = $1 OR key_prefix = $1) AND user_id = $2',
       [keyId, userId],
     );
     logOk('api_key revoke', keyId);
@@ -473,7 +606,9 @@ export async function revokeApiKeyInSupabase(keyId: string, clerkId: string): Pr
  * for their memories.
  */
 export async function createUserMainBucket(data: {
-  clerkId: string;
+  authUserId?: string;
+  clerkId?: string; // Backwards compatibility alias
+  email?: string;
   bucketName?: string;
 }): Promise<{ success: boolean; error?: string }> {
   if (!supaPool || isSameDatabase) return { success: true };
@@ -482,13 +617,12 @@ export async function createUserMainBucket(data: {
     await ensureSupabaseSchema();
 
     // Resolve user
-    const userRes = await exec(
-      'SELECT id FROM users WHERE clerk_id = $1',
-      [data.clerkId],
-    );
-    const userId = userRes?.rows[0]?.id;
+    const userId = await resolveOrProvisionSupabaseUser({
+      uid: data.authUserId || data.clerkId,
+      email: data.email,
+    });
     if (!userId) {
-      return { success: false, error: 'User not found in Supabase — sync user first' };
+      return { success: false, error: 'User not found in Supabase' };
     }
 
     const orgRes = await exec(
@@ -520,8 +654,10 @@ export async function createUserMainBucket(data: {
  */
 export async function syncBucketToSupabase(data: {
   bucketId: string;
+  ownerAuthId?: string;
   ownerFirebaseUid?: string;
   ownerClerkId?: string;  // Legacy fallback
+  ownerEmail?: string;
   name: string;
   slug: string;
   description?: string | null;
@@ -532,10 +668,11 @@ export async function syncBucketToSupabase(data: {
   try {
     await ensureSupabaseSchema();
 
-    // Look up user by firebase_uid first, then fall back to clerk_id
-    const userId = data.ownerFirebaseUid
-      ? (await exec('SELECT id FROM users WHERE firebase_uid = $1', [data.ownerFirebaseUid]))?.rows[0]?.id
-      : (await exec('SELECT id FROM users WHERE clerk_id = $1', [data.ownerClerkId]))?.rows[0]?.id;
+    // Look up or auto-provision user in Supabase
+    const userId = await resolveOrProvisionSupabaseUser({
+      uid: data.ownerAuthId || data.ownerFirebaseUid || data.ownerClerkId,
+      email: data.ownerEmail,
+    });
     
     if (!userId) {
       return { success: false, error: 'User not found in Supabase' };
@@ -569,16 +706,22 @@ export async function syncBucketToSupabase(data: {
 /**
  * Mark user as onboarded in Supabase.
  */
-export async function markUserOnboardedSupabase(clerkId: string): Promise<boolean> {
+export async function markUserOnboardedSupabase(uidOrEmail: string): Promise<boolean> {
   if (!supaPool || isSameDatabase) return true;
 
   try {
     await ensureSupabaseSchema();
+    const userId = await resolveOrProvisionSupabaseUser({
+      uid: uidOrEmail,
+      email: uidOrEmail.includes('@') ? uidOrEmail : undefined,
+    });
+    if (!userId) return false;
+
     await exec(
-      'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE clerk_id = $1',
-      [clerkId],
+      'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE id = $1',
+      [userId],
     );
-    logOk('user onboarded', clerkId);
+    logOk('user onboarded', uidOrEmail);
     return true;
   } catch (err) {
     logFail('user onboarded', err);
@@ -593,7 +736,8 @@ export async function markUserOnboardedSupabase(clerkId: string): Promise<boolea
  * Safe to call multiple times; all writes are idempotent.
  */
 export async function fullOnboardingSyncToSupabase(data: {
-  clerkId: string;
+  authUserId?: string;
+  clerkId?: string; // Backwards compatibility alias
   email: string;
   firstName?: string | null;
   lastName?: string | null;
@@ -604,6 +748,7 @@ export async function fullOnboardingSyncToSupabase(data: {
   orgSlug: string;
   orgUuid?: string | null;
   orgDescription?: string | null;
+  apiKeyId?: string | null;
   apiKeyPrefix: string;
   apiKeyHash: string;
   apiKeyName: string;
@@ -612,9 +757,11 @@ export async function fullOnboardingSyncToSupabase(data: {
   if (!supaPool || isSameDatabase) return;
 
   try {
+    const uid = data.authUserId || data.clerkId || '';
+
     // 1. User
     const userSync = await syncUserToSupabase({
-      clerkId: data.clerkId,
+      clerkId: uid,
       email: data.email,
       firstName: data.firstName,
       lastName: data.lastName,
@@ -631,25 +778,29 @@ export async function fullOnboardingSyncToSupabase(data: {
     await syncOrgToSupabase({
       name: data.orgName,
       slug: data.orgSlug,
-      ownerClerkId: data.clerkId,
+      ownerFirebaseUid: uid,
+      ownerEmail: data.email,
       orgUuid: data.orgUuid,
       description: data.orgDescription,
     });
 
     // 3. API key
     await syncApiKeyToSupabase({
+      keyId: data.apiKeyId,
       keyPrefix: data.apiKeyPrefix,
       keyHash: data.apiKeyHash,
       name: data.apiKeyName,
-      ownerClerkId: data.clerkId,
+      ownerFirebaseUid: uid,
+      ownerEmail: data.email,
+      ownerName: data.fullName,
       scopes: data.apiKeyScopes,
     });
 
     // 4. Main bucket
-    await createUserMainBucket({ clerkId: data.clerkId });
+    await createUserMainBucket({ authUserId: uid, email: data.email });
 
     // 5. Mark onboarded
-    await markUserOnboardedSupabase(data.clerkId);
+    await markUserOnboardedSupabase(uid);
   } catch (err) {
     logFail('fullOnboardingSync', err);
   }

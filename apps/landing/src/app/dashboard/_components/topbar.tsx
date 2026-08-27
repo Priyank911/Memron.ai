@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import {
   Building2, ChevronDown, Copy, FolderOpen, Search, Check,
   RefreshCw, Settings, ExternalLink,
@@ -181,9 +182,9 @@ export function Topbar({
           <Settings size={15} />
         </button>
         <div className="mm-topbar-divider" />
-        <a href="https://docs.memron.ai" target="_blank" rel="noopener noreferrer" className="mm-topbar-link">
+        <Link href="/docs" className="mm-topbar-link">
           DOCS <ExternalLink size={11} />
-        </a>
+        </Link>
         <a href="mailto:support@memron.ai" className="mm-topbar-link">
           SUPPORT
         </a>

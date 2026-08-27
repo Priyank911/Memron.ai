@@ -14,6 +14,10 @@ export default defineConfig({
       exclude: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'src/__tests__/**'],
     },
     testTimeout: 10000,
+    env: {
+      ENCRYPTION_SECRET: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      JWT_SECRET: 'test-jwt-secret-at-least-32-characters-long',
+    },
   },
   resolve: {
     alias: {

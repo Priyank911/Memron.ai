@@ -19,7 +19,7 @@
 
 import { supaQuery, resolveSupabaseUser } from '@/lib/supabase-read';
 import { embedQuery, toPgVector } from '@/lib/embeddings';
-import Groq from 'groq-sdk';
+import OpenAI from 'openai';
 
 // ─── Schema (idempotent) ────────────────────────────────────
 
@@ -312,21 +312,21 @@ export interface SimilarQA {
 
 // ─── Title generation (ChatGPT-style) ───────────────────────
 
-const _g = globalThis as unknown as { __groqTitleClient?: Groq };
+const _g = globalThis as unknown as { __openaiTitleClient?: OpenAI };
 
-function groqClient(): Groq | null {
-  const key = process.env.GROQ_API_KEY;
+function openaiTitleClient(): OpenAI | null {
+  const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
-  if (!_g.__groqTitleClient) _g.__groqTitleClient = new Groq({ apiKey: key });
-  return _g.__groqTitleClient;
+  if (!_g.__openaiTitleClient) _g.__openaiTitleClient = new OpenAI({ apiKey: key });
+  return _g.__openaiTitleClient;
 }
 
 async function generateTitle(firstMessage: string): Promise<string> {
-  const client = groqClient();
+  const client = openaiTitleClient();
   if (!client) return firstMessage.slice(0, 50);
   try {
     const res = await client.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'Generate a concise 3-6 word title summarizing this chat message. Reply with ONLY the title, no quotes, no trailing punctuation.' },
         { role: 'user', content: firstMessage.slice(0, 300) },

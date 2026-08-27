@@ -12,6 +12,7 @@ export {
 } from './context-builder';
 export {
   generateAnswer,
+  isOpenAIConfigured,
   isGroqConfigured,
   type LLMRequest,
   type LLMResponse,

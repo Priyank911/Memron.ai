@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/api-guard';
-import { getFirebaseUser } from '@/lib/firebase-admin';
+import { getSessionFromRequest, setEmailVerifiedCookie } from '@/lib/session';
+import { isOAuthProvider } from '@/lib/workos';
 import { 
     getUserFromPostgres, 
     createOrganization, 
@@ -23,31 +23,20 @@ import {
 // POST /api/onboarding - Complete onboarding process
 export async function POST(request: NextRequest) {
     try {
-        const authUser = await auth(request);
+        // Identity comes from the WorkOS sealed session cookie.
+        const session = await getSessionFromRequest(request);
         
-        if (!authUser) {
+        if (!session?.sub) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
             );
         }
-        const firebaseUid = authUser.uid;
-
-        // Get full user details from Firebase
-        const firebaseUser = await getFirebaseUser(firebaseUid);
-        if (!firebaseUser) {
-            return NextResponse.json(
-                { error: 'User not found' },
-                { status: 404 }
-            );
-        }
+        const userId = session.sub;
 
         // SECURITY: Block unverified email users from onboarding
-        // OAuth users (Google, GitHub) are auto-verified
-        const providerData = firebaseUser.providerData?.[0];
-        const isOAuthUser = providerData?.providerId && providerData.providerId !== 'password';
-        
-        if (!isOAuthUser && !firebaseUser.emailVerified) {
+        // OAuth users (Google, GitHub) are auto-verified by WorkOS
+        if (!isOAuthProvider(session.provider) && !session.emailVerified) {
             return NextResponse.json(
                 { error: 'Email verification required. Please verify your email before onboarding.' },
                 { status: 403 }
@@ -59,43 +48,34 @@ export async function POST(request: NextRequest) {
 
         // Get user from database — auto-sync on first visit (covers brand-new registrations
         // where the background /api/user/sync hasn't fired yet)
-        let dbUser = await getUserFromPostgres(firebaseUid);
-        if (!dbUser) {
-            if (firebaseUser.email) {
-                // Parse name from Firebase display name
-                const displayName = firebaseUser.displayName || '';
-                const [firstName = '', ...lastNameParts] = displayName.split(' ');
-                const lastName = lastNameParts.join(' ');
+        let dbUser = await getUserFromPostgres(userId);
+        if (!dbUser && session.email) {
+            const provider = isOAuthProvider(session.provider) ? (session.provider as string) : 'email';
+
+            // Try syncing with retry logic (2 attempts)
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                const syncResult = await syncUser({
+                    workosUserId: userId,
+                    email: session.email,
+                    firstName: session.firstName,
+                    lastName: session.lastName,
+                    fullName: session.fullName,
+                    imageUrl: session.imageUrl,
+                    provider: provider,
+                });
                 
-                // Determine provider from Firebase
-                const providerData = firebaseUser.providerData?.[0];
-                const provider = providerData?.providerId?.replace('.com', '') || 'email';
-                
-                // Try syncing with retry logic (2 attempts)
-                for (let attempt = 1; attempt <= 2; attempt++) {
-                    const syncResult = await syncUser({
-                        firebaseUid: firebaseUid,
-                        email: firebaseUser.email,
-                        firstName: firstName || null,
-                        lastName: lastName || null,
-                        fullName: displayName || null,
-                        imageUrl: firebaseUser.photoURL || null,
-                        provider: provider,
-                    });
-                    
-                    if (syncResult.success) {
-                        break;
-                    }
-                    
-                    // If first attempt fails, wait 1s before retry
-                    if (attempt === 1 && !syncResult.success) {
-                        console.log('[Onboarding API] First sync attempt failed, retrying in 1s...');
-                        await new Promise(r => setTimeout(r, 1000));
-                    }
+                if (syncResult.success) {
+                    break;
                 }
                 
-                dbUser = await getUserFromPostgres(firebaseUid);
+                // If first attempt fails, wait 1s before retry
+                if (attempt === 1) {
+                    console.log('[Onboarding API] First sync attempt failed, retrying in 1s...');
+                    await new Promise(r => setTimeout(r, 1000));
+                }
             }
+            
+            dbUser = await getUserFromPostgres(userId);
         }
         if (!dbUser) {
             return NextResponse.json(
@@ -140,7 +120,7 @@ export async function POST(request: NextRequest) {
 
                 // Mirror organization to Firebase immediately (Step 1 sync)
                 saveOrganizationToFirebase({
-                    clerkId: firebaseUid, // Using firebaseUid in place of clerkId for compatibility
+                    clerkId: userId, // Identity column shared across auth providers
                     orgId: orgResult.organization!.org_id,
                     name: orgResult.organization!.name,
                     slug: orgResult.organization!.slug,
@@ -152,7 +132,7 @@ export async function POST(request: NextRequest) {
                 syncOrgToSupabase({
                     name: orgResult.organization!.name,
                     slug: orgResult.organization!.slug,
-                    ownerClerkId: firebaseUid, // Using firebaseUid
+                    ownerClerkId: userId, // Identity column shared across auth providers
                     orgUuid: orgResult.organization!.org_id,
                     description: orgDescription?.trim() || null,
                 }).catch((e: any) => console.warn('[Onboarding API] Supabase org sync (non-fatal):', e.message));
@@ -216,7 +196,7 @@ export async function POST(request: NextRequest) {
                 // Mirror API key metadata to Firebase immediately (Step 2 sync)
                 // NOTE: only prefix is stored — NEVER hash or full key
                 saveApiKeyToFirebase({
-                    clerkId: firebaseUid, // Using firebaseUid
+                    clerkId: userId, // Identity column shared across auth providers
                     keyId: saveResult.apiKey!.key_id,
                     keyPrefix: apiKey.prefix,
                     keyName: data.keyName || 'Default API Key',
@@ -227,10 +207,14 @@ export async function POST(request: NextRequest) {
 
                 // Mirror API key to Supabase (awaited — MCP auth depends on this)
                 await syncApiKeyToSupabase({
+                    keyId: saveResult.apiKey!.key_id,
                     keyPrefix: apiKey.prefix,
                     keyHash: apiKey.hash,
                     name: data.keyName || 'Default API Key',
-                    ownerClerkId: firebaseUid, // Using firebaseUid
+                    ownerFirebaseUid: userId,
+                    ownerClerkId: userId,
+                    ownerEmail: dbUser.email,
+                    ownerName: dbUser.full_name,
                     scopes: ['memory:read', 'memory:write', 'memory:delete'],
                 }).catch((e: any) => console.error('[Onboarding API] Supabase key sync FAILED:', e.message));
 
@@ -252,7 +236,7 @@ export async function POST(request: NextRequest) {
 
             case 'complete': {
                 // Mark user as onboarded in PostgreSQL
-                const success = await markUserOnboarded(firebaseUid);
+                const success = await markUserOnboarded(userId);
 
                 if (!success) {
                     return NextResponse.json(
@@ -270,7 +254,7 @@ export async function POST(request: NextRequest) {
 
                     if (org) {
                         await saveOnboardingProfile({
-                            clerkId: firebaseUid, // Using firebaseUid
+                            clerkId: userId, // Identity column shared across auth providers
                             universalId: dbUser.universal_id,
                             email: dbUser.email,
                             fullName: dbUser.full_name,
@@ -295,7 +279,7 @@ export async function POST(request: NextRequest) {
 
                     if (org && latestKey) {
                         fullOnboardingSyncToSupabase({
-                            clerkId: firebaseUid, // Using firebaseUid
+                            clerkId: userId, // Identity column shared across auth providers
                             email: dbUser.email,
                             firstName: dbUser.first_name,
                             lastName: dbUser.last_name,
@@ -351,34 +335,29 @@ export async function POST(request: NextRequest) {
 // GET /api/onboarding - Get onboarding status
 export async function GET(request: NextRequest) {
     try {
-        const authUser = await auth(request);
+        const session = await getSessionFromRequest(request);
         
-        if (!authUser) {
+        if (!session?.sub) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
             );
         }
-        const firebaseUid = authUser.uid;
+        const userId = session.sub;
 
         // SECURITY: Check email verification for email users
-        const firebaseUser = await getFirebaseUser(firebaseUid);
-        if (firebaseUser) {
-            const providerData = firebaseUser.providerData?.[0];
-            const isOAuthUser = providerData?.providerId && providerData.providerId !== 'password';
-            
-            if (!isOAuthUser && !firebaseUser.emailVerified) {
-                return NextResponse.json(
-                    { 
-                        error: 'Email verification required',
-                        emailVerified: false,
-                    },
-                    { status: 403 }
-                );
-            }
+        // OAuth users (Google, GitHub) are auto-verified by WorkOS
+        if (!isOAuthProvider(session.provider) && !session.emailVerified) {
+            return NextResponse.json(
+                { 
+                    error: 'Email verification required',
+                    emailVerified: false,
+                },
+                { status: 403 }
+            );
         }
 
-        const dbUser = await getUserFromPostgres(firebaseUid);
+        const dbUser = await getUserFromPostgres(userId);
         
         if (!dbUser) {
             return NextResponse.json({

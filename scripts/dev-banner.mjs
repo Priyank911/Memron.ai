@@ -6,9 +6,8 @@
 const services = [
   { name: 'Landing', url: 'http://localhost:3000' },
   { name: 'Dashboard', url: 'http://localhost:3000/dashboard' },
-  { name: 'Platform', url: 'http://localhost:3002' },
-  { name: 'Gateway', url: 'http://localhost:4000' },
-  { name: 'Tunnel API', url: 'http://localhost:4200' },
+  { name: 'Gateway', url: 'http://localhost:5000' },
+  { name: 'Tunnel API', url: 'http://localhost:5200' },
   { name: 'MCP Server', url: 'http://localhost:4201/mcp' },
 ];
 

@@ -1,14 +1,10 @@
 /**
- * Firebase Authentication Middleware
+ * WorkOS AuthKit Session Middleware
  * 
- * Verifies session cookies and protects routes.
- * Uses Firebase Admin SDK for server-side token verification.
- * 
- * NOTE: Next.js middleware runs on the Edge runtime, but Firebase Admin
- * requires Node.js. We use a lightweight approach here:
- * - Check for presence of session cookie
- * - Actual verification happens in API routes
- * - For pages, we do a quick API call to verify
+ * Protects routes based on the presence of a well-formed sealed session
+ * cookie. The seal is AES-256-GCM encrypted (created by /api/auth/*), so the
+ * Edge middleware only performs a cheap format check — full cryptographic
+ * verification happens in API routes via `getSessionFromRequest()`.
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
@@ -17,6 +13,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 const PUBLIC_ROUTES = [
   '/',
+  '/docs',
   '/about',
   '/login',
   '/sign-up',
@@ -68,17 +65,17 @@ function isOnboardingRoute(pathname: string): boolean {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Quick sanity check: a valid Firebase session cookie is a JWT
- * (three dot-separated base64url segments). If it's the literal
- * string "undefined", empty, or otherwise malformed, reject it
- * immediately so we don't spam the Firebase Admin SDK.
+ * Quick sanity check: a valid session seal looks like
+ * `v1.<iv>.<ciphertext>.<tag>` (4 dot-separated base64url segments).
+ * Anything else ("undefined", empty, stale Firebase JWTs) is rejected here so
+ * we never waste a round-trip on garbage cookies.
  */
-function isValidJwt(token: string): boolean {
-  if (!token || token === 'undefined' || token === 'null' || token.length < 20) {
+function isValidSessionSeal(token: string): boolean {
+  if (!token || token === 'undefined' || token === 'null' || token.length < 40) {
     return false;
   }
   const parts = token.split('.');
-  return parts.length === 3 && parts.every(p => p.length > 0);
+  return parts.length === 4 && parts[0] === 'v1' && parts.every(p => p.length > 0);
 }
 
 // ─── Middleware ──────────────────────────────────────────────────────────────
@@ -88,7 +85,7 @@ export async function middleware(request: NextRequest) {
   
   // Get session cookie and validate format
   const rawCookie = request.cookies.get('__session')?.value;
-  const sessionCookie = rawCookie && isValidJwt(rawCookie) ? rawCookie : undefined;
+  const sessionCookie = rawCookie && isValidSessionSeal(rawCookie) ? rawCookie : undefined;
   const isAuthenticated = !!sessionCookie;
 
   // If there's a malformed cookie, clear it immediately

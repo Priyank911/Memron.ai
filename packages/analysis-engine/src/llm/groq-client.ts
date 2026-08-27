@@ -1,16 +1,19 @@
 /**
- * Groq LLM Client
- * Fast inference client for analysis tasks
+ * LLM Client — OpenAI gpt-4o-mini Inference Client
+ * Ultra-fast, low-cost structured JSON extraction for memory analysis tasks
  */
 
-import Groq from 'groq-sdk';
+import OpenAI from 'openai';
 
-export interface GroqClientConfig {
+export interface LLMClientConfig {
   apiKey?: string;
   model?: string;
   maxTokens?: number;
   temperature?: number;
 }
+
+// Backwards compatibility type alias
+export type GroqClientConfig = LLMClientConfig;
 
 export interface AnalysisResult<T> {
   data: T;
@@ -23,30 +26,30 @@ export interface AnalysisResult<T> {
   latencyMs: number;
 }
 
-const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+const DEFAULT_MODEL = 'gpt-4o-mini';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.1;
 
-let groqClient: Groq | null = null;
+let openaiClient: OpenAI | null = null;
 
-function getClient(apiKey?: string): Groq {
-  if (!groqClient) {
-    const key = apiKey || process.env.GROQ_API_KEY;
+function getClient(apiKey?: string): OpenAI {
+  if (!openaiClient) {
+    const key = apiKey || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY;
     if (!key) {
-      throw new Error('GROQ_API_KEY environment variable is required');
+      throw new Error('OPENAI_API_KEY environment variable is required');
     }
-    groqClient = new Groq({ apiKey: key });
+    openaiClient = new OpenAI({ apiKey: key });
   }
-  return groqClient;
+  return openaiClient;
 }
 
 /**
- * Analyze content using Groq with structured JSON output
+ * Analyze content using OpenAI gpt-4o-mini with structured JSON output
  */
 export async function analyze<T>(
   systemPrompt: string,
   content: string,
-  config: GroqClientConfig = {}
+  config: LLMClientConfig = {}
 ): Promise<AnalysisResult<T>> {
   const client = getClient(config.apiKey);
   const model = config.model || DEFAULT_MODEL;
@@ -67,14 +70,14 @@ export async function analyze<T>(
   const message = response.choices[0]?.message;
 
   if (!message?.content) {
-    throw new Error('No content in Groq response');
+    throw new Error('No content in OpenAI response');
   }
 
   let data: T;
   try {
     data = JSON.parse(message.content) as T;
   } catch {
-    throw new Error(`Failed to parse Groq JSON response: ${message.content}`);
+    throw new Error(`Failed to parse OpenAI JSON response: ${message.content}`);
   }
 
   return {
@@ -95,7 +98,7 @@ export async function analyze<T>(
 export async function analyzeBatch<T>(
   systemPrompt: string,
   items: string[],
-  config: GroqClientConfig = {}
+  config: LLMClientConfig = {}
 ): Promise<AnalysisResult<T>[]> {
   // Process in parallel for speed
   return Promise.all(items.map((content) => analyze<T>(systemPrompt, content, config)));
@@ -107,7 +110,7 @@ export async function analyzeBatch<T>(
 export async function* analyzeStream(
   systemPrompt: string,
   content: string,
-  config: GroqClientConfig = {}
+  config: LLMClientConfig = {}
 ): AsyncGenerator<string, void, unknown> {
   const client = getClient(config.apiKey);
   const model = config.model || DEFAULT_MODEL;
@@ -135,21 +138,16 @@ export async function* analyzeStream(
  * Reset the client (useful for testing)
  */
 export function resetClient(): void {
-  groqClient = null;
+  openaiClient = null;
 }
 
 /**
  * Get embedding-ready text (prepares content for external embedding)
- * Note: Groq doesn't provide embeddings, so we prepare text for external services
  */
 export function prepareForEmbedding(text: string, maxLength: number = 8000): string {
-  // Remove excessive whitespace
   let cleaned = text.replace(/\s+/g, ' ').trim();
-
-  // Truncate if too long
   if (cleaned.length > maxLength) {
     cleaned = cleaned.slice(0, maxLength - 3) + '...';
   }
-
   return cleaned;
 }

@@ -106,7 +106,7 @@ describe('Episode Splitter', () => {
   // Note: summarizeEpisode tests are skipped because they require GROQ_API_KEY
   // These are integration tests that should be run with proper credentials
   describe('summarizeEpisode', () => {
-    const hasApiKey = !!process.env.GROQ_API_KEY;
+    const hasApiKey = !!(process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
 
     it.skipIf(!hasApiKey)('should generate a summary for an episode', async () => {
       const messages: ConversationMessage[] = [

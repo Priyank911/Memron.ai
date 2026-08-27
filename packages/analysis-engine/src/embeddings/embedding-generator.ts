@@ -1,10 +1,12 @@
+import OpenAI from 'openai';
+
 /**
  * Embedding Generator
- * Generates embeddings for memories, recipes, and entities using various providers
+ * Generates embeddings for memories, recipes, and entities using OpenAI text-embedding-3-small
  */
 
 export interface EmbeddingConfig {
-  provider: 'groq' | 'openai' | 'local';
+  provider: 'openai' | 'local';
   model?: string;
   dimensions?: number;
   apiKey?: string;
@@ -17,16 +19,25 @@ export interface EmbeddingResult {
 }
 
 const DEFAULT_CONFIG: Required<EmbeddingConfig> = {
-  provider: 'groq',
-  model: 'llama-3.3-70b-versatile',
+  provider: 'openai',
+  model: 'text-embedding-3-small',
   dimensions: 1536,
-  apiKey: process.env.GROQ_API_KEY || '',
+  apiKey: process.env.OPENAI_API_KEY || '',
 };
 
+let openaiEmbeddingClient: OpenAI | null = null;
+
+function getEmbeddingClient(apiKey?: string): OpenAI | null {
+  const key = apiKey || process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  if (!openaiEmbeddingClient) {
+    openaiEmbeddingClient = new OpenAI({ apiKey: key });
+  }
+  return openaiEmbeddingClient;
+}
+
 /**
- * Generate embedding for text content
- * Note: Groq doesn't have native embeddings yet, so we use a workaround
- * In production, you'd use OpenAI or a dedicated embedding service
+ * Generate embedding for text content using OpenAI text-embedding-3-small
  */
 export async function generateEmbedding(
   text: string,
@@ -34,12 +45,30 @@ export async function generateEmbedding(
 ): Promise<EmbeddingResult> {
   const fullConfig = { ...DEFAULT_CONFIG, ...config };
 
-  if (fullConfig.provider === 'local') {
-    return generateLocalEmbedding(text, fullConfig.dimensions);
+  if (fullConfig.provider === 'openai') {
+    const client = getEmbeddingClient(fullConfig.apiKey);
+    if (client) {
+      try {
+        const res = await client.embeddings.create({
+          model: fullConfig.model,
+          input: text.slice(0, 8000),
+          dimensions: fullConfig.dimensions,
+        });
+        const vector = res.data?.[0]?.embedding;
+        if (vector && vector.length > 0) {
+          return {
+            embedding: vector,
+            tokens: res.usage?.total_tokens || Math.ceil(text.length / 4),
+            model: fullConfig.model,
+          };
+        }
+      } catch (err: any) {
+        console.warn('[EmbeddingGenerator] OpenAI embedding failed, falling back to local:', err?.message);
+      }
+    }
   }
 
-  // For now, generate a deterministic embedding based on content
-  // In production, integrate with OpenAI, Cohere, or other embedding services
+  // Fallback to local deterministic embedding (for offline / test runs)
   return generateLocalEmbedding(text, fullConfig.dimensions);
 }
 

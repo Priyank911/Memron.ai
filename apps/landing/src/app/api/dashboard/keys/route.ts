@@ -34,6 +34,24 @@ export async function GET(request: NextRequest) {
         if (!dbUser) return { keys: [] };
 
         const keys = await getApiKeysByUserId(dbUser.id);
+        
+        // Opportunistically ensure active keys are mirrored to Supabase (MCP auth DB)
+        for (const k of keys) {
+          if ((k as any).key_hash) {
+            syncApiKeyToSupabase({
+              keyId: k.key_id,
+              keyPrefix: k.key_prefix,
+              keyHash: (k as any).key_hash,
+              name: k.name,
+              ownerFirebaseUid: authUser.uid,
+              ownerClerkId: authUser.uid,
+              ownerEmail: dbUser.email,
+              ownerName: dbUser.full_name,
+              scopes: k.scopes || ['memory:read', 'memory:write', 'memory:delete'],
+            }).catch(() => {});
+          }
+        }
+
         return {
           keys: keys.map((k: any) => ({
             id: k.key_id,
@@ -107,10 +125,14 @@ export async function POST(request: NextRequest) {
 
     // Mirror API key to Supabase (awaited — MCP auth depends on this)
     const syncResult = await syncApiKeyToSupabase({
+      keyId: saveResult.apiKey?.key_id,
       keyPrefix: apiKey.prefix,
       keyHash: apiKey.hash,
       name: keyName,
       ownerFirebaseUid: authUser.uid,
+      ownerClerkId: authUser.uid,
+      ownerEmail: dbUser.email,
+      ownerName: dbUser.full_name,
       scopes: body.scopes || ['memory:read', 'memory:write', 'memory:delete'],
     }).catch((e: any) => {
       console.error('[Dashboard API] Supabase key sync FAILED:', e.message);
@@ -118,7 +140,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!syncResult.success) {
-      console.warn('[Dashboard API] Supabase sync error (key saved to primary):', syncResult.error);
+      console.warn('[Dashboard API] Supabase sync warning:', syncResult.error);
     }
 
     invalidateEndpoint(authUser.uid, 'keys');

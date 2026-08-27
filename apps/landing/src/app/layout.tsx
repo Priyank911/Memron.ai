@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import '@/styles/globals.css';
 import { ConditionalLayout } from '@/components/conditional-layout';
 import { CookieConsent } from '@/components/cookie-consent';
-import { FirebaseAuthProvider } from '@/components/auth-provider';
+import { AuthProvider } from '@/components/auth-provider';
 
 export const metadata: Metadata = {
   title: 'Memron.ai',
@@ -32,10 +32,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </head>
       <body>
-        <FirebaseAuthProvider>
+        <AuthProvider>
           <ConditionalLayout>{children}</ConditionalLayout>
           <CookieConsent />
-        </FirebaseAuthProvider>
+        </AuthProvider>
       </body>
     </html>
   );

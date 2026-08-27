@@ -15,6 +15,8 @@ const nextConfig = {
       { protocol: 'https', hostname: 'lh3.googleusercontent.com' },
       { protocol: 'https', hostname: 'avatars.githubusercontent.com' },
       { protocol: 'https', hostname: 'firebasestorage.googleapis.com' },
+      // WorkOS AuthKit proxies OAuth avatars (Google/GitHub) through its CDN
+      { protocol: 'https', hostname: 'workoscdn.com' },
     ],
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 86400,
@@ -52,7 +54,7 @@ const nextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://www.gstatic.com https://challenges.cloudflare.com",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com",
-              "img-src 'self' data: blob: https://lh3.googleusercontent.com https://avatars.githubusercontent.com https://firebasestorage.googleapis.com https://*.memron.ai https://www.gstatic.com",
+              "img-src 'self' data: blob: https://lh3.googleusercontent.com https://avatars.githubusercontent.com https://firebasestorage.googleapis.com https://*.memron.ai https://www.gstatic.com https://workoscdn.com",
               "font-src 'self' data: https://fonts.gstatic.com",
               "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.memron.ai https://api.github.com",
               "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://memron-2db.firebaseapp.com https://challenges.cloudflare.com https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com",

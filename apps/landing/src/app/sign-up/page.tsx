@@ -4,19 +4,11 @@ import { useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { useAuth } from '@/components/auth-provider';
-import {
-  signInWithGoogle,
-  signInWithGithub,
-  createAccountWithEmail,
-  createSession,
-  resendVerificationEmail,
-  getFirebaseAuth,
-} from '@/lib/firebase-client';
-import { formatFirebaseError, isSilentError } from '@/lib/firebase-errors';
+import { signInWithProvider } from '@/lib/auth-client';
 import { useCallback } from 'react';
 
 export default function SignUpPage() {
-  const { user, isLoaded, firebaseUser } = useAuth();
+  const { user, isLoaded, signUp, resendVerificationEmail, verifyEmailCode } = useAuth();
   const authLoading = !isLoaded;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,24 +23,59 @@ export default function SignUpPage() {
   // IMPORTANT: keep SSR/client initial render identical to avoid hydration mismatch.
   const [phase, setPhase] = useState<'form' | 'verifying' | 'verified'>('form');
   const [verifyEmail, setVerifyEmail] = useState('');
-  
+  const [code, setCode] = useState('');
+
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resending, setResending] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
 
   // Track whether we're handling post-auth redirect ourselves
   const redirectingRef = useRef(false);
 
+  const isOAuthUser = (providerId?: string | null) => Boolean(providerId && providerId !== 'password');
+
+  // Arriving from login with an unverified account (?verify=<email>):
+  // enter the code-entry phase immediately — the server already re-sent the code.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verifyEmailParam = params.get('verify');
+    if (!verifyEmailParam) return;
+
+    params.delete('verify');
+    const clean = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${clean ? `?${clean}` : ''}`);
+
+    setVerifyEmail(verifyEmailParam);
+    setPhase('verifying');
+    document.cookie = 'memron_email_verified=false; path=/; max-age=432000; SameSite=Lax';
+    setResendCooldown(30);
+  }, []);
+
   // Restore persisted verification state on client after hydration.
   useEffect(() => {
+    if (!isLoaded) return;
+
     const savedPhase = localStorage.getItem('memron_verification_phase');
     const savedEmail = localStorage.getItem('memron_verification_email') || '';
-    if (savedPhase === 'verifying' || savedPhase === 'verified') {
-      setPhase(savedPhase);
+
+    if (user && (savedPhase === 'verifying' || savedPhase === 'verified')) {
+      // Only restore when the account still needs verification.
+      if (!user.emailVerified && savedPhase === 'verifying') {
+        setPhase('verifying');
+        if (savedEmail) setVerifyEmail(savedEmail);
+      } else if (user.emailVerified) {
+        localStorage.removeItem('memron_verification_phase');
+        localStorage.removeItem('memron_verification_email');
+        document.cookie = 'memron_email_verified=true; path=/; max-age=432000; SameSite=Lax';
+      }
+    } else if (!user) {
+      // User signed out - clear any stale verification state
+      localStorage.removeItem('memron_verification_phase');
+      localStorage.removeItem('memron_verification_email');
+      setPhase('form');
+      setVerifyEmail('');
     }
-    if (savedEmail) {
-      setVerifyEmail(savedEmail);
-    }
-  }, []);
+  }, [isLoaded, user]);
 
   // Persist phase and email to localStorage whenever they change
   useEffect(() => {
@@ -71,25 +98,6 @@ export default function SignUpPage() {
     }
   }, [verifyEmail]);
 
-  // On mount: if user is signed in but email not verified, show verification page
-  useEffect(() => {
-    if (isLoaded && user && firebaseUser) {
-      const isOAuthUser = firebaseUser.providerData.some(p => p.providerId !== 'password');
-      
-      // If email user and not verified, automatically show verification screen
-      if (!isOAuthUser && !firebaseUser.emailVerified && firebaseUser.email) {
-        setVerifyEmail(firebaseUser.email);
-        setPhase('verifying');
-        document.cookie = 'memron_email_verified=false; path=/; max-age=432000; SameSite=Lax';
-      } else if (firebaseUser.emailVerified && phase === 'verifying') {
-        // Email is verified - clean up localStorage and allow redirect
-        localStorage.removeItem('memron_verification_phase');
-        localStorage.removeItem('memron_verification_email');
-        document.cookie = 'memron_email_verified=true; path=/; max-age=432000; SameSite=Lax';
-      }
-    }
-  }, [isLoaded, user, firebaseUser, phase]);
-
   // Sync user to database after successful auth
   const syncUserToDb = useCallback(async () => {
     try {
@@ -102,52 +110,6 @@ export default function SignUpPage() {
       // Non-blocking — onboarding page retries this anyway
     }
   }, []);
-
-  // Check email verification status periodically when in verify phase
-  const checkVerification = useCallback(async () => {
-    if (!firebaseUser) return false;
-    
-    try {
-      // Force refresh the user to get latest emailVerified status
-      await firebaseUser.reload();
-      const refreshedUser = getFirebaseAuth().currentUser;
-      
-      if (refreshedUser?.emailVerified) {
-        // Email is now verified - show success state briefly
-        setPhase('verified');
-        redirectingRef.current = true;
-        
-        // Clean up localStorage
-        localStorage.removeItem('memron_verification_phase');
-        localStorage.removeItem('memron_verification_email');
-        document.cookie = 'memron_email_verified=true; path=/; max-age=432000; SameSite=Lax';
-        
-        await syncUserToDb();
-        // Brief delay to show success message
-        setTimeout(() => {
-          router.replace('/onboarding');
-        }, 1500);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      console.error('[SignUp] Error checking verification:', err);
-      return false;
-    }
-  }, [firebaseUser, router, syncUserToDb]);
-
-  // Periodic verification check when in verifying phase
-  useEffect(() => {
-    if (phase !== 'verifying' || !firebaseUser) return;
-    
-    // Initial check
-    checkVerification();
-    
-    // Check every 3 seconds
-    const interval = setInterval(checkVerification, 3000);
-    
-    return () => clearInterval(interval);
-  }, [phase, firebaseUser, checkVerification]);
 
   // Cooldown timer for resend button
   useEffect(() => {
@@ -165,18 +127,13 @@ export default function SignUpPage() {
         return; // Stay on verification page
       }
 
-      // For OAuth users (Google, GitHub), they're auto-verified
-      const isOAuthUser = firebaseUser?.providerData.some(p => p.providerId !== 'password');
-      
-      // Only redirect if:
-      // 1. User is OAuth (Google/GitHub) OR
-      // 2. User's email is verified
-      if (isOAuthUser || firebaseUser?.emailVerified) {
+      // Only redirect if the user is OAuth or their email is verified
+      if (isOAuthUser(user.providerId) || user.emailVerified) {
         const isOnboarded = document.cookie.includes('memron_onboarded=true');
         router.replace(isOnboarded ? '/dashboard' : '/onboarding');
       }
     }
-  }, [user, authLoading, router, firebaseUser, phase]);
+  }, [user, authLoading, router, phase]);
 
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -185,37 +142,51 @@ export default function SignUpPage() {
       setIsLoading(true);
       setError('');
 
-      // Build display name from first and last name
-      const displayName = [firstName, lastName].filter(Boolean).join(' ') || undefined;
-
-      // Create account with Firebase
-      // Firebase will send email verification automatically and set display name
-      await createAccountWithEmail(
-        email,
-        password,
-        displayName
-      );
-
-      // Create session cookie (uses current auth user internally)
-      await createSession();
+      // Create the WorkOS user — the server emails a one-time code and
+      // establishes a limited session so we can complete verification here.
+      await signUp(email.trim(), password, firstName.trim() || undefined, lastName.trim() || undefined);
 
       // Store email for verification page
-      setVerifyEmail(email);
-      
+      setVerifyEmail(email.trim());
+
       // Show verification page - don't redirect yet
-      // User needs to verify email first
       setPhase('verifying');
       document.cookie = 'memron_email_verified=false; path=/; max-age=432000; SameSite=Lax';
       setResendCooldown(60); // Start with 60s cooldown since email was just sent
 
     } catch (err: any) {
-      console.error('[SignUp] Email sign-up failed:', err);
-      const errorMessage = formatFirebaseError(err);
-      if (errorMessage) {
-        setError(errorMessage);
-      }
+      // Expected errors are surfaced as friendly messages by the API layer.
+      setError(err?.message || 'Failed to create your account. Please try again.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Verify the one-time code entered by the user
+  const handleVerifyCode = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!code.trim() || verifyingCode) return;
+
+    try {
+      setVerifyingCode(true);
+      setError('');
+      await verifyEmailCode(code.trim());
+
+      // Verified! Clean up localStorage and move to success state
+      setPhase('verified');
+      redirectingRef.current = true;
+      localStorage.removeItem('memron_verification_phase');
+      localStorage.removeItem('memron_verification_email');
+      document.cookie = 'memron_email_verified=true; path=/; max-age=432000; SameSite=Lax';
+
+      await syncUserToDb();
+      setTimeout(() => {
+        router.replace('/onboarding');
+      }, 1500);
+    } catch (err: any) {
+      setError(err?.message || 'Invalid code. Please check your email and try again.');
+    } finally {
+      setVerifyingCode(false);
     }
   };
 
@@ -229,70 +200,22 @@ export default function SignUpPage() {
       await resendVerificationEmail();
       setResendCooldown(60);
     } catch (err: any) {
-      console.error('[SignUp] Resend failed:', err);
-      if (err.code === 'auth/too-many-requests') {
-        setError('Too many attempts. Please wait a few minutes.');
-      } else {
-        setError('Failed to resend verification email. Please try again.');
-      }
+      setError(err?.message || 'Failed to resend verification email. Please try again.');
     } finally {
       setResending(false);
     }
   };
 
-  // Go back to form from verification
-  const handleChangeEmail = () => {
-    setPhase('form');
-    setVerifyEmail('');
-    setError('');
-  };
-
-  const handleOAuthSignUp = async (provider: 'google' | 'github') => {
+  const handleOAuthSignUp = (provider: 'google' | 'github') => {
     try {
       setIsLoading(true);
       setError('');
 
-      // Sign in with OAuth provider
-      const userCredential = provider === 'google'
-        ? await signInWithGoogle()
-        : await signInWithGithub();
-
-      // Create session cookie (uses current auth user internally)
-      await createSession();
-
-      // Prevent racing redirect
-      redirectingRef.current = true;
-
-      // Sync user to our databases
-      await syncUserToDb();
-
-      // Check if this is a new user (first sign-in)
-      // For OAuth, we can check the creationTime vs lastSignInTime
-      const metadata = userCredential.user.metadata;
-      const isNewUser = metadata.creationTime === metadata.lastSignInTime;
-
-      // Navigate based on whether this is a new user
-      if (isNewUser) {
-        router.replace('/onboarding');
-      } else {
-        const isOnboarded = document.cookie.includes('memron_onboarded=true');
-        router.replace(isOnboarded ? '/dashboard' : '/onboarding');
-      }
-
+      // Full-page redirect into the WorkOS hosted OAuth flow.
+      signInWithProvider(provider);
     } catch (err: any) {
       console.error('[SignUp] OAuth sign-up failed:', err);
-      
-      // Check if user just closed the popup - silently return
-      if (isSilentError(err)) {
-        // User closed popup, just reset state, no error message
-        return;
-      }
-      
-      const errorMessage = formatFirebaseError(err);
-      if (errorMessage) {
-        setError(errorMessage);
-      }
-    } finally {
+      setError(`Could not start ${provider} sign-in. Please try again.`);
       setIsLoading(false);
     }
   };
@@ -361,27 +284,9 @@ export default function SignUpPage() {
     const isVerified = phase === 'verified';
     
     return (
-      <div className="verify-page" style={{
-        display: 'flex',
-        minHeight: '100vh',
-        width: '100%',
-        fontFamily: "'Inter', 'Space Grotesk', system-ui, -apple-system, sans-serif",
-        overflow: 'hidden',
-        background: '#ffffff',
-      }}>
-
+      <div className="verify-page auth-split-wrapper">
         {/* ===================== LEFT PANEL — WHITE ===================== */}
-        <div style={{
-          flex: '0 0 48%',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          background: '#ffffff',
-          padding: '2rem',
-          position: 'relative',
-          zIndex: 10,
-        }}>
+        <div className="auth-form-panel">
           {/* Subtle corner glow */}
           <div style={{
             position: 'absolute',
@@ -396,9 +301,7 @@ export default function SignUpPage() {
             pointerEvents: 'none',
           }} />
 
-          <div style={{
-            width: '100%',
-            maxWidth: '360px',
+          <div className="auth-form-inner" style={{
             animation: 'verifyFadeUp 0.5s ease',
           }}>
 
@@ -462,7 +365,7 @@ export default function SignUpPage() {
             }}>
               {isVerified 
                 ? 'Your email has been verified successfully. Redirecting you now...'
-                : <>We sent a verification link to <strong style={{ color: '#3f3f46' }}>{verifyEmail}</strong></>
+                : <>We sent a verification code to <strong style={{ color: '#3f3f46' }}>{verifyEmail}</strong></>
               }
             </p>
 
@@ -496,11 +399,71 @@ export default function SignUpPage() {
                     <path d="M12 2a10 10 0 0 1 10 10" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
                   </svg>
                   <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#52525b' }}>
-                    Waiting for verification
+                    Enter your code to continue
                   </span>
                 </>
               )}
             </div>
+
+            {/* Code entry (only show when not verified) */}
+            {!isVerified && (
+              <form onSubmit={handleVerifyCode} style={{ marginBottom: '1.25rem' }}>
+                <label style={{
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  color: '#3f3f46',
+                  letterSpacing: '0.02em',
+                  fontFamily: "'Inter', sans-serif",
+                  display: 'block',
+                  marginBottom: '6px',
+                }}>Verification code</label>
+                <input
+                  suppressHydrationWarning
+                  type="text"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\s/g, ''))}
+                  placeholder="Paste or type the code"
+                  maxLength={16}
+                  style={{
+                    width: '100%',
+                    height: '48px',
+                    border: '1.5px solid #e4e4e7',
+                    borderRadius: '10px',
+                    padding: '0 14px',
+                    fontSize: '1rem',
+                    letterSpacing: '0.08em',
+                    color: '#09090b',
+                    background: '#fafafa',
+                    outline: 'none',
+                    fontFamily: "'Inter', sans-serif",
+                    transition: 'border-color 0.2s',
+                    marginBottom: '10px',
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={!code.trim() || verifyingCode}
+                  style={{
+                    width: '100%',
+                    height: 42,
+                    border: 'none',
+                    borderRadius: '8px',
+                    background: !code.trim() || verifyingCode ? '#e4e4e7' : '#09090b',
+                    color: !code.trim() || verifyingCode ? '#71717a' : '#fff',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    cursor: !code.trim() || verifyingCode ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s',
+                    marginBottom: '10px',
+                  }}
+                >
+                  {verifyingCode ? 'Verifying...' : 'Verify email'}
+                </button>
+              </form>
+            )}
 
             {/* Instructions (only show when not verified) */}
             {!isVerified && (
@@ -514,8 +477,8 @@ export default function SignUpPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {[
                     { num: '1', text: 'Open the email from Memron' },
-                    { num: '2', text: 'Click the verification link' },
-                    { num: '3', text: 'Return here — we\'ll detect it automatically' },
+                    { num: '2', text: 'Copy the verification code' },
+                    { num: '3', text: 'Paste it above and hit verify' },
                   ].map((step) => (
                     <div key={step.num} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div style={{
@@ -553,12 +516,12 @@ export default function SignUpPage() {
 
             {/* Actions (only show when not verified) */}
             {!isVerified && (
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex' }}>
                 <button
                   onClick={handleResendVerification}
                   disabled={resendCooldown > 0 || resending}
                   style={{
-                    flex: 1,
+                    width: '100%',
                     height: 42,
                     border: 'none',
                     borderRadius: '8px',
@@ -572,41 +535,13 @@ export default function SignUpPage() {
                 >
                   {resending ? 'Sending...' : resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend email'}
                 </button>
-                <button
-                  onClick={handleChangeEmail}
-                  style={{
-                    height: 42,
-                    padding: '0 16px',
-                    border: '1.5px solid #e4e4e7',
-                    borderRadius: '8px',
-                    background: 'transparent',
-                    color: '#52525b',
-                    fontSize: '0.85rem',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Change email
-                </button>
               </div>
             )}
           </div>
         </div>
 
         {/* ===================== RIGHT PANEL — DARK ===================== */}
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'flex-start',
-          background: '#09090b',
-          position: 'relative',
-          padding: '3rem',
-          overflow: 'hidden',
-        }}>
+        <div className="auth-hero-panel" style={{ justifyContent: 'center' }}>
           {/* Animated gradient orbs */}
           <div style={{
             position: 'absolute',
@@ -791,27 +726,9 @@ export default function SignUpPage() {
 
   // ─── MAIN SIGN UP FORM ────────────────────────────────────
   return (
-    <div className="signup-page" style={{
-      display: 'flex',
-      minHeight: '100vh',
-      width: '100%',
-      fontFamily: "'Inter', 'Space Grotesk', system-ui, -apple-system, sans-serif",
-      overflow: 'hidden',
-      background: '#ffffff',
-    }}>
-
+    <div className="signup-page auth-split-wrapper">
       {/* ===================== LEFT PANEL — WHITE ===================== */}
-      <div style={{
-        flex: '0 0 48%',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: '#ffffff',
-        padding: '3rem 2.5rem',
-        position: 'relative',
-        zIndex: 10,
-      }}>
+      <div className="auth-form-panel">
         {/* Subtle corner glow */}
         <div style={{
           position: 'absolute',
@@ -824,9 +741,7 @@ export default function SignUpPage() {
           pointerEvents: 'none',
         }} />
 
-        <div style={{
-          width: '100%',
-          maxWidth: '400px',
+        <div className="auth-form-inner" style={{
           animation: 'loginFadeUp 0.65s cubic-bezier(0.16,1,0.3,1) forwards',
         }}>
 
@@ -1027,17 +942,7 @@ export default function SignUpPage() {
       </div>
 
       {/* ===================== RIGHT PANEL — BLACK ===================== */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'flex-end',
-        alignItems: 'flex-start',
-        background: '#09090b',
-        position: 'relative',
-        padding: '3rem',
-        overflow: 'hidden',
-      }}>
+      <div className="auth-hero-panel">
         {/* Gradient orbs */}
         <div style={{
           position: 'absolute', top: '-25%', right: '-15%', width: '550px', height: '550px', borderRadius: '50%',

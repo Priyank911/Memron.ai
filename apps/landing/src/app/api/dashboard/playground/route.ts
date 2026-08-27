@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/api-guard';
 import { checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
-import { runRAGPipeline, isGroqConfigured } from '@/lib/rag';
+import { runRAGPipeline, isOpenAIConfigured, isGroqConfigured } from '@/lib/rag';
 import { saveInteraction } from '@/lib/playground-history';
 
 /**
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       answer: result.answer,
       memories: result.memories,
       meta: result.meta,
-      llmConfigured: isGroqConfigured(),
+      llmConfigured: isOpenAIConfigured(),
       ...(generatedTitle ? { title: generatedTitle } : {}),
     });
   } catch (error: unknown) {

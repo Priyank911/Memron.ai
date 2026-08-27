@@ -79,7 +79,7 @@ function Terminal({ apiKey }: { apiKey: string }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function OnboardingPage() {
-  const { user, isLoaded, firebaseUser } = useAuth();
+  const { user, isLoaded } = useAuth();
   const router = useRouter();
   
   // Derive authLoading for compatibility
@@ -110,18 +110,17 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!isLoaded || !user) return;
 
-    // Check if user has verified email
-    if (firebaseUser) {
-      const isOAuthUser = firebaseUser.providerData.some(p => p.providerId !== 'password');
-      
-      // If email user (not OAuth) and email is NOT verified, redirect to sign-up
-      if (!isOAuthUser && !firebaseUser.emailVerified) {
-        console.warn('[Onboarding] Blocking unverified user, redirecting to sign-up');
-        router.replace('/sign-up');
-        return;
-      }
+    // OAuth users (Google/GitHub) are auto-verified by WorkOS; email users
+    // must have completed the verification code flow.
+    const isOAuthUser = Boolean(user.providerId && user.providerId !== 'password');
+
+    // If email user (not OAuth) and email is NOT verified, redirect to sign-up
+    if (!isOAuthUser && !user.emailVerified) {
+      console.warn('[Onboarding] Blocking unverified user, redirecting to sign-up');
+      router.replace('/sign-up');
+      return;
     }
-  }, [isLoaded, user, firebaseUser, router]);
+  }, [isLoaded, user, router]);
 
   useEffect(() => {
     if (user?.displayName && !orgName) setOrgName(`${user.displayName}'s Workspace`);

@@ -1,7 +1,6 @@
 'use client';
 
 import { useAuth } from '@/components/auth-provider';
-import { signOut } from '@/lib/firebase-client';
 import { useRouter } from 'next/navigation';
 import { useUserSync } from '@/lib/hooks/use-user-sync';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
@@ -24,6 +23,7 @@ import {
   ApiKeysPage,
   ShareBucketModal,
   CreateBucketModal,
+  GraphMemoryView,
 } from './_components';
 import { DonutChart, Sparkline } from './_components/charts';
 import { Topbar } from './_components/topbar';
@@ -42,7 +42,7 @@ const TIME_FILTERS = [
 ];
 
 export default function DashboardPage() {
-  const { user, isLoaded } = useAuth();
+  const { user, isLoaded, signOut } = useAuth();
   const router = useRouter();
   const { isReady } = useUserSync();
 
@@ -1495,7 +1495,7 @@ export default function DashboardPage() {
                 <div className="mm-srow">
                   <div>
                     <span className="mm-srow-label">Provider</span>
-                    <span className="mm-srow-hint">Managed by Clerk — SSO, OAuth, Passkeys</span>
+                    <span className="mm-srow-hint">Managed by WorkOS AuthKit — SSO, OAuth, Passkeys</span>
                   </div>
                   <span className="mm-sstatus mm-sstatus-ok"><Circle size={6} /> SSO Active</span>
                 </div>
@@ -2171,8 +2171,8 @@ export default function DashboardPage() {
       case 'memories': return renderMemories();
       case 'playground': { router.push('/playground'); return null; }
       case 'config': return renderConfig();
-      case 'graph-memory': return renderDashboard(); /* Coming Soon — redirect to dashboard */
-      case 'webhooks': return renderDashboard(); /* Coming Soon — redirect to dashboard */
+      case 'graph-memory': return <GraphMemoryView org={organization} />;
+      case 'webhooks': return renderDashboard();
       case 'usage': return renderUsage();
       case 'notifications': return renderNotifications();
       case 'dashboard': default: return renderDashboard();

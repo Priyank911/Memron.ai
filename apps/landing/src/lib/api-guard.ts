@@ -2,7 +2,7 @@
  * API Route Guard — Wraps Next.js API handlers with production-grade protections.
  *
  * Provides:
- *   - Authentication (Firebase)
+ *   - Authentication (WorkOS AuthKit sealed session cookie)
  *   - Rate limiting (sliding window per user)
  *   - Response caching (TTL + stale-while-revalidate)
  *   - Request coalescing (dedup concurrent identical requests)
@@ -19,7 +19,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySessionCookie } from './firebase-admin';
+import { getSessionFromRequest } from './session';
 import { cachedQuery, checkRateLimit, invalidateEndpoint, type CacheConfig } from './api-cache';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -28,6 +28,8 @@ interface AuthResult {
   uid: string;
   email?: string;
   emailVerified?: boolean;
+  /** 'password' for email users; provider name ('google'/'github') for OAuth. */
+  provider?: string;
 }
 
 interface GuardedRouteOptions<T> {
@@ -35,7 +37,7 @@ interface GuardedRouteOptions<T> {
   cache?: CacheConfig;
   /** The endpoint name for cache key scoping */
   endpoint?: string;
-  /** The actual handler. Receives firebaseUid + optional request. */
+  /** The actual handler. Receives userId + optional request. */
   handler: (userId: string, request?: NextRequest) => Promise<T>;
   /** If true, invalidate cache for this endpoint after success (for mutations) */
   invalidateAfter?: boolean;
@@ -44,38 +46,26 @@ interface GuardedRouteOptions<T> {
 // ─── Auth Helper ─────────────────────────────────────────────────────────────
 
 /**
- * Authenticate request using Firebase session cookie
- * Returns user info or null if not authenticated
+ * Authenticate request using the WorkOS sealed session cookie.
+ * Returns user info or null if not authenticated.
  */
 export async function auth(request?: NextRequest): Promise<AuthResult | null> {
-  // Get session cookie from request
-  const sessionCookie = request?.cookies.get('__session')?.value;
-  
-  if (!sessionCookie || sessionCookie === 'undefined' || sessionCookie === 'null') {
-    return null;
-  }
-
-  // Quick JWT format check (3 dot-separated segments)
-  const parts = sessionCookie.split('.');
-  if (parts.length !== 3 || parts.some(p => p.length === 0)) {
-    return null;
-  }
-
-  const user = await verifySessionCookie(sessionCookie);
-  if (!user) {
+  const claims = getSessionFromRequest(request);
+  if (!claims) {
     return null;
   }
 
   return {
-    uid: user.uid,
-    email: user.email,
-    emailVerified: user.emailVerified,
+    uid: claims.sub,
+    email: claims.email,
+    emailVerified: claims.emailVerified,
+    provider: claims.provider,
   };
 }
 
 /**
- * Get Firebase user ID from request
- * Throws if not authenticated
+ * Get authenticated user ID from request.
+ * Throws if not authenticated.
  */
 export async function requireAuth(request: NextRequest): Promise<AuthResult> {
   const user = await auth(request);
@@ -90,7 +80,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthResult> {
 export function guardedRoute<T>(opts: GuardedRouteOptions<T>) {
   return async (request: NextRequest): Promise<NextResponse> => {
     try {
-      // 1. Authenticate using Firebase session cookie
+      // 1. Authenticate using the WorkOS sealed session cookie
       const user = await auth(request);
       if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

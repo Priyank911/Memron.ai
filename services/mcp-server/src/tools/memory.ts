@@ -15,6 +15,7 @@ import { generatePointerId, estimateTokens, calculateCompression, classifyBucket
 import { ValidationError, NotFoundError, formatToolError } from '../lib/errors.js';
 import { config } from '../config.js';
 import * as db from '../db/queries.js';
+import { autoIngest } from '../lib/auto-ingest.js';
 
 function getUserId(authInfo?: AuthInfo): number {
   const uid = authInfo?.extra?.userId;
@@ -106,6 +107,19 @@ export function registerMemoryTools(server: McpServer): void {
           metadata: { compressionRate: compression.rate },
           apiKeyId,
           embedding: embeddingStr,
+        });
+
+        // Trigger background graph distillation & auto-ingestion (entities, relations, contradiction checks)
+        autoIngest({
+          sessionId: `mem_${pointerId}`,
+          userId,
+          messages: [
+            { role: 'user', content: title || 'Context' },
+            { role: 'assistant', content },
+          ],
+          useLLM: false,
+        }).catch((err) => {
+          console.warn('[MemoryStore] Background auto-ingestion warning:', err);
         });
 
         return {

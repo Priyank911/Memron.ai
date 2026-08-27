@@ -10,7 +10,9 @@ import { syncUserToSupabase } from './supabase-sync';
 // ─── Types ──────────────────────────────────────────────────
 
 export interface UserData {
-    /** Firebase UID (new users) */
+    /** WorkOS AuthKit user id (user_...) — current auth provider. */
+    workosUserId?: string;
+    /** Firebase UID (previous auth provider, kept for legacy rows). */
     firebaseUid?: string;
     /** Clerk ID (legacy users - for backwards compatibility) */
     clerkId?: string;
@@ -64,12 +66,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * Each write has an independent timeout so a slow/hung connection
  * to one database does not block the other.
  * 
- * Migration note: Now supports both firebaseUid (new) and clerkId (legacy).
- * Use firebaseUid for new users; clerkId is kept for backwards compatibility.
+ * Migration note: supports workosUserId (current), firebaseUid (legacy) and
+ * clerkId (oldest). All three are opaque external IDs stored in the same
+ * identity columns — no schema changes are needed when the provider changes.
  */
 export async function syncUser(userData: UserData): Promise<SyncResult> {
-    // Get the user identifier (prefer firebaseUid, fall back to clerkId)
-    const userId = userData.firebaseUid || userData.clerkId || '';
+    // Get the user identifier (prefer WorkOS, fall back to legacy ids)
+    const userId = userData.workosUserId || userData.firebaseUid || userData.clerkId || '';
     if (!userId) {
         return {
             success: false,
@@ -144,7 +147,7 @@ export async function syncUser(userData: UserData): Promise<SyncResult> {
  * in the background so both DBs converge without blocking the response.
  */
 function scheduleBackfill(userData: UserData, missingIn: 'postgres' | 'firebase'): void {
-    const userId = userData.firebaseUid || userData.clerkId || '';
+    const userId = userData.workosUserId || userData.firebaseUid || userData.clerkId || '';
     if (!userId) return;
     const payload = { ...userData, clerkId: userId };
     const task =
@@ -167,13 +170,15 @@ function scheduleBackfill(userData: UserData, missingIn: 'postgres' | 'firebase'
 
 /**
  * Normalize user data from either source into a common shape for backfill.
- * Supports both firebase_uid (new) and clerk_id (legacy) fields.
+ * Supports workos (current), firebase_uid and clerk_id (legacy) identifiers.
  */
 function toUserData(raw: any): UserData | null {
     if (!raw) return null;
+    const workosUserId = raw.workos_user_id || raw.workosUserId;
     const firebaseUid = raw.firebase_uid || raw.firebaseUid;
     const clerkId = raw.clerkId || raw.clerk_id;
     return {
+        workosUserId: workosUserId || undefined,
         firebaseUid: firebaseUid || undefined,
         clerkId: clerkId || undefined,
         email: raw.email,

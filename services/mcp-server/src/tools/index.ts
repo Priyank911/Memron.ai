@@ -3,6 +3,10 @@
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerMemoryTools } from './memory.js';
+import { registerMemoryGetTools } from './memory-get.js';
+import { registerMemoryListTools } from './memory-list.js';
+import { registerMemoryHistoryTools } from './memory-history.js';
+import { registerMemoryPinTools } from './memory-pin.js';
 import { registerProfileTools } from './profile.js';
 import { registerContextTools } from './context.js';
 import { registerSystemTools } from './system.js';
@@ -21,6 +25,10 @@ import { registerPreferenceTools } from './preference.js';
  * - profile_get, profile_update
  * - context_build
  * - system_health, system_stats
+ *
+ * Sovereign Memory Tools (Sovereign 12 additions):
+ * - memory_get, memory_list, memory_history
+ * - memory_pin, memory_unpin, memory_list_pins
  *
  * Analysis Tools:
  * - memory_ingest, memory_analyze
@@ -50,6 +58,12 @@ export function registerAllTools(server: McpServer): void {
   registerProfileTools(server);
   registerContextTools(server);
   registerSystemTools(server);
+  
+  // Sovereign Memory Tools
+  registerMemoryGetTools(server);
+  registerMemoryListTools(server);
+  registerMemoryHistoryTools(server);
+  registerMemoryPinTools(server);
 
   // Analysis engine tools
   registerIngestTools(server);

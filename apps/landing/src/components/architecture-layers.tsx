@@ -124,15 +124,16 @@ export function ArchitectureLayers() {
           --text-faint: #9ca3af;
           --border-light: rgba(0, 0, 0, 0.12);
           --border-highlight: rgba(255, 255, 255, 0.2);
-          --box-border: rgba(0, 0, 0, 0.08);
+          --box-border: #e2e8f0;
           --inner-line: rgba(0, 0, 0, 0.06);
-          --bg: #ffffff;
-          --bg-dark: #0a0a0a;
+          --bg: transparent;
+          --card-bg: #ffffff;
+          --bg-dark: transparent;
           width: 100%;
           max-width: 1200px;
           margin: 0 auto;
-          font-family: 'Inter', system-ui, -apple-system, sans-serif;
-          height: 180vh;
+          font-family: 'Bricolage Grotesque', system-ui, -apple-system, sans-serif;
+          height: 140vh;
           position: relative;
         }
 
@@ -144,32 +145,85 @@ export function ArchitectureLayers() {
           --text-faint: #6b7280;
           --border-light: rgba(255, 255, 255, 0.1);
           --border-highlight: rgba(255, 255, 255, 0.25);
-          --box-border: rgba(255, 255, 255, 0.08);
+          --box-border: #27272d;
           --inner-line: rgba(255, 255, 255, 0.08);
-          --bg: #0a0a0a;
+          --bg: transparent;
+          --card-bg: #18181c;
         }
 
         .arch-sticky {
           position: sticky;
-          top: 15vh;
+          top: 10vh;
           padding: 0 1rem;
           z-index: 10;
         }
 
+        .arch-header {
+          text-align: center;
+          margin-bottom: 2rem;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+
+        .arch-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 4px 12px;
+          border-radius: 9999px;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          background: rgba(139, 92, 246, 0.1);
+          border: 1px solid rgba(139, 92, 246, 0.25);
+          color: #a78bfa;
+          margin-bottom: 12px;
+        }
+
+        [data-theme="light"] .arch-badge {
+          background: #f3e8ff;
+          border-color: #d8b4fe;
+          color: #7c3aed;
+        }
+
+        .arch-title {
+          font-family: 'Bricolage Grotesque', sans-serif;
+          font-size: 40px;
+          font-weight: 700;
+          line-height: 1.18;
+          letter-spacing: -0.03em;
+          color: var(--text-primary);
+          margin: 0 0 8px;
+        }
+
+        .arch-title-highlight {
+          color: var(--text-muted);
+        }
+
+        .arch-subtitle {
+          font-family: 'Bricolage Grotesque', sans-serif;
+          font-size: 14.5px;
+          color: var(--text-muted);
+          margin: 0;
+          max-width: 520px;
+        }
+
+        /* Outer flex container: Border and background box removed! Free-floating and clean */
         .arch-flex {
           display: flex;
-          align-items: stretch;
+          align-items: center;
           justify-content: center;
-          gap: 0;
-          padding: 2rem 2.5rem;
-          border: 1px solid var(--box-border);
-          border-radius: 12px;
-          background: var(--bg);
+          gap: 2.5rem;
+          padding: 0.5rem 0;
+          border: none;
+          background: transparent;
         }
 
         .dark .arch-flex,
         [data-theme="dark"] .arch-flex {
-          background: var(--bg-dark);
+          background: transparent;
+          border: none;
         }
 
         .arch-svg-wrap {
@@ -295,86 +349,107 @@ export function ArchitectureLayers() {
           opacity: 1;
         }
 
-        /* Info Panel - aligned with layers */
+        /* Info Panel: Only the text area box has the card border & box */
         .info-box {
-          flex: 0 0 400px;
-          max-width: 400px;
+          flex: 0 0 420px;
+          max-width: 420px;
           display: flex;
           flex-direction: column;
           justify-content: center;
-          padding-left: 3rem;
-          border-left: 1px solid var(--box-border);
+          padding: 2.25rem 2.5rem;
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+          transition: all 0.3s ease;
+        }
+
+        [data-theme="dark"] .info-box {
+          background: #18181c;
+          border-color: #27272d;
+          box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
         }
 
         .info-num {
-          font-size: 10px;
+          font-size: 11px;
           font-weight: 700;
-          letter-spacing: 3px;
-          color: var(--text-faint);
+          letter-spacing: 2.5px;
+          color: #8b5cf6;
           text-transform: uppercase;
-          margin-bottom: 0.75rem;
-          opacity: 0.7;
+          margin-bottom: 0.5rem;
+        }
+
+        [data-theme="light"] .info-num {
+          color: #7c3aed;
         }
 
         .info-name {
+          font-family: 'Bricolage Grotesque', sans-serif;
           font-size: 24px;
           font-weight: 700;
           color: var(--text-primary);
-          letter-spacing: 0.5px;
-          margin-bottom: 0.35rem;
+          letter-spacing: -0.02em;
+          margin-bottom: 0.25rem;
           transition: all 0.4s ease;
         }
 
         .info-sub {
           font-size: 13px;
+          font-weight: 600;
           color: var(--text-muted);
-          margin-bottom: 1.5rem;
+          margin-bottom: 1rem;
         }
 
         .info-bar {
-          width: 40px;
-          height: 1px;
-          background: var(--text-faint);
-          margin-bottom: 1.5rem;
-          opacity: 0.3;
+          width: 32px;
+          height: 2px;
+          background: #8b5cf6;
+          border-radius: 2px;
+          margin-bottom: 1.25rem;
+          opacity: 0.8;
         }
 
         .info-text {
-          font-size: 14px;
-          line-height: 1.75;
-          color: var(--text-muted);
+          font-size: 13.5px;
+          line-height: 1.6;
+          color: var(--text-secondary);
+          margin-bottom: 1.25rem;
         }
 
         .info-features {
-          margin-top: 1.25rem;
           list-style: none;
           padding: 0;
+          margin: 0;
           display: flex;
           flex-direction: column;
-          gap: 0.5rem;
+          gap: 0.6rem;
         }
 
         .info-feature-item {
-          font-size: 12px;
-          color: var(--text-faint);
           display: flex;
-          align-items: flex-start;
-          line-height: 1.5;
+          align-items: center;
+          gap: 0.6rem;
+          font-size: 12.5px;
+          color: var(--text-muted);
         }
 
         .info-feature-icon {
-          color: #3b82f6;
-          margin-right: 8px;
-          font-size: 14px;
-          line-height: 1.2;
+          color: #8b5cf6;
+          font-size: 8px;
+          flex-shrink: 0;
         }
 
-        /* Progress indicator */
+        [data-theme="light"] .info-feature-icon {
+          color: #7c3aed;
+        }
+
         .progress-wrap {
           display: flex;
-          flex-direction: column;
-          gap: 8px;
-          margin-top: 2rem;
+          align-items: center;
+          gap: 12px;
+          margin-top: 1.5rem;
+          padding-top: 1.25rem;
+          border-top: 1px solid var(--box-border);
         }
 
         .progress-dots {
@@ -393,11 +468,16 @@ export function ArchitectureLayers() {
 
         .progress-dot.active {
           opacity: 1;
-          background: var(--text-secondary);
+          background: #8b5cf6;
+          transform: scale(1.3);
+        }
+
+        [data-theme="light"] .progress-dot.active {
+          background: #7c3aed;
         }
 
         .progress-dot.past {
-          opacity: 0.5;
+          opacity: 0.6;
         }
 
         .scroll-hint {
@@ -438,25 +518,55 @@ export function ArchitectureLayers() {
         }
 
         @media (max-width: 768px) {
-          .arch-header {
-            display: none !important;
+          .arch-root {
+            height: auto;
+            min-height: 100vh;
           }
           .arch-sticky {
-            top: 2vh;
+            position: relative;
+            top: 0;
+            padding: 24px 12px;
+          }
+          .arch-header {
+            display: block !important;
+            margin-bottom: 1.25rem;
+          }
+          .arch-title {
+            font-size: 1.5rem !important;
+            line-height: 1.25 !important;
+          }
+          .arch-subtitle {
+            font-size: 0.85rem !important;
+            margin-top: 6px !important;
           }
           .arch-flex {
-            padding: 1.5rem 1rem;
+            padding: 1rem 0.5rem;
+            gap: 1.5rem;
+          }
+          .arch-svg-wrap {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+          }
+          .arch-svg {
+            width: 100% !important;
+            max-width: 440px !important;
+            height: auto !important;
           }
         }
       `}</style>
 
       <div className="arch-sticky">
-        <div className="arch-header" style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-          <span className="features-badge" style={{ marginBottom: '1rem', display: 'inline-block' }}>7-Layer Architecture</span>
-          <h2 className="features-title" style={{ margin: 0 }}>
-            Context Intelligence &<br />
-            <span className="features-title-highlight">Memory Orchestration Layer</span>
+        <div className="arch-header">
+          <span className="arch-badge">7-Layer Architecture</span>
+          <h2 className="arch-title">
+            Context Intelligence &amp;
+            <br />
+            <span className="arch-title-highlight">Memory Orchestration Layer</span>
           </h2>
+          <p className="arch-subtitle">
+            From raw conversation streams to verifiable, encrypted graph memory.
+          </p>
         </div>
         <div className="arch-flex">
           {/* SVG Layers */}

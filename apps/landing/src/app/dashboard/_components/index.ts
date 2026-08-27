@@ -11,4 +11,5 @@ export { ShareBucketModal } from './share-bucket-modal';
 export { NotificationBell } from './notification-bell';
 export { CreateBucketModal } from './create-bucket-modal';
 export { Playground } from './playground';
+export { GraphMemoryView } from './graph-memory-view';
 export type { OrgInfo, UserInfo, ApiKeyInfo, MemoryRow, ActivityItem } from './types';

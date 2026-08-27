@@ -21,7 +21,6 @@
     "paths": {
       "@memron/mcp-bridge": ["./packages/mcp-bridge/src"],
       "@memron/memory-core": ["./packages/memory-core/src"],
-      "@memron/trust-registry": ["./packages/trust-registry/src"],
       "@memron/shared-types": ["./packages/shared-types/src"],
       "@memron/ui": ["./packages/ui/src"],
       "@memron/analysis-engine": ["./packages/analysis-engine/src"]

@@ -20,7 +20,6 @@ export function FlowchartCard() {
 
     const rect = el.getBoundingClientRect();
     const wh = window.innerHeight;
-    // Earlier start point for more gradual expansion
     const startPoint = wh * 0.9;
     const endPoint = wh * 0.2;
 
@@ -36,14 +35,19 @@ export function FlowchartCard() {
 
     const easedProgress = easeOutQuart(progress);
 
-    // Target values
-    const targetScale = 0.88 + easedProgress * 0.12;
-    const targetBorderRadius = 28 - easedProgress * 28;
-    const targetMargin = (1 - easedProgress) * 40;
+    // Target values — mobile adaptive
+    const isMobile = window.innerWidth < 640;
+    const isTablet = window.innerWidth < 1024;
+    const maxMargin = isMobile ? 8 : isTablet ? 20 : 40;
+    const minScale = isMobile ? 0.96 : 0.88;
+    const scaleDelta = 1 - minScale;
+
+    const targetScale = minScale + easedProgress * scaleDelta;
+    const targetBorderRadius = isMobile ? (16 - easedProgress * 16) : (28 - easedProgress * 28);
+    const targetMargin = (1 - easedProgress) * maxMargin;
     const targetShadow = 0.15 - easedProgress * 0.1;
     const targetFrame = easedProgress * 0.8;
 
-    // Increased lerp factor for more responsive, smoother motion (0.25 = perfect balance)
     const lerpFactor = 0.25;
     const cv = currentValues.current;
     cv.scale = lerp(cv.scale, targetScale, lerpFactor);
@@ -52,7 +56,7 @@ export function FlowchartCard() {
     cv.shadow = lerp(cv.shadow, targetShadow, lerpFactor);
     cv.frame = lerp(cv.frame, targetFrame, lerpFactor);
 
-    // Apply directly to DOM (no React re-render, no setState)
+    // Apply directly to DOM
     el.style.transform = `scale(${cv.scale})`;
     el.style.borderRadius = `${cv.borderRadius}px`;
     el.style.margin = `0 ${cv.margin}px`;
@@ -68,17 +72,17 @@ export function FlowchartCard() {
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(updateStyles);
-    
+
     // Intersection Observer for flowchart animations
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+          if (entry.isIntersecting && entry.intersectionRatio > 0.25) {
             setIsFlowchartVisible(true);
           }
         });
       },
-      { threshold: [0.3], rootMargin: '-50px' }
+      { threshold: [0.25], rootMargin: '-30px' }
     );
 
     if (flowchartRef.current) {
@@ -115,10 +119,10 @@ export function FlowchartCard() {
           {/* Left: Title & Description */}
           <div className="showcase-content-left">
             <span className="showcase-badge">How It Works</span>
-            <h2 className="showcase-title">AI + MCP + Web3</h2>
+            <h2 className="showcase-title">AI + MCP + Graph Memory</h2>
             <p className="showcase-desc">
-              Memron combines the power of Model Context Protocol with decentralized storage
-              to create truly persistent AI memory - 26% higher response quality with 90% fewer tokens.
+              Memron combines the power of Model Context Protocol with encrypted temporal graph memory
+              to create truly persistent AI context - 26% higher response quality with 90% fewer tokens.
             </p>
             <button className="showcase-cta">
               Learn More
@@ -172,26 +176,29 @@ export function FlowchartCard() {
 
             <div className="flow-arrow flow-arrow-2">→</div>
 
-            {/* Output Stage - Web3 */}
+            {/* Output Stage - Graph Memory */}
             <div className="flowchart-column flow-col-3">
               <div className="flow-phase-label">Sync Phase</div>
               <div className="flow-box web3-box flow-box-animated">
                 <div className="web3-header">
                   <svg className="web3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                    <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                    <line x1="12" y1="22.08" x2="12" y2="12" />
+                    <circle cx="6" cy="6" r="3" />
+                    <circle cx="18" cy="6" r="3" />
+                    <circle cx="12" cy="18" r="3" />
+                    <line x1="8.5" y1="7.5" x2="10.5" y2="15.5" />
+                    <line x1="15.5" y1="7.5" x2="13.5" y2="15.5" />
+                    <line x1="9" y1="6" x2="15" y2="6" />
                   </svg>
-                  <span>Web3 Storage</span>
+                  <span>Graph Memory</span>
                 </div>
                 <div className="web3-nodes">
                   <div className="web3-node">
                     <span className="node-indicator"></span>
-                    <span>IPFS</span>
+                    <span>Knowledge Graph</span>
                   </div>
                   <div className="web3-node">
                     <span className="node-indicator"></span>
-                    <span>Arweave</span>
+                    <span>Temporal Vector</span>
                   </div>
                 </div>
               </div>
@@ -227,7 +234,7 @@ export function FlowchartCard() {
               <line x1="200" y1="200" x2="372" y2="200" className="spoke-line" strokeWidth="1" />
               <line x1="200" y1="200" x2="68" y2="332" className="spoke-line" strokeWidth="1" />
               <line x1="200" y1="200" x2="200" y2="360" className="spoke-line" strokeWidth="1" />
-              <line x1="200" y1="200" x2="332" y2="332" stroke="rgba(0,0,0,0.12)" strokeWidth="1" />
+              <line x1="200" y1="200" x2="332" y2="332" className="spoke-line" strokeWidth="1" />
             </svg>
 
             {/* Technology Icons with colored logos */}
@@ -243,26 +250,27 @@ export function FlowchartCard() {
             {/* V-JEPA - Blue/Meta */}
             <div className="tech-icon tech-pos-2">
               <svg viewBox="0 0 24 24" fill="none" className="tech-logo">
-                <rect x="3" y="3" width="18" height="18" rx="3" fill="#0668E1" />
+                <rect x="3" y="3" width="18" height="18" rx="4" fill="#0668E1" />
                 <path d="M7 12l3 3 7-7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span className="tech-label">V-JEPA</span>
             </div>
 
-            {/* Cognee - Green/Knowledge */}
+            {/* AES-256 - Emerald / Cryptographic Vault */}
             <div className="tech-icon tech-pos-3">
               <svg viewBox="0 0 24 24" fill="none" className="tech-logo">
-                <circle cx="12" cy="12" r="9" fill="#10b981" />
-                <path d="M12 7v5l3 3" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
-                <circle cx="12" cy="12" r="2" fill="#fff" />
+                <rect x="3" y="3" width="18" height="18" rx="4" fill="#10b981" />
+                <rect x="7" y="11" width="10" height="8" rx="2" stroke="#fff" strokeWidth="1.5" />
+                <path d="M9 11V8a3 3 0 0 1 6 0v3" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="12" cy="15" r="1" fill="#fff" />
               </svg>
-              <span className="tech-label">Cognee</span>
+              <span className="tech-label">AES-256</span>
             </div>
 
             {/* RAG - Orange */}
             <div className="tech-icon tech-pos-4">
               <svg viewBox="0 0 24 24" fill="none" className="tech-logo">
-                <rect x="3" y="3" width="18" height="18" rx="3" fill="#f97316" />
+                <rect x="3" y="3" width="18" height="18" rx="4" fill="#f97316" />
                 <path d="M7 8h10M7 12h7M7 16h10" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
               <span className="tech-label">RAG</span>
@@ -271,16 +279,16 @@ export function FlowchartCard() {
             {/* MCP - Cyan */}
             <div className="tech-icon tech-pos-5">
               <svg viewBox="0 0 24 24" fill="none" className="tech-logo">
-                <rect x="3" y="3" width="18" height="18" rx="3" fill="#06b6d4" />
+                <rect x="3" y="3" width="18" height="18" rx="4" fill="#06b6d4" />
                 <path d="M8 8l4 4-4 4M12 16h4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span className="tech-label">MCP</span>
             </div>
 
-            {/* LLM - Indigo */}
+            {/* COMPRESS - Indigo / Pointer-Based Context Compression */}
             <div className="tech-icon tech-pos-6">
               <svg viewBox="0 0 24 24" fill="none" className="tech-logo">
-                <rect x="3" y="3" width="18" height="18" rx="3" fill="#6366f1" />
+                <rect x="3" y="3" width="18" height="18" rx="4" fill="#6366f1" />
                 <path d="M9 8v8M12 10v6M15 7v10" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
               </svg>
               <span className="tech-label">LLM</span>
@@ -301,7 +309,7 @@ export function FlowchartCard() {
             {/* Vector - Yellow */}
             <div className="tech-icon tech-pos-8">
               <svg viewBox="0 0 24 24" fill="none" className="tech-logo">
-                <rect x="3" y="3" width="18" height="18" rx="3" fill="#eab308" />
+                <rect x="3" y="3" width="18" height="18" rx="4" fill="#eab308" />
                 <path d="M7 17l5-10 5 10" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M9 13h6" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
               </svg>
@@ -311,26 +319,31 @@ export function FlowchartCard() {
 
           {/* Right: Content */}
           <div className="integrations-content">
-            <span className="integrations-badge">Research & Development</span>
+            <span className="integrations-badge">Research &amp; Core Architecture</span>
             <h2 className="integrations-title">
               Building the Future
               <br />
               of AI Memory
             </h2>
             <p className="integrations-desc">
-              We're actively researching and integrating cutting-edge technologies -
-              Reinforcement Learning from Memory (RLM), Meta's V-JEPA for visual understanding,
-              Cognee for knowledge graphs, and more. Our platform evolves with the latest advances in AI.
+              We&apos;re actively researching and integrating cutting-edge technologies —
+              Reinforcement Learning from Memory (RLM), Meta&apos;s V-JEPA for multimodal understanding,
+              temporal knowledge graphs, pointer-based context compression, and zero-knowledge AES-256-GCM encryption.
             </p>
             <p className="integrations-subdesc">
-              Seamlessly integrates with your existing stack. Just a few lines of code to get started.
+              Native MCP architecture ensures zero-config integration for Claude, Cursor, and any autonomous AI agent.
             </p>
-            <button className="integrations-cta">
-              Read more about our research
+            <a
+              href="https://github.com/Priyank911/Memron.ai#readme"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="integrations-cta"
+            >
+              Explore our architecture
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M5 12h14M12 5l7 7-7 7" />
               </svg>
-            </button>
+            </a>
           </div>
         </div>
 
