@@ -63,8 +63,8 @@ export default function HomePage() {
         <SectionDivider number="02" tag="ADAPTIVE WORKFLOW" index="2/3" />
         <WorkflowMemoryShowcase />
 
-        {/* Section 03: 7-Layer Architecture */}
-        <SectionDivider number="03" tag="7-LAYER ARCHITECTURE" index="3/3" />
+        {/* Section 03: 5-Layer Architecture */}
+        <SectionDivider number="03" tag="5-LAYER ARCHITECTURE" index="3/3" />
         <section id="architecture" className="features-section architecture-section-mobile" style={{ paddingTop: '4rem', paddingBottom: '3rem' }}>
           <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem' }}>
             <ArchitectureLayers />
