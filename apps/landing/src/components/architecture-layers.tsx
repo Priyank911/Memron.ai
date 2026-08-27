@@ -37,6 +37,9 @@ const modules = [
 
 const modulePositions = [88, 200, 318, 436, 558];
 
+// Keep generated SVG attributes byte-identical during server and client rendering.
+const stableCoordinate = (value: number) => Number(value.toFixed(4));
+
 export function ArchitectureLayers() {
   const [active, setActive] = useState(0);
 
@@ -569,10 +572,10 @@ export function ArchitectureLayers() {
               <g className="engine-rotor">
                 {Array.from({ length: 12 }).map((_, index) => {
                   const angle = (Math.PI * 2 * index) / 12;
-                  const x1 = 305 + Math.cos(angle) * 53;
-                  const y1 = 101 + Math.sin(angle) * 17;
-                  const x2 = 305 + Math.cos(angle) * 78;
-                  const y2 = 101 + Math.sin(angle) * 25;
+                  const x1 = stableCoordinate(305 + Math.cos(angle) * 53);
+                  const y1 = stableCoordinate(101 + Math.sin(angle) * 17);
+                  const x2 = stableCoordinate(305 + Math.cos(angle) * 78);
+                  const y2 = stableCoordinate(101 + Math.sin(angle) * 25);
                   return <line key={index} x1={x1} y1={y1} x2={x2} y2={y2} stroke={tone(0).primary} strokeWidth="0.9" opacity="0.75" />;
                 })}
               </g>
@@ -604,10 +607,10 @@ export function ArchitectureLayers() {
               <g className="engine-rotor">
                 {Array.from({ length: 16 }).map((_, index) => {
                   const angle = (Math.PI * 2 * index) / 16;
-                  const innerX = 305 + Math.cos(angle) * 30;
-                  const innerY = 321 + Math.sin(angle) * 9;
-                  const outerX = 305 + Math.cos(angle + 0.12) * 72;
-                  const outerY = 321 + Math.sin(angle + 0.12) * 21;
+                  const innerX = stableCoordinate(305 + Math.cos(angle) * 30);
+                  const innerY = stableCoordinate(321 + Math.sin(angle) * 9);
+                  const outerX = stableCoordinate(305 + Math.cos(angle + 0.12) * 72);
+                  const outerY = stableCoordinate(321 + Math.sin(angle + 0.12) * 21);
                   return (
                     <path key={index} d={`M305 321 L${innerX} ${innerY} L${outerX} ${outerY} Z`} fill={index % 2 === 0 ? tone(2).fillStrong : 'none'} stroke={tone(2).primary} strokeWidth="0.65" opacity="0.8" />
                   );
@@ -651,7 +654,7 @@ export function ArchitectureLayers() {
               <g className="engine-rotor">
                 {Array.from({ length: 14 }).map((_, index) => {
                   const angle = (Math.PI * 2 * index) / 14;
-                  return <line key={index} x1="305" y1="542" x2={305 + Math.cos(angle) * 86} y2={542 + Math.sin(angle) * 25} stroke={tone(4).primary} strokeWidth="0.7" opacity="0.72" />;
+                  return <line key={index} x1="305" y1="542" x2={stableCoordinate(305 + Math.cos(angle) * 86)} y2={stableCoordinate(542 + Math.sin(angle) * 25)} stroke={tone(4).primary} strokeWidth="0.7" opacity="0.72" />;
                 })}
               </g>
               <path d="M199 565c24 17 63 27 106 27s82-10 106-27M199 580c24 17 63 27 106 27s82-10 106-27" fill="none" stroke={tone(4).secondary} strokeWidth="0.85" />
