@@ -3,250 +3,244 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { siCursor, siGooglegemini, siGithubcopilot } from 'simple-icons';
 
-interface ShowcaseItem {
-  number: string;
-  title: string;
-  description: string;
-  tag: string;
-}
-
-interface ShowcaseTab {
-  id: string;
-  label: string;
-  items: ShowcaseItem[];
-  buttonText: string;
-}
-
-const showcaseTabs: ShowcaseTab[] = [
-  {
-    id: 'dev-agents',
-    label: 'Developer Agents',
-    buttonText: 'Explore Memron for Developer Agents',
-    items: [
-      {
-        number: '01',
-        title: 'Cross-Session Bug Recall',
-        description:
-          'Remembers previous failed attempts, tricky edge cases, and runtime workarounds across debugging sessions so your agent never repeats mistakes.',
-        tag: 'Persistent Recall',
-      },
-      {
-        number: '02',
-        title: 'Codebase Conventions Tracker',
-        description:
-          'Maintains team styling preferences, lint rules, and architectural guidelines, automatically guiding agent generation to match your standards.',
-        tag: 'Rules Enforced',
-      },
-      {
-        number: '03',
-        title: 'Persistent Architecture Ledger',
-        description:
-          'Preserves decisions made in planning sessions, schema changes, and API contracts so follow-up tasks stay aligned with the master architecture.',
-        tag: 'Zero Drift',
-      },
-    ],
-  },
-  {
-    id: 'handoffs',
-    label: 'Multi-Agent Handoffs',
-    buttonText: 'Explore Multi-Agent Handoffs',
-    items: [
-      {
-        number: '01',
-        title: 'Seamless IDE-to-CLI Transfer',
-        description:
-          'Hand off unfinished tasks between Claude Code in terminal and Cursor in your editor without manual prompt re-explaining or copy-pasting.',
-        tag: 'Zero Handoff Loss',
-      },
-      {
-        number: '02',
-        title: 'Zero-Drift Context Bridge',
-        description:
-          'Synchronizes decisions, modified files, and test results across independent agent instances in real time via Model Context Protocol.',
-        tag: 'Live Sync',
-      },
-      {
-        number: '03',
-        title: 'Cross-Runtime State Sync',
-        description:
-          'Whether running local CLI models, cloud agents, or background workers, every assistant accesses the exact same unified context graph.',
-        tag: 'Unified Graph',
-      },
-    ],
-  },
-  {
-    id: 'compression',
-    label: 'Context Compression',
-    buttonText: 'Explore Context Compression',
-    items: [
-      {
-        number: '01',
-        title: '3-Token Memory Pointers',
-        description:
-          'Replaces replaying 15,000 raw chat tokens with compact, high-precision pointers that slash token burn by ~90% per query.',
-        tag: '~90% Token Cut',
-      },
-      {
-        number: '02',
-        title: 'Hierarchical Summarization',
-        description:
-          'Compresses long conversations into structured episodic and procedural memory layers, preserving critical insights with minimal footprint.',
-        tag: 'Smart Layers',
-      },
-      {
-        number: '03',
-        title: 'Predictive Context Prefetch',
-        description:
-          'Predicts the exact facts, functions, and documentation your agent will need for the next step, loading them in under 15ms.',
-        tag: '< 15ms Prefetch',
-      },
-    ],
-  },
-  {
-    id: 'verification',
-    label: 'Anti-Hallucination',
-    buttonText: 'Explore Anti-Hallucination Guard',
-    items: [
-      {
-        number: '01',
-        title: 'Dual-Layer Truth Verification',
-        description:
-          'Cross-checks generated statements against verified ground-truth memory, instantly flagging ungrounded claims before execution.',
-        tag: 'Verified Evidence',
-      },
-      {
-        number: '02',
-        title: 'Confidence Scoring per Claim',
-        description:
-          'Scores the factual validity of agent actions against past empirical runs, assigning clear confidence thresholds to decisions.',
-        tag: '99.4% Precision',
-      },
-      {
-        number: '03',
-        title: 'Cryptographic Audit Trail',
-        description:
-          'Every memory fact is linked to source git commit hashes and tamper-proof SHA-256 signatures for verifiable compliance.',
-        tag: 'Audit Provenance',
-      },
-    ],
-  },
-  {
-    id: 'security',
-    label: 'Enterprise Security',
-    buttonText: 'Explore Enterprise Security',
-    items: [
-      {
-        number: '01',
-        title: 'Zero-Knowledge AES-256-GCM',
-        description:
-          'All memory vectors and semantic entities are encrypted at rest with hardware-backed keys, ensuring complete tenant isolation.',
-        tag: 'AES-256-GCM',
-      },
-      {
-        number: '02',
-        title: 'Self-Hosted & Sovereign',
-        description:
-          'Deploy entirely within your VPC or private cloud on PostgreSQL with pgvector. Your proprietary code never leaves your infrastructure.',
-        tag: 'Air-Gapped Ready',
-      },
-      {
-        number: '03',
-        title: 'Fine-Grained Access Scoping',
-        description:
-          'Role-based permissions and workspace scoping guarantee agents only access the memory layers relevant to their authorized role.',
-        tag: 'RBAC Scoped',
-      },
-    ],
-  },
+const supportedAgents = [
+  { name: 'Claude', icon: '/icons/claude-ai.png', isImg: true },
+  { name: 'Cursor', si: siCursor, color: '#38bdf8' },
+  { name: 'ChatGPT', icon: '/icons/openai.svg', isImg: true },
+  { name: 'VS Code', icon: '/icons/vscode.svg', isImg: true },
+  { name: 'Windsurf', icon: '/icons/windsurf.png', isImg: true },
+  { name: 'Cline', icon: '/icons/cline.svg', isImg: true },
+  { name: 'Gemini', si: siGooglegemini, color: '#4285f4' },
+  { name: 'Copilot', si: siGithubcopilot, color: '#22c55e' },
 ];
 
 export function WorkflowMemoryShowcase() {
-  const [activeTabId, setActiveTabId] = useState<string>('dev-agents');
+  const [activeTab, setActiveTab] = useState<'agents' | 'humans' | 'terminal'>('agents');
+  const [copied, setCopied] = useState(false);
 
-  const activeTab =
-    showcaseTabs.find((tab) => tab.id === activeTabId) || showcaseTabs[0];
+  const handleCopyEndpoint = () => {
+    navigator.clipboard.writeText('https://api.memron.ai/mcp');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <section id="features" className="workflow-showcase-section">
-      <div className="workflow-showcase-container">
-        {/* Top Centered Brand Pet Mascot Badge */}
-        <div className="workflow-pet-chip" title="Memron AI Memory Mascot">
-          <Image
-            src="/logo_w.png"
-            alt="Memron Pet Mascot"
-            width={26}
-            height={26}
-            className="logo-light"
-            priority
-          />
-          <Image
-            src="/logo_b.png"
-            alt="Memron Pet Mascot"
-            width={26}
-            height={26}
-            className="logo-dark"
-            priority
-          />
-        </div>
-
-        {/* Clean Expressive Headline */}
-        <h2 className="workflow-showcase-title">
-          AI memory that adapts
-          <br />
-          to your workflow
-        </h2>
-
-        {/* Crisp Subtitle */}
-        <p className="workflow-showcase-subtitle">
-          Memron helps your AI agents remember what matters.
-        </p>
-
-        {/* Horizontal Category Tabs */}
-        <div className="workflow-tabs-bar">
-          {showcaseTabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTabId(tab.id)}
-              className={`workflow-tab-item ${
-                activeTabId === tab.id ? 'active' : ''
-              }`}
-            >
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Horizontal Strip Stack (Horizontal Layout, Grey-Black Family) */}
-        <div className="workflow-horizontal-stack">
-          {activeTab.items.map((item, idx) => (
-            <div key={idx} className="workflow-horizontal-row">
-              {/* Left Index Badge */}
-              <div className="row-index-pill">{item.number}</div>
-
-              {/* Title & Tag */}
-              <div className="row-title-block">
-                <h3 className="row-title">{item.title}</h3>
-                <span className="row-tag">{item.tag}</span>
+      <div className="workflow-reference-container">
+        {/* 2-Column Split: Left Interactive Agent Card / Right Content */}
+        <div className="workflow-reference-grid">
+          {/* Left Column: Interactive Agent Terminal Card */}
+          <div className="workflow-agent-card">
+            {/* Top Navigation Tabs */}
+            <div className="agent-card-tabbar">
+              <div className="tabbar-left-buttons">
+                <button
+                  type="button"
+                  className={`tabbar-btn ${activeTab === 'agents' ? 'is-active' : ''}`}
+                  onClick={() => setActiveTab('agents')}
+                >
+                  FOR AI AGENTS
+                </button>
+                <button
+                  type="button"
+                  className={`tabbar-btn ${activeTab === 'humans' ? 'is-active' : ''}`}
+                  onClick={() => setActiveTab('humans')}
+                >
+                  FOR HUMANS
+                </button>
+                <button
+                  type="button"
+                  className={`tabbar-btn ${activeTab === 'terminal' ? 'is-active' : ''}`}
+                  onClick={() => setActiveTab('terminal')}
+                >
+                  TERMINAL
+                </button>
               </div>
 
-              {/* Horizontal Description */}
-              <p className="row-desc">{item.description}</p>
+              {/* Top-Right MCP Endpoint Pill */}
+              <button
+                type="button"
+                className="tabbar-endpoint-pill"
+                onClick={handleCopyEndpoint}
+                title="Copy MCP server endpoint"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <span>{copied ? 'COPIED!' : 'MCP ENDPOINT'}</span>
+              </button>
+            </div>
 
-              {/* Subtle Indicator Arrow */}
-              <div className="row-arrow-chip">
-                <span>→</span>
+            {/* Terminal Body Content */}
+            <div className="agent-card-body">
+              {activeTab === 'agents' && (
+                <div className="agent-chat-view">
+                  {/* Agent Header */}
+                  <div className="agent-chat-header">
+                    <div className="agent-identity">
+                      <Image
+                        src="/icons/claude-ai.png"
+                        alt="Claude"
+                        width={20}
+                        height={20}
+                        className="agent-avatar"
+                      />
+                      <span className="agent-name">Claude Code</span>
+                    </div>
+                    <div className="agent-connection-status">
+                      <span className="live-status-dot" />
+                      <span>MCP · memron connected</span>
+                    </div>
+                  </div>
+
+                  {/* Real-world Example: User prompt */}
+                  <div className="agent-msg-bubble user-prompt">
+                    <div className="bubble-sender">DEVELOPER</div>
+                    <p>How did we resolve the AuthProvider session race condition in last sprint&apos;s PKCE refactor?</p>
+                  </div>
+
+                  {/* Real MCP Memory Tool Call */}
+                  <div className="agent-tool-call">
+                    <span className="tool-call-bullet">●</span>
+                    <span className="tool-call-fn">memron_search_context</span>
+                    <span className="tool-call-args">{`{ "query": "AuthProvider session race condition PKCE", "scope": "decisions" }`}</span>
+                  </div>
+
+                  {/* Actual Context Recalled from Memron */}
+                  <div className="agent-context-card">
+                    <div className="context-card-header">
+                      <span className="context-source-badge">RECALLED // SPRINT 14 (CURSOR SESSION)</span>
+                      <span className="context-confidence">CONFIDENCE 99.4%</span>
+                    </div>
+                    <div className="context-data-payload">
+                      <span className="payload-key">DECISION:</span>
+                      <span className="payload-val">Wrap token refresh in BroadcastChannel mutex lock. Do not re-challenge PKCE verifier on concurrent browser tabs.</span>
+                    </div>
+                  </div>
+
+                  {/* Claude's Response Utilizing Memory */}
+                  <div className="agent-msg-bubble agent-reply">
+                    <div className="bubble-sender">CLAUDE CODE</div>
+                    <p>
+                      Found the architectural consensus from Tuesday: We use a <code className="inline-code">BroadcastChannel</code> mutex in <code className="inline-code">AuthProvider.tsx</code> to synchronize token rotation across tabs without re-issuing PKCE verifiers. Applying that exact pattern now.
+                    </p>
+                  </div>
+
+                  {/* Live Memory Resolution Tag */}
+                  <div className="agent-memory-resolved">
+                    <span className="resolved-check">✔</span>
+                    <span>1,480 entities synced · Zero drift verified across Cursor & Claude</span>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'humans' && (
+                <div className="human-dashboard-view">
+                  <div className="dashboard-meta-header">
+                    <span className="dashboard-title">WORKSPACE KNOWLEDGE GRAPH // OVERVIEW</span>
+                    <span className="dashboard-badge">LIVE SYNC</span>
+                  </div>
+
+                  <div className="dashboard-query-box">
+                    <span className="query-prompt">› query:</span>
+                    <span className="query-text">&quot;Why was PKCE chosen over state parameters for auth?&quot;</span>
+                  </div>
+
+                  <div className="dashboard-result-card">
+                    <div className="result-header">
+                      <span className="result-tag">DECISION RECORD #142</span>
+                      <span className="result-time">Aug 18, 2026 · Cross-Agent Consensus</span>
+                    </div>
+                    <p className="result-desc">
+                      PKCE mitigates interception attacks on authorization codes in distributed CLI & IDE workflows. Confirmed across Cursor and Claude Code PR sessions.
+                    </p>
+                    <div className="result-entities">
+                      <span className="entity-chip">Auth Flow</span>
+                      <span className="entity-chip">RFC 7636</span>
+                      <span className="entity-chip">Zero-Drift Enforced</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'terminal' && (
+                <div className="terminal-cli-view">
+                  <div className="terminal-prompt-line">
+                    <span className="term-prompt">$</span>
+                    <span className="term-cmd">npx @memron/cli link --daemon</span>
+                  </div>
+                  <div className="terminal-log-output">
+                    <p className="log-line info">› Contacting Memron Local Daemon on 127.0.0.1:4182...</p>
+                    <p className="log-line success">✔ Connected to Sovereign Memory Core [PID 8912]</p>
+                    <p className="log-line info">› Scanning MCP Tool Registrations...</p>
+                    <p className="log-line success">✔ 41 callable tools bound to Claude, Cursor & Codex</p>
+                    <p className="log-line info">› Memory Vault: AES-256-GCM [HARDWARE ISOLATED]</p>
+                    <p className="log-line highlight">● Ready. Every agent session is now shared seamlessly.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: Content & Integrations */}
+          <div className="workflow-content-side">
+            <div className="workflow-kicker">02 · ADAPTIVE WORKFLOW MEMORY</div>
+
+            <h2 className="workflow-main-title">
+              It starts inside the
+              <br />
+              agent you already use.
+            </h2>
+
+            <p className="workflow-main-desc">
+              Connect once via MCP, authorize your workspace, and point your agent at any task.
+              From there it stores decisions, recalls past bugs, and syncs context across independent sessions.
+              Agents self-serve over MCP; humans use the dashboard or <code className="inline-code">npx @memron/cli</code>.
+            </p>
+
+            {/* "RUNS INSIDE YOUR AGENT" Section */}
+            <div className="runs-inside-section">
+              <span className="runs-inside-label">RUNS INSIDE YOUR AGENT</span>
+              <div className="agents-grid">
+                {supportedAgents.map((agent) => (
+                  <div key={agent.name} className="agent-badge-item" title={agent.name}>
+                    {agent.isImg ? (
+                      <Image
+                        src={agent.icon!}
+                        alt={agent.name}
+                        width={18}
+                        height={18}
+                        className="agent-badge-icon"
+                      />
+                    ) : agent.si ? (
+                      <svg
+                        role="img"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill={agent.color || 'currentColor'}
+                        className="agent-badge-icon"
+                      >
+                        <path d={agent.si.path} />
+                      </svg>
+                    ) : null}
+                    <span className="agent-badge-name">{agent.name}</span>
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
-        </div>
 
-        {/* Bottom CTA Button */}
-        <div className="workflow-cta-row">
-          <Link href="/login" className="workflow-cta-btn">
-            {activeTab.buttonText}
-            <span className="cta-arrow">→</span>
-          </Link>
+            {/* Read Integration Guide Link */}
+            <div className="workflow-guide-link-wrap">
+              <Link href="/login" className="workflow-guide-link">
+                <span>Read the integration guide</span>
+                <span className="guide-arrow">→</span>
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
     </section>

@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import { HeroFloatingArt } from '@/components/hero-floating-art';
-import { SectionDivider } from '@/components/section-divider';
+import { SectionDivider, SectionBottomBreak } from '@/components/section-divider';
 import { AgentMemoryStream } from '@/components/agent-memory-stream';
 import { WorkflowMemoryShowcase } from '@/components/workflow-memory-showcase';
 import { ArchitectureLayers } from '@/components/architecture-layers';
@@ -65,11 +65,12 @@ export default function HomePage() {
 
         {/* Section 03: 5-Layer Architecture */}
         <SectionDivider number="03" tag="5-LAYER ARCHITECTURE" index="3/3" />
-        <section id="architecture" className="features-section architecture-section-mobile" style={{ paddingTop: '4rem', paddingBottom: '3rem' }}>
-          <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem' }}>
-            <ArchitectureLayers />
-          </div>
+        <section id="architecture" className="architecture-pinned-section" style={{ position: 'relative', width: '100%', padding: 0 }}>
+          <ArchitectureLayers />
         </section>
+
+        {/* Technical Frame Bottom Double Line Break */}
+        <SectionBottomBreak />
       </div>
 
       {/* Section 04: Flowchart Showcase (Scroll Enlarge Effect, Borderless Section) */}

@@ -46,6 +46,7 @@ export function ThemeToggle() {
     setTheme(newTheme);
     document.documentElement.setAttribute('data-theme', newTheme);
     localStorage.setItem('theme', newTheme);
+    window.dispatchEvent(new CustomEvent('theme-change', { detail: newTheme }));
   };
 
   if (!mounted) return <div style={{ width: 52, height: 28 }} />;
