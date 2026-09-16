@@ -24,17 +24,21 @@ function requireEnv(key: string, fallback?: string): string {
 /** True when running on Railway (any environment: production, staging, PR deploy) */
 const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
 
-/** True for local development (no RAILWAY_ENVIRONMENT and NODE_ENV != production) */
-const isDev = !isRailway && (process.env.NODE_ENV || 'development') === 'development';
+/** True when running on Render */
+const isRender = !!process.env.RENDER;
+
+/** True for local development (no RAILWAY_ENVIRONMENT, no RENDER, and NODE_ENV != production) */
+const isDev = !isRailway && !isRender && (process.env.NODE_ENV || 'development') === 'development';
 
 /**
  * Derive the public URL.
- * On Railway, the actual public URL is detected dynamically from request
+ * On Railway/Render, the actual public URL is detected dynamically from request
  * headers (Host + X-Forwarded-Proto) via middleware in index.ts.
  * This static value is only used for startup logs and as a fallback.
  */
 function resolveServerUrl(): string {
   if (process.env.MCP_SERVER_URL) return process.env.MCP_SERVER_URL.replace(/\/$/, '');
+  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '');
   if (process.env.RAILWAY_STATIC_URL) return process.env.RAILWAY_STATIC_URL.replace(/\/$/, '');
   if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
   return `http://localhost:${process.env.PORT || '5201'}`;
@@ -45,9 +49,10 @@ function resolveServerUrl(): string {
 export const config = {
   /** Server */
   port: parseInt(process.env.PORT || '5201', 10),
-  nodeEnv: process.env.NODE_ENV || (isRailway ? 'production' : 'development'),
+  nodeEnv: process.env.NODE_ENV || (isRailway || isRender ? 'production' : 'development'),
   isDev,
   isRailway,
+  isRender,
 
   /** Public-facing URL of this MCP server (auto-detected on Railway) */
   serverUrl: resolveServerUrl(),

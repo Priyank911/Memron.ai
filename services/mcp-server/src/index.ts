@@ -936,8 +936,8 @@ async function main() {
 
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
 
-  // Railway assigns PORT dynamically — bind to 0.0.0.0 for external access
-  const host = config.isRailway ? '0.0.0.0' : '127.0.0.1';
+  // Bind to 0.0.0.0 in cloud environments (Railway, Render) or production for external access
+  const host = (config.isRailway || config.isRender || config.nodeEnv === 'production') ? '0.0.0.0' : '127.0.0.1';
 
   const server = app.listen(config.port, host, () => {
     console.log(`  MCP Server   >> ${config.serverUrl}/mcp`);
