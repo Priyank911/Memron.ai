@@ -153,6 +153,17 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_memories_title_search ON memories USING GIN(to_tsvector('english', title))`,
 
+  // Dashboard triage lifecycle fields. Keep these as first-class columns so
+  // filtering and decay jobs do not need to parse metadata JSONB.
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'untriaged';
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'agent';
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS decay_exempt BOOLEAN DEFAULT false;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+  `CREATE INDEX IF NOT EXISTS idx_memories_user_status ON memories(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_memories_user_source ON memories(user_id, source)`,
+
   // ─── MCP OAuth Clients (Dynamic Registration) ──────────────
   `CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
     id                        SERIAL PRIMARY KEY,

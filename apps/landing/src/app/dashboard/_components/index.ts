@@ -12,4 +12,7 @@ export { NotificationBell } from './notification-bell';
 export { CreateBucketModal } from './create-bucket-modal';
 export { Playground } from './playground';
 export { GraphMemoryView } from './graph-memory-view';
+export { MemoriesSplitView } from './memories-split-view';
+export { PromptStudioView } from './prompt-studio-view';
+export { RunAnalyticsView } from './run-analytics-view';
 export type { OrgInfo, UserInfo, ApiKeyInfo, MemoryRow, ActivityItem } from './types';

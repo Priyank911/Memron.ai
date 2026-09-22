@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronRight, FolderPlus, Share2,
   GitBranch, Bell, Webhook, CreditCard, HelpCircle, BookOpen,
   LogOut, Sun, Moon, Monitor, Laptop, Sparkles,
+  Terminal, Activity,
 } from 'lucide-react';
 import type { OrgInfo } from './types';
 
@@ -56,6 +57,8 @@ const NAV_SECTIONS = [
     items: [
       { id: 'api-keys', icon: Key, label: 'API Keys' },
       { id: 'graph-memory', icon: GitBranch, label: 'Graph Memory' },
+      { id: 'prompt-studio', icon: Terminal, label: 'Prompt Studio' },
+      { id: 'run-analytics', icon: Activity, label: 'Run Analytics' },
       { id: 'webhooks', icon: Webhook, label: 'Webhooks' },
     ],
   },
@@ -157,22 +160,7 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
             </button>
             {openSections[section.id] && (
               <div className="mm-sb-section-items">
-                {section.items.map((item) => {
-                  const isComingSoon = item.id === 'webhooks';
-                  return isComingSoon ? (
-                    <button
-                      key={item.id}
-                      className="mm-sb-item mm-sb-item-coming-soon"
-                      onClick={() => {
-                        setComingSoonToast(true);
-                        setTimeout(() => setComingSoonToast(false), 3000);
-                      }}
-                    >
-                      <item.icon size={15} strokeWidth={1.7} />
-                      <span>{item.label}</span>
-                      <span className="mm-sb-coming-badge">Soon</span>
-                    </button>
-                  ) : (
+                {section.items.map((item) => (
                     <button
                       key={item.id}
                       className={`mm-sb-item${active === item.id ? ' active' : ''}`}
@@ -181,8 +169,7 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
                       <item.icon size={15} strokeWidth={1.7} />
                       <span>{item.label}</span>
                     </button>
-                  );
-                })}
+                  ))}
               </div>
             )}
           </div>

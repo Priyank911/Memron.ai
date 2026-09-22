@@ -31,6 +31,9 @@ import type { OrgInfo, UserInfo, ApiKeyInfo } from './_components';
 import type { WorkspaceItem } from './_components/topbar';
 import { useDashboardData } from './_hooks/use-dashboard-data';
 import { useNotifications } from './_hooks/use-notifications';
+import { MemoriesSplitView } from './_components/memories-split-view';
+import { PromptStudioView } from './_components/prompt-studio-view';
+import { RunAnalyticsView } from './_components/run-analytics-view';
 
 /* ── Time filter configs ── */
 const TIME_FILTERS = [
@@ -342,6 +345,11 @@ export default function DashboardPage() {
 
   /* Generate smooth SVG path using cubic bezier */
   const generateSmoothPath = useCallback((data: number[], width: number, height: number, padding = 5) => {
+    if (data.length === 0) return `M 0,${height} L ${width},${height}`;
+    if (data.length === 1) {
+      const y = height - padding - ((data[0] || 0) / Math.max(data[0] || 0, 1)) * (height - padding * 2);
+      return `M 0,${y} L ${width},${y}`;
+    }
     const max = Math.max(...data, 1);
     const points = data.map((v, i) => ({
       x: (i / (data.length - 1)) * width,
@@ -2168,11 +2176,34 @@ export default function DashboardPage() {
   const renderContent = () => {
     switch (active) {
       case 'api-keys': return <ApiKeysPage />;
-      case 'memories': return renderMemories();
+      case 'memories': return (
+        <div className="mm-dashboard">
+          <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="memories" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+          <div className="mm-content">
+            <MemoriesSplitView orgId={organization?.id || null} />
+          </div>
+        </div>
+      );
+      case 'prompt-studio': return (
+        <div className="mm-dashboard">
+          <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="prompt-studio" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+          <div className="mm-content">
+            <PromptStudioView orgId={organization?.id || null} />
+          </div>
+        </div>
+      );
+      case 'run-analytics': return (
+        <div className="mm-dashboard">
+          <Topbar org={organization} workspaces={workspaces} onSelectWorkspace={handleSelectWorkspace} onCreateWorkspace={handleCreateWorkspace} buckets={buckets} selectedBucket={selectedBucket} onSelectBucket={setSelectedBucket} onCreateBucket={() => setCreateBucketOpen(true)} activePage="run-analytics" onSearch={() => setCmdOpen(true)} onRefresh={refreshData} onSettings={() => setActive('config')} notificationsEnabled={isLoaded && !!user} />
+          <div className="mm-content">
+            <RunAnalyticsView orgId={organization?.id || null} />
+          </div>
+        </div>
+      );
       case 'playground': { router.push('/playground'); return null; }
       case 'config': return renderConfig();
       case 'graph-memory': return <GraphMemoryView org={organization} />;
-      case 'webhooks': return renderDashboard();
+      case 'webhooks': return renderWebhooks();
       case 'usage': return renderUsage();
       case 'notifications': return renderNotifications();
       case 'dashboard': default: return renderDashboard();

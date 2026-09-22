@@ -32,6 +32,9 @@ export interface MemoryRow {
   token_count: number;
   original_tokens: number;
   metadata: Record<string, unknown>;
+  status: string;
+  source: string;
+  decay_exempt: boolean;
   is_active: boolean;
   api_key_id: number | null;
   sub_path: string;
@@ -57,6 +60,9 @@ export async function insertMemory(params: {
   tokenCount: number;
   originalTokens: number;
   metadata?: Record<string, unknown>;
+  status?: string;
+  source?: string;
+  decayExempt?: boolean;
   apiKeyId?: number;
   subPath?: string;
   importance?: number;
@@ -66,7 +72,7 @@ export async function insertMemory(params: {
   const columns = [
     'pointer_id', 'user_id', 'org_id', 'bucket', 'title',
     'content_encrypted', 'content_iv', 'content_tag', 'content_hash',
-    'tags', 'token_count', 'original_tokens', 'metadata',
+    'tags', 'token_count', 'original_tokens', 'metadata', 'status', 'source', 'decay_exempt',
     'api_key_id', 'sub_path', 'importance',
     ...(hasEmbedding ? ['embedding'] : []),
   ];
@@ -87,6 +93,9 @@ export async function insertMemory(params: {
     params.tokenCount,
     params.originalTokens,
     JSON.stringify(params.metadata ?? {}),
+    params.status ?? 'untriaged',
+    params.source ?? 'agent',
+    params.decayExempt ?? false,
     params.apiKeyId ?? null,
     params.subPath ?? '',
     params.importance ?? 0.5,
@@ -185,6 +194,9 @@ export async function updateMemory(params: {
   originalTokens?: number;
   tokenCount?: number;
   metadata?: Record<string, unknown>;
+  status?: string;
+  source?: string;
+  decayExempt?: boolean;
 }): Promise<MemoryRow | null> {
   const sets: string[] = [];
   const values: unknown[] = [];
@@ -207,6 +219,9 @@ export async function updateMemory(params: {
   addSet('bucket', params.bucket);
   addSet('original_tokens', params.originalTokens);
   addSet('token_count', params.tokenCount);
+  addSet('status', params.status);
+  addSet('source', params.source);
+  addSet('decay_exempt', params.decayExempt);
   if (params.metadata !== undefined) {
     sets.push(`metadata = $${paramIndex}`);
     values.push(JSON.stringify(params.metadata));

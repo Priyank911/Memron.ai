@@ -44,7 +44,7 @@ async function fetchMemories(userIdOrFirebaseUid: string, targetOrgId: string | 
 
   try {
     const result = await supaQuery(
-      `SELECT id, pointer_id, bucket, title, tags, token_count, original_tokens, metadata, created_at, updated_at
+      `SELECT id, pointer_id, bucket, title, tags, token_count, original_tokens, metadata, status, source, decay_exempt, created_at, updated_at
        FROM memories
        WHERE (${whereUser}) AND is_active = true
        ORDER BY created_at DESC
@@ -60,6 +60,9 @@ async function fetchMemories(userIdOrFirebaseUid: string, targetOrgId: string | 
       tokenCount: parseInt(r.token_count || '0', 10),
       originalTokens: parseInt(r.original_tokens || '0', 10),
       metadata: r.metadata || {},
+      status: r.status || (r.metadata || {}).status || 'untriaged',
+      source: r.source || (r.metadata || {}).source || 'agent',
+      decayExempt: Boolean(r.decay_exempt ?? (r.metadata || {}).decay_exempt),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
