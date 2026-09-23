@@ -538,10 +538,17 @@ const MIGRATIONS = [
     id                SERIAL PRIMARY KEY,
     template_id       VARCHAR(50) UNIQUE NOT NULL,
     user_id           INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    org_id            INTEGER,
     name              VARCHAR(255) NOT NULL,
     description       TEXT,
-    created_at        TIMESTAMPTZ DEFAULT NOW()
+    active_version_id VARCHAR(50),
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
   )`,
+
+  `ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS org_id INTEGER`,
+  `ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS active_version_id VARCHAR(50)`,
+  `ALTER TABLE prompt_templates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
   `CREATE TABLE IF NOT EXISTS prompt_versions (
     id                    SERIAL PRIMARY KEY,

@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
     await supaQuery(`
       CREATE TABLE IF NOT EXISTS webhooks (
         id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        user_id UUID NOT NULL REFERENCES users(id),
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         url TEXT NOT NULL,
         events TEXT[] NOT NULL DEFAULT '{}',
         is_active BOOLEAN DEFAULT true,

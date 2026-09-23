@@ -2,6 +2,37 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/api-guard';
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
 
+async function ensurePromptColumns() {
+  await supaQuery(`
+    CREATE TABLE IF NOT EXISTS prompt_templates (
+      id SERIAL PRIMARY KEY,
+      template_id VARCHAR(50) UNIQUE NOT NULL,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      description TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await supaQuery(`
+    CREATE TABLE IF NOT EXISTS prompt_versions (
+      id SERIAL PRIMARY KEY,
+      prompt_version_id VARCHAR(50) UNIQUE NOT NULL,
+      prompt_template_id VARCHAR(50) REFERENCES prompt_templates(template_id) ON DELETE CASCADE,
+      version_number INTEGER NOT NULL DEFAULT 1,
+      raw_text TEXT NOT NULL,
+      change_summary TEXT,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await supaQuery(`
+    ALTER TABLE prompt_templates
+      ADD COLUMN IF NOT EXISTS active_version_id VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS org_id INTEGER,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
+  `);
+}
+
 /**
  * GET /api/dashboard/prompts — List prompt templates and versions
  * POST /api/dashboard/prompts — Create/update template or version, or activate version
@@ -17,6 +48,7 @@ export async function GET(request: NextRequest) {
 
     const { id: uid, orgId: userOrgId } = supaUser;
     const { where: whereUser, params } = buildUserWhereClause(uid, userOrgId);
+    await ensurePromptColumns();
 
     try {
       const tplResult = await supaQuery(
@@ -30,7 +62,7 @@ export async function GET(request: NextRequest) {
       const templates = await Promise.all(
         tplResult.rows.map(async (t: any) => {
           const verResult = await supaQuery(
-            `SELECT id, version_id, version_number, prompt_text, changelog, created_at
+            `SELECT id, prompt_version_id, version_number, raw_text, change_summary, created_at
              FROM prompt_versions
              WHERE prompt_template_id = $1
              ORDER BY version_number DESC`,
@@ -45,12 +77,12 @@ export async function GET(request: NextRequest) {
             createdAt: t.created_at,
             updatedAt: t.updated_at,
             versions: verResult.rows.map((v: any) => ({
-              id: v.version_id,
+              id: v.prompt_version_id,
               versionNumber: v.version_number,
-              promptText: v.prompt_text,
-              changelog: v.changelog,
+              promptText: v.raw_text,
+              changelog: v.change_summary,
               createdAt: v.created_at,
-              isActive: v.version_id === t.active_version_id,
+              isActive: v.prompt_version_id === t.active_version_id,
             })),
           };
         })
@@ -80,6 +112,7 @@ export async function POST(request: NextRequest) {
     const { action, templateId, versionId, name, description, promptText, changelog } = body;
 
     const { id: uid, orgId: userOrgId } = supaUser;
+    await ensurePromptColumns();
 
     if (action === 'create_template') {
       const newTplId = `tpl_${Date.now().toString(36)}`;
@@ -92,9 +125,9 @@ export async function POST(request: NextRequest) {
       );
 
       await supaQuery(
-        `INSERT INTO prompt_versions (version_id, prompt_template_id, user_id, version_number, prompt_text, changelog)
-         VALUES ($1, $2, $3, 1, $4, $5)`,
-        [newVerId, newTplId, uid, promptText || 'You are a sovereign AI assistant powered by Memron.', changelog || 'Initial release']
+        `INSERT INTO prompt_versions (prompt_version_id, prompt_template_id, version_number, raw_text, change_summary, created_by)
+         VALUES ($1, $2, 1, $3, $4, $5)`,
+        [newVerId, newTplId, promptText || 'You are a sovereign AI assistant powered by Memron.', changelog || 'Initial release', uid]
       );
 
       return NextResponse.json({ success: true, templateId: newTplId, versionId: newVerId });
@@ -112,16 +145,18 @@ export async function POST(request: NextRequest) {
       if (templateRes.rows.length === 0) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
 
       const countRes = await supaQuery(
-        `SELECT COUNT(*) as count FROM prompt_versions WHERE prompt_template_id = $1 AND user_id = $2`,
+        `SELECT COUNT(*) as count FROM prompt_versions pv
+         JOIN prompt_templates pt ON pt.template_id = pv.prompt_template_id
+         WHERE pv.prompt_template_id = $1 AND pt.user_id = $2`,
         [templateId, uid]
       );
       const nextVerNum = parseInt(countRes.rows[0].count || '0', 10) + 1;
       const newVerId = `ver_${Date.now().toString(36)}_v${nextVerNum}`;
 
       await supaQuery(
-        `INSERT INTO prompt_versions (version_id, prompt_template_id, user_id, version_number, prompt_text, changelog)
+        `INSERT INTO prompt_versions (prompt_version_id, prompt_template_id, version_number, raw_text, change_summary, created_by)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [newVerId, templateId, uid, nextVerNum, promptText, changelog || `Version ${nextVerNum}`]
+        [newVerId, templateId, nextVerNum, promptText, changelog || `Version ${nextVerNum}`, uid]
       );
 
       return NextResponse.json({ success: true, templateId, versionId: newVerId, versionNumber: nextVerNum });
@@ -133,7 +168,9 @@ export async function POST(request: NextRequest) {
       }
 
       const versionRes = await supaQuery(
-        `SELECT version_id FROM prompt_versions WHERE version_id = $1 AND prompt_template_id = $2 AND user_id = $3 LIMIT 1`,
+        `SELECT pv.prompt_version_id FROM prompt_versions pv
+         JOIN prompt_templates pt ON pt.template_id = pv.prompt_template_id
+         WHERE pv.prompt_version_id = $1 AND pv.prompt_template_id = $2 AND pt.user_id = $3 LIMIT 1`,
         [versionId, templateId, uid]
       );
       if (versionRes.rows.length === 0) return NextResponse.json({ error: 'Version not found' }, { status: 404 });

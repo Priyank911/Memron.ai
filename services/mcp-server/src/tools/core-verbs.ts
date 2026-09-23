@@ -17,6 +17,7 @@ import { config } from '../config.js';
 import * as db from '../db/queries.js';
 import { getPinnedFacts, insertPinnedFact, deletePinnedFact } from '../db/queries-graph.js';
 import { memoryEvents } from '../lib/event-bus.js';
+import { recordRun } from '../versioning/run-recorder.js';
 
 function getUserId(authInfo?: AuthInfo): number {
   const uid = authInfo?.extra?.userId;
@@ -115,6 +116,52 @@ export function registerCoreVerbs(server: McpServer): void {
           embedding: embeddingStr,
         });
 
+        // A run_event is both a memory artifact and an analytics record. This
+        // keeps Run Analytics connected to the consolidated four-verb API.
+        let runRecordId: string | undefined;
+        if (args.type === 'run_event') {
+          const runMeta = args.metadata || {};
+          try {
+            const run = await recordRun(
+              {
+                userId,
+                sessionId: String(runMeta.sessionId || `mcp:${pointerId}`),
+                agentId: runMeta.agentId ? String(runMeta.agentId) : undefined,
+                workspaceId: runMeta.workspaceId ? String(runMeta.workspaceId) : undefined,
+                taskId: runMeta.taskId ? String(runMeta.taskId) : undefined,
+              },
+              {
+                promptVersionId: runMeta.promptVersionId ? String(runMeta.promptVersionId) : undefined,
+                contextVersionId: runMeta.contextVersionId ? String(runMeta.contextVersionId) : undefined,
+                retrievalVersionId: runMeta.retrievalVersionId ? String(runMeta.retrievalVersionId) : undefined,
+                toolingVersionId: runMeta.toolingVersionId ? String(runMeta.toolingVersionId) : undefined,
+                evaluationVersionId: runMeta.evaluationVersionId ? String(runMeta.evaluationVersionId) : undefined,
+              },
+              {
+                modelName: runMeta.modelName ? String(runMeta.modelName) : undefined,
+                modelParams: runMeta.modelParams as Record<string, unknown> | undefined,
+                inputTokens: Number(runMeta.inputTokens || 0),
+                outputTokens: Number(runMeta.outputTokens || 0),
+                latencyMs: Number(runMeta.latencyMs || 0),
+                cost: runMeta.cost == null ? undefined : Number(runMeta.cost),
+              },
+              {
+                hallucinationFlag: Boolean(runMeta.hallucinationFlag),
+                successScore: runMeta.successScore == null ? undefined : Number(runMeta.successScore),
+                userFeedback: runMeta.userFeedback as 'positive' | 'negative' | 'neutral' | undefined,
+                finalAcceptance: Boolean(runMeta.finalAcceptance),
+                failureReason: runMeta.failureReason ? String(runMeta.failureReason) : undefined,
+              },
+              Array.isArray(runMeta.sourceArtifacts) ? runMeta.sourceArtifacts.map(String) : undefined,
+            );
+            runRecordId = run.run_id;
+          } catch (runError) {
+            // Memory storage remains durable even if analytics tables are not
+            // migrated yet; return the reason so deployment can surface it.
+            runRecordId = `analytics_error:${runError instanceof Error ? runError.message : 'record_failed'}`;
+          }
+        }
+
         // Emit real-time event for Dashboard Inbox notification badge
         memoryEvents.emit({
           type: 'memory.created',
@@ -148,6 +195,7 @@ export function registerCoreVerbs(server: McpServer): void {
                   compressionRatio: compression.ratio,
                   pointerRef: `[Memory: ${pointerId} — "${title}"]`,
                   hint: args.status === 'untriaged' ? 'Stored in Inbox for human triage.' : 'Stored and indexed for recall.',
+                  ...(runRecordId ? { runRecordId } : {}),
                 },
                 null,
                 2
