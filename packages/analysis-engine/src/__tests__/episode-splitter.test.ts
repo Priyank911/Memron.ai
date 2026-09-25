@@ -103,10 +103,10 @@ describe('Episode Splitter', () => {
     });
   });
 
-  // Note: summarizeEpisode tests are skipped because they require GROQ_API_KEY
+  // Note: summarizeEpisode tests are skipped when OPENAI_API_KEY is unavailable.
   // These are integration tests that should be run with proper credentials
   describe('summarizeEpisode', () => {
-    const hasApiKey = !!(process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY);
+    const hasApiKey = !!process.env.OPENAI_API_KEY;
 
     it.skipIf(!hasApiKey)('should generate a summary for an episode', async () => {
       const messages: ConversationMessage[] = [
@@ -116,7 +116,7 @@ describe('Episode Splitter', () => {
 
       const episodes = splitIntoEpisodesSync('session_6', messages);
 
-      // summarizeEpisode is async and requires GROQ_API_KEY
+      // summarizeEpisode is async and requires OPENAI_API_KEY
       const summary = await summarizeEpisode(episodes[0]);
 
       expect(summary).toBeTruthy();
@@ -136,7 +136,7 @@ describe('Episode Splitter', () => {
 
       const episodes = splitIntoEpisodesSync('session_7', messages);
 
-      // summarizeEpisode is async and requires GROQ_API_KEY
+      // summarizeEpisode is async and requires OPENAI_API_KEY
       const summary = await summarizeEpisode(episodes[0]);
 
       expect(summary).toBeTruthy();

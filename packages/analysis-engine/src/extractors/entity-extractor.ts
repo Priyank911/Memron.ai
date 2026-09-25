@@ -88,7 +88,13 @@ const ENTITY_PATTERNS: Record<EntityType, RegExp[]> = {
  * Normalize entity name to canonical form
  */
 function canonicalize(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const compact = normalized.replace(/-/g, '');
+  // Common agent terminology has multiple surface forms. Resolve these at
+  // extraction time so A2A, A2A protocol, and Agent2Agent share one node.
+  if (compact === 'a2a' || compact === 'agent2agent' || compact === 'agenttoagent') return 'agent2agent';
+  if (compact === 'rag' || compact === 'retrievalaugmentedgeneration') return 'retrieval-augmented-generation';
+  return normalized;
 }
 
 /**

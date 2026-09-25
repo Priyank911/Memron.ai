@@ -5,18 +5,20 @@
  * content (before encryption). The embedding is stored alongside the encrypted
  * content in the memories table for vector similarity search.
  *
- * Auto-detects provider from environment variables:
- *   1. OPENAI_API_KEY → OpenAI text-embedding-3-small (768d)
- *   2. No key         → embeddings disabled, keyword-only search
+ * Provider selection:
+ *   1. OPENROUTER_API_KEY → LiquidAI LFM2.5 Embedding 350M (free, 1024d)
+ *   2. EMBEDDING_PROVIDER=openai → OpenAI text-embedding-3-small (explicit)
+ *   3. No configured provider → embeddings disabled, keyword-only search
  *
- * Note: Groq removed all embedding models (2025). Only OPENAI_API_KEY works.
+ * OpenRouter is the default provider. OpenAI is available only when selected
+ * explicitly with EMBEDDING_PROVIDER=openai.
  *
  * Production features:
  *   - Circuit breaker: 5 failures → 5min cooldown
  *   - Concurrency limiter: 10 parallel, 100 queued
  */
 
-const EMBEDDING_DIMENSIONS = 768;
+const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || 1024);
 const TIMEOUT_MS = 10_000;
 const MAX_CONCURRENT = 10;
 const MAX_QUEUED = 100;
@@ -31,13 +33,30 @@ interface ProviderConfig {
   model: string;
   apiKey: string;
   extraBody?: Record<string, unknown>;
+  headers?: Record<string, string>;
 }
 
 let _loggedDisabled = false;
 
 function resolveProvider(): ProviderConfig | null {
+  const requestedProvider = (process.env.EMBEDDING_PROVIDER || 'openrouter').toLowerCase();
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey) {
+  if (requestedProvider === 'openrouter' && openRouterKey) {
+    return {
+      name: 'openrouter',
+      url: 'https://openrouter.ai/api/v1/embeddings',
+      model: process.env.OPENROUTER_EMBEDDING_MODEL || 'liquid/lfm-2.5-embedding-350m:free',
+      apiKey: openRouterKey,
+      extraBody: { dimensions: EMBEDDING_DIMENSIONS },
+      headers: {
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://memron.ai',
+        'X-Title': process.env.OPENROUTER_APP_TITLE || 'Memron',
+      },
+    };
+  }
+
+  if (requestedProvider === 'openai' && openaiKey) {
     return {
       name: 'openai',
       url: 'https://api.openai.com/v1/embeddings',
@@ -47,10 +66,9 @@ function resolveProvider(): ProviderConfig | null {
     };
   }
 
-  // Groq removed all embedding models — do not use GROQ_API_KEY for embeddings
   if (!_loggedDisabled) {
     _loggedDisabled = true;
-    console.info('[Embeddings] No OPENAI_API_KEY set — embeddings disabled, using keyword search only');
+    console.info('[Embeddings] No configured embedding provider — embeddings disabled, using keyword search only');
   }
   return null;
 }
@@ -107,7 +125,7 @@ export function buildEmbeddingInput(
 }
 
 /**
- * Generate a 768-dim embedding vector for the given text.
+ * Generate a 1024-dim embedding vector for the given text.
  * Returns null if no embedding provider is configured or on failure.
  */
 export async function generateEmbedding(text: string): Promise<number[] | null> {
@@ -130,6 +148,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${provider.apiKey}`,
+        ...(provider.headers || {}),
       },
       body: JSON.stringify({ model: provider.model, input, ...provider.extraBody }),
       signal: controller.signal,
@@ -139,8 +158,21 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      console.warn(`[Embeddings] ${provider.name} error ${res.status}: ${errBody.slice(0, 200)}`);
-      _failures++; _lastFail = Date.now();
+      const isBillingFailure = res.status === 429 && /insufficient|credits|billing/i.test(errBody);
+      if (isBillingFailure) {
+        // Do not hammer the provider once it has explicitly rejected the
+        // account for billing. Memories remain durable and keyword search
+        // continues while semantic indexing is paused.
+        _failures = CIRCUIT_THRESHOLD;
+        _lastFail = Date.now();
+        if (!_loggedDisabled) {
+          _loggedDisabled = true;
+          console.error('[Embeddings] OpenAI rejected the request because the account has no API credits. Semantic indexing paused for 5 minutes; keyword and graph extraction remain available.');
+        }
+      } else {
+        console.warn(`[Embeddings] ${provider.name} error ${res.status}: ${errBody.slice(0, 200)}`);
+        _failures++; _lastFail = Date.now();
+      }
       return null;
     }
 
@@ -149,6 +181,12 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 
     if (!embedding || !Array.isArray(embedding)) {
       console.warn(`[Embeddings] ${provider.name} unexpected response shape`);
+      _failures++; _lastFail = Date.now();
+      return null;
+    }
+
+    if (embedding.length !== EMBEDDING_DIMENSIONS) {
+      console.warn(`[Embeddings] ${provider.name} returned ${embedding.length} dimensions; expected ${EMBEDDING_DIMENSIONS}. Check EMBEDDING_DIMENSIONS and the database migration.`);
       _failures++; _lastFail = Date.now();
       return null;
     }

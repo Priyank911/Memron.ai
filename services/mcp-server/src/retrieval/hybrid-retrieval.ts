@@ -40,6 +40,8 @@ export interface RetrievedMemory {
   content: string;          // decrypted content
   title?: string;
   tags?: string[];
+  bucket?: string;
+  metadata?: Record<string, unknown>;
   memoryType?: string;
   confidence?: number;
   fusedScore: number;       // final RRF score
@@ -99,6 +101,39 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     try {
       const entities = extractEntities(options.query);
       const graphHits: { id: string; score: number }[] = [];
+
+      // Canonical semantic graph used by the dashboard. Relationship
+      // provenance points back to encrypted memory/atomic-memory IDs, so the
+      // graph signal can participate in the same RRF ranking as BM25/vector.
+      if (entities.length > 0) {
+        const semantic = await query<{ entity_id: string }>(
+          `SELECT entity_id FROM entities
+           WHERE user_id = $1 AND canonical_name = ANY($2::text[])
+           LIMIT 20`,
+          [options.userId, entities.map(entity => entity.toLowerCase())],
+        );
+        for (const entity of semantic.rows) {
+          const evidence = await query<{ source_memories: string[] | null; strength: number }>(
+            `SELECT source_memories, strength
+             FROM entity_relationships
+             WHERE user_id = $1
+               AND (source_entity_id = $2 OR target_entity_id = $2)
+             ORDER BY strength DESC, evidence_count DESC
+             LIMIT $3`,
+            [options.userId, entity.entity_id, topK * 2],
+          );
+          for (const row of evidence.rows) {
+            for (const memoryId of row.source_memories || []) {
+              if (!memoryId.startsWith('episode:')) {
+                graphHits.push({ id: memoryId, score: 10 + (row.strength || 0) });
+              }
+            }
+          }
+        }
+      }
+
+      // Legacy sovereign graph fallback remains read-only for old data.
+      if (graphHits.length > 0) return graphHits;
       
       for (const entity of entities) {
         const hash = computeBlindHash(entity, options.userId);
@@ -231,6 +266,13 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
       if (memRes.rows.length > 0) {
         const r = memRes.rows[0];
         let content = r.content || '';
+        if (!content && r.content_encrypted && r.content_iv && r.content_tag) {
+          try {
+            content = decrypt({ encrypted: r.content_encrypted, iv: r.content_iv, tag: r.content_tag });
+          } catch {
+            content = '';
+          }
+        }
         
         retrievedMemories.push({
           id: r.pointer_id || r.id,
@@ -238,6 +280,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
           content,
           title: r.title,
           tags: r.tags,
+          bucket: r.bucket,
+          metadata: r.metadata || {},
           fusedScore: result.fusedScore,
           signals: result.signals,
           createdAt: r.created_at,
@@ -262,6 +306,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
 }
 
 function extractEntities(queryStr: string): string[] {
-  const matches = queryStr.match(/\b[A-Z][a-z]+\b/g);
-  return matches ? Array.from(new Set(matches)) : [];
+  const stopWords = new Set(['what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'does', 'have', 'about', 'into', 'show', 'find', 'the', 'and', 'for']);
+  const matches = queryStr.match(/[A-Za-z][A-Za-z0-9._/-]{2,}/g) || [];
+  return Array.from(new Set(matches.filter(word => !stopWords.has(word.toLowerCase()))));
 }

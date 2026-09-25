@@ -34,7 +34,7 @@ let openaiClient: OpenAI | null = null;
 
 function getClient(apiKey?: string): OpenAI {
   if (!openaiClient) {
-    const key = apiKey || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY;
+    const key = apiKey || process.env.OPENAI_API_KEY;
     if (!key) {
       throw new Error('OPENAI_API_KEY environment variable is required');
     }

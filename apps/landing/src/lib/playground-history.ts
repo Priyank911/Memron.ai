@@ -48,9 +48,15 @@ const SCHEMA_SQLS = [
     content         TEXT NOT NULL,
     answer          TEXT NOT NULL DEFAULT '',
     bucket          VARCHAR(100),
-    embedding       vector(768),
+    embedding       vector(1024),
     created_at      TIMESTAMPTZ DEFAULT NOW()
   )`,
+
+  `DO $$ BEGIN
+     UPDATE playground_embeddings SET embedding = NULL WHERE embedding IS NOT NULL;
+     ALTER TABLE playground_embeddings ALTER COLUMN embedding TYPE vector(1024);
+   EXCEPTION WHEN undefined_table THEN NULL;
+   END $$`,
 
   `CREATE INDEX IF NOT EXISTS idx_ps_user ON playground_sessions(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_ps_updated ON playground_sessions(updated_at DESC)`,

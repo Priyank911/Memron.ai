@@ -4177,6 +4177,38 @@
     }
 }
 
+/* Knowledge graph: neutral topology treatment. Semantic meaning comes from
+   edge style and node geometry, not an accent color. */
+.mm-graph-view,
+.mm-graph-canvas-area {
+    background: #050505;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+.mm-graph-legend-card,
+.mm-graph-drawer {
+    background: rgba(10, 10, 10, 0.96);
+    border-color: rgba(255, 255, 255, 0.16);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42);
+}
+.mm-graph-legend-dot-entity {
+    background: #f5f5f5;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
+}
+.mm-graph-legend-line-explicit { background: #f5f5f5; }
+.mm-graph-legend-line-weak {
+    background: repeating-linear-gradient(90deg, #888 0 5px, transparent 5px 9px);
+}
+.mm-graph-drawer-icon,
+.mm-graph-drawer-type {
+    color: #f5f5f5;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+.mm-graph-live-dot {
+    background: #f5f5f5;
+    box-shadow: 0 0 7px rgba(255, 255, 255, 0.65);
+}
+
 
 /* ═══════════════════════════════════════════════════════════════
    PLAYGROUND PAGE — Interactive Terminal
@@ -7151,15 +7183,16 @@
 /* ═══════════════════════════════════════════════════════════════
    KNOWLEDGE GRAPH MEMORY ENGINE
    Theme-adaptive: Obsidian Dark & Crisp Light
-   Accent: Memron Violet (#7c3aed)
+   Accent: restrained steel blue, derived from the active theme
    ═══════════════════════════════════════════════════════════════ */
 .mm-graph-view {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 64px);
+    height: 100%;
+    min-height: 0;
     width: 100%;
     overflow: hidden;
-    background: var(--mm-bg);
+    background: #070a0f;
     color: var(--mm-text);
     font-family: var(--mm-font);
     position: relative;
@@ -7356,9 +7389,18 @@
 }
 
 .mm-graph-btn:hover {
-    background: var(--mm-bg-3);
-    color: var(--mm-text);
-    border-color: var(--mm-border-2);
+  background: var(--mm-bg-3);
+  color: var(--mm-text);
+  border-color: var(--mm-border-2);
+}
+
+.mm-graph-toggle-state {
+  color: var(--mm-text);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding-left: 2px;
 }
 
 .mm-graph-zoom-box {
@@ -7386,7 +7428,7 @@
 
 .mm-graph-zoom-btn:hover {
     color: var(--mm-text);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--mm-bg-1);
 }
 
 [data-mm-theme='light'] .mm-graph-zoom-btn:hover {
@@ -7400,7 +7442,12 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: var(--mm-bg);
+    background: #070a0f;
+}
+
+[data-mm-theme='light'] .mm-graph-view,
+[data-mm-theme='light'] .mm-graph-canvas-area {
+    background: #f8faff;
 }
 
 .mm-graph-canvas {
@@ -7543,8 +7590,18 @@
 .mm-graph-legend-line {
     width: 16px;
     height: 2px;
-    background: var(--mm-violet-3);
+    background: #60a5fa;
     border-radius: 1px;
+}
+
+.mm-graph-legend-line-weak {
+    height: 0;
+    border-top: 1px dashed var(--mm-text-3);
+    background: transparent;
+}
+
+.mm-graph-legend-line-explicit {
+    background: #60a5fa;
 }
 
 /* Detail Drawer */
@@ -7553,13 +7610,13 @@
     top: 16px;
     right: 16px;
     bottom: 16px;
-    width: 380px;
+    width: min(360px, calc(100% - 32px));
     border-radius: var(--mm-r-lg);
     background: var(--mm-bg-card);
     border: 1px solid var(--mm-border);
     backdrop-filter: blur(20px);
     box-shadow: 0 20px 48px rgba(0, 0, 0, 0.4);
-    padding: 22px;
+    padding: 18px;
     display: flex;
     flex-direction: column;
     z-index: 20;
@@ -7589,7 +7646,8 @@
 .mm-graph-drawer-title-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+    min-width: 0;
 }
 
 .mm-graph-drawer-icon {
@@ -7609,6 +7667,10 @@
     font-weight: 600;
     color: var(--mm-text);
     font-family: var(--mm-heading);
+    max-width: 238px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .mm-graph-drawer-type {
@@ -7643,10 +7705,10 @@
 .mm-graph-drawer-body {
     flex: 1;
     overflow-y: auto;
-    padding-top: 18px;
+    padding-top: 14px;
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 14px;
 }
 
 .mm-graph-stat-grid {
@@ -7659,7 +7721,7 @@
     background: var(--mm-bg-2);
     border: 1px solid var(--mm-border);
     border-radius: var(--mm-r-sm);
-    padding: 12px;
+    padding: 10px 11px;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -7673,7 +7735,7 @@
 }
 
 .mm-graph-stat-val {
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 600;
     color: var(--mm-text);
     font-family: var(--mm-mono);
@@ -7697,11 +7759,20 @@
     background: var(--mm-bg-2);
     border: 1px solid var(--mm-border);
     border-radius: var(--mm-r-sm);
-    padding: 10px 12px;
-    display: flex;
+    padding: 9px 11px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
+    gap: 10px;
     font-size: 0.75rem;
+}
+
+.mm-graph-edge-main {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
 }
 
 .mm-graph-edge-type {
@@ -7713,6 +7784,78 @@
 .mm-graph-edge-target {
     color: var(--mm-text);
     font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mm-graph-edge-meta {
+    color: var(--mm-text-3);
+    font-size: 0.65rem;
+    white-space: nowrap;
+    margin-left: 0;
+    text-align: right;
+}
+
+.mm-graph-node-summary {
+  margin: 6px 0 0;
+  color: var(--mm-text-2);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mm-graph-evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mm-graph-evidence-item {
+  padding: 10px 11px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-r-sm);
+  background: var(--mm-bg-2);
+}
+
+.mm-graph-evidence-title {
+  color: var(--mm-text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.mm-graph-evidence-meta {
+  margin-top: 4px;
+  color: var(--mm-text-3);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mm-graph-evidence-item p {
+  margin: 7px 0 0;
+  color: var(--mm-text-2);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+/* Graph uses the dashboard's steel-blue system accent, not the decorative
+   violet treatment used by legacy cards. */
+.mm-graph-drawer-icon,
+.mm-graph-drawer-type {
+    background: rgba(37, 99, 235, 0.1);
+    border-color: rgba(96, 165, 250, 0.35);
+    color: #93c5fd;
+}
+
+.mm-graph-edge-type {
+    color: #93c5fd;
 }
 /* -------------------------------------------------------
    Split-Panel Views (Memories, Prompt Studio, Run Analytics)
@@ -8461,6 +8604,13 @@
 
 /* --- Responsive --- */
 @media (max-width: 768px) {
+    .mm-graph-bar { padding: 10px 12px; gap: 10px; }
+    .mm-graph-center { order: 3; width: 100%; overflow-x: auto; }
+    .mm-graph-search-input { width: min(220px, 52vw); }
+    .mm-graph-actions { margin-left: auto; }
+    .mm-graph-btn span:not(.mm-graph-toggle-state) { display: none; }
+    .mm-graph-drawer { top: 10px; right: 10px; bottom: 10px; width: min(360px, calc(100% - 20px)); }
+    .mm-graph-legend-card { top: 12px; left: 12px; padding: 10px 12px; }
     .mm-split-body { flex-direction: column; }
     .mm-split-list {
         width: 100%;

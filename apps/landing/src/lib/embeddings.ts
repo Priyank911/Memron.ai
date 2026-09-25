@@ -1,11 +1,13 @@
 /**
  * Embedding Service — Production multi-provider with circuit breaker.
  *
- * Auto-detects provider from environment variables:
- *   1. OPENAI_API_KEY → OpenAI text-embedding-3-small (768d)
- *   2. No key        → embeddings disabled, keyword-only search fallback
+ * Provider selection:
+ *   1. OPENROUTER_API_KEY → LiquidAI LFM2.5 Embedding 350M (free, 1024d)
+ *   2. EMBEDDING_PROVIDER=openai → OpenAI text-embedding-3-small (explicit)
+ *   3. No configured provider → embeddings disabled, keyword-only search
  *
- * Note: Groq removed all embedding models (2025). Only OPENAI_API_KEY works.
+ * OpenRouter is the default provider. OpenAI remains available only when
+ * explicitly selected for embeddings; RAG generation is configured separately.
  *
  * Production features:
  *   - Circuit breaker: 5 consecutive failures → 5min provider cooldown
@@ -13,7 +15,7 @@
  *   - Graceful degradation: always returns null on failure (never throws)
  */
 
-const EMBEDDING_DIMENSIONS = 768;
+const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || 1024);
 const TIMEOUT_MS = 8_000;
 const MAX_CONCURRENT = 10;
 const MAX_QUEUED = 100;
@@ -28,13 +30,30 @@ interface ProviderConfig {
   model: string;
   apiKey: string;
   extraBody?: Record<string, unknown>;
+  headers?: Record<string, string>;
 }
 
 let _loggedDisabled = false;
 
 function resolveProvider(): ProviderConfig | null {
+  const requestedProvider = (process.env.EMBEDDING_PROVIDER || 'openrouter').toLowerCase();
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey) {
+  if (requestedProvider === 'openrouter' && openRouterKey) {
+    return {
+      name: 'openrouter',
+      url: 'https://openrouter.ai/api/v1/embeddings',
+      model: process.env.OPENROUTER_EMBEDDING_MODEL || 'liquid/lfm2.5-embedding-350m:free',
+      apiKey: openRouterKey,
+      extraBody: { dimensions: EMBEDDING_DIMENSIONS },
+      headers: {
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://memron.ai',
+        'X-Title': process.env.OPENROUTER_APP_TITLE || 'Memron',
+      },
+    };
+  }
+
+  if (requestedProvider === 'openai' && openaiKey) {
     return {
       name: 'openai',
       url: 'https://api.openai.com/v1/embeddings',
@@ -44,10 +63,9 @@ function resolveProvider(): ProviderConfig | null {
     };
   }
 
-  // Groq removed all embedding models — do not use GROQ_API_KEY for embeddings
   if (!_loggedDisabled) {
     _loggedDisabled = true;
-    console.debug('[Embeddings] No OPENAI_API_KEY set — embeddings disabled, using keyword search only');
+    console.debug('[Embeddings] No configured embedding provider — embeddings disabled, using keyword search only');
   }
   return null;
 }
@@ -108,6 +126,7 @@ export async function embedQuery(text: string): Promise<number[] | null> {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${provider.apiKey}`,
+        ...(provider.headers || {}),
       },
       body: JSON.stringify({ model: provider.model, input, ...provider.extraBody }),
       signal: controller.signal,
@@ -127,6 +146,12 @@ export async function embedQuery(text: string): Promise<number[] | null> {
 
     if (!embedding || !Array.isArray(embedding)) {
       console.warn(`[Embeddings] ${provider.name} unexpected response shape`);
+      _failures++; _lastFail = Date.now();
+      return null;
+    }
+
+    if (embedding.length !== EMBEDDING_DIMENSIONS) {
+      console.warn(`[Embeddings] ${provider.name} returned ${embedding.length} dimensions; expected ${EMBEDDING_DIMENSIONS}.`);
       _failures++; _lastFail = Date.now();
       return null;
     }

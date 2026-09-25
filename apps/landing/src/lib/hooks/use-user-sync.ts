@@ -45,14 +45,11 @@ export function useUserSync(): { isReady: boolean } {
     const isSyncing = useRef(false);
     // Tracks whether the onboarding check has completed and confirmed
     // this user is onboarded (i.e. the dashboard may render).
-    const [isReady, setIsReady] = useState(() => {
-        // Fast path: if the onboarded cookie already exists we can
-        // render immediately — the server middleware already validated it.
-        if (typeof document !== 'undefined') {
-            return document.cookie.includes('memron_onboarded=true');
-        }
-        return false;
-    });
+    // The cookie is only an optimization written after a server-confirmed
+    // completion. It is not authoritative: databases can be reset, sessions
+    // can be restored on another device, and stale cookies can survive logout.
+    // Always confirm onboarding from the server before rendering dashboard UI.
+    const [isReady, setIsReady] = useState(false);
 
     const checkOnboardingStatus = useCallback(async () => {
         try {
@@ -62,6 +59,7 @@ export function useUserSync(): { isReady: boolean } {
 
             // Guard: ensure we got JSON back, not an HTML error page
             if (!res.ok) {
+                if (res.status === 401) router.replace('/login');
                 return;
             }
             const contentType = res.headers.get('content-type') || '';
@@ -82,9 +80,9 @@ export function useUserSync(): { isReady: boolean } {
                 }
             }
         } catch {
-            // On network error, allow rendering to avoid infinite loading.
-            // The middleware is the primary guard; this is defense-in-depth.
-            setIsReady(true);
+            // Unknown state is not a valid authorization decision. Keep the
+            // dashboard blocked until the server confirms the database state.
+            setIsReady(false);
         }
     }, [router]);
 
@@ -150,14 +148,9 @@ export function useUserSync(): { isReady: boolean } {
         const syncedUserId = typeof window !== 'undefined' ? sessionStorage.getItem(SYNC_KEY) : null;
 
         if (syncedUserId === user.uid) {
-            // Already synced this browser session, but cookie may have been cleared.
-            // If no onboarding cookie, re-run the status check so the server can heal it.
-            const hasOnboardedCookie = getCookie('memron_onboarded') === 'true';
-            if (!hasOnboardedCookie) {
-                checkOnboardingStatus();
-            } else {
-                setIsReady(true);
-            }
+            // The database remains authoritative even when sessionStorage and
+            // the onboarding cookie claim this browser is already synced.
+            checkOnboardingStatus();
             return;
         }
 

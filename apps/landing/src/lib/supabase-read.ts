@@ -46,9 +46,10 @@ if (isConfigured) {
     user: SUPA_USER,
     password: SUPA_PASS,
     ssl: sslConfig,
-    max: 5,
+    max: 8,
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 5_000, // Reduced from 10s — fail fast
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 8_000,
   });
 
   pool.on('error', (err) => {
@@ -72,13 +73,21 @@ export async function supaQuery<T extends Record<string, any> = any>(
   if (!pool) {
     return { rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as any;
   }
-  // Wrap with 6s hard timeout — catches leaked/hung connections
-  return Promise.race([
-    pool.query<T>(sql, params),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Supabase query timed out (6s)')), 6_000)
-    ),
-  ]);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      // statement_timeout cancels the server-side query, preventing the old
+      // Promise.race timeout from leaving a running query on a pooled client.
+      return await pool.query<T>(sql, params);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      const retryable = message.includes('timeout') || message.includes('terminated') || message.includes('connection') || message.includes('econnreset');
+      if (!retryable || attempt === 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 120));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export function isSupabaseConfigured(): boolean {

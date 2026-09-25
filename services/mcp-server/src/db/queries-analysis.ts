@@ -116,6 +116,10 @@ export interface EntityRelationshipRow {
   strength: number;
   evidence_count: number;
   source_memories: string[] | null;
+  edge_source: 'explicit' | 'co_occurrence' | 'legacy_anchor' | string;
+  confidence: number;
+  reinforcement_count: number;
+  last_reinforced_at: Date | null;
   created_at: Date;
 }
 
@@ -204,6 +208,14 @@ export async function getEpisodesBySession(
   const result = await query<EpisodeRow>(
     `SELECT * FROM episodes WHERE session_id = $1 AND user_id = $2 ORDER BY start_index LIMIT 1000`,
     [sessionId, userId]
+  );
+  return result.rows;
+}
+
+export async function getHistoricalEpisodes(userId: number, limit = 1000): Promise<EpisodeRow[]> {
+  const result = await query<EpisodeRow>(
+    `SELECT * FROM episodes WHERE user_id = $1 ORDER BY created_at ASC LIMIT $2`,
+    [userId, limit],
   );
   return result.rows;
 }
@@ -569,6 +581,7 @@ export async function insertEntity(params: {
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     ON CONFLICT (entity_id) DO UPDATE SET
       mention_count = entities.mention_count + EXCLUDED.mention_count,
+      embedding = COALESCE(EXCLUDED.embedding, entities.embedding),
       updated_at = NOW()
     RETURNING *`,
     [
@@ -656,6 +669,74 @@ export async function insertEntityRelationship(params: {
       params.evidenceCount || 1,
       params.sourceMemories || null,
     ]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Insert or reinforce a semantic edge. Pair matching is deliberately
+ * bidirectional so repeated extraction cannot create reverse duplicates.
+ */
+export async function upsertEntityRelationship(params: {
+  relationshipId: string;
+  userId: number;
+  sourceEntityId: string;
+  targetEntityId: string;
+  relationshipType?: string;
+  strength?: number;
+  confidence?: number;
+  edgeSource?: 'explicit' | 'co_occurrence' | 'semantic_similarity' | 'legacy_anchor';
+  sourceMemories?: string[];
+}): Promise<EntityRelationshipRow> {
+  if (params.sourceEntityId === params.targetEntityId) {
+    throw new Error('Graph relationships cannot connect an entity to itself');
+  }
+  const source = params.sourceEntityId <= params.targetEntityId ? params.sourceEntityId : params.targetEntityId;
+  const target = source === params.sourceEntityId ? params.targetEntityId : params.sourceEntityId;
+  const type = params.relationshipType || 'related_to';
+  const sourceKind = params.edgeSource || 'explicit';
+  const confidence = Math.max(0, Math.min(1, params.confidence ?? params.strength ?? 0.5));
+  const strength = Math.max(0, Math.min(1, params.strength ?? confidence));
+
+  const existing = await query<EntityRelationshipRow>(
+    `SELECT * FROM entity_relationships
+     WHERE user_id = $1
+       AND relationship_type = $2
+       AND ((source_entity_id = $3 AND target_entity_id = $4)
+         OR (source_entity_id = $4 AND target_entity_id = $3))
+     ORDER BY CASE WHEN edge_source = 'explicit' THEN 0 ELSE 1 END, id
+     LIMIT 1`,
+    [params.userId, type, source, target],
+  );
+
+  if (existing.rows[0]) {
+    const row = existing.rows[0];
+    const mergedMemories = Array.from(new Set([...(row.source_memories || []), ...(params.sourceMemories || [])])).slice(-100);
+    const promoted = row.edge_source === 'co_occurrence' && sourceKind === 'explicit';
+    const result = await query<EntityRelationshipRow>(
+      `UPDATE entity_relationships
+       SET strength = GREATEST(strength, $1),
+           confidence = GREATEST(confidence, $2),
+           evidence_count = evidence_count + 1,
+           reinforcement_count = reinforcement_count + 1,
+           edge_source = CASE WHEN $3 = 'explicit' OR edge_source = 'legacy_anchor' THEN $3 ELSE edge_source END,
+           source_memories = $4,
+           last_reinforced_at = NOW()
+       WHERE id = $5
+       RETURNING *`,
+      [strength, confidence, promoted ? 'explicit' : sourceKind, mergedMemories, row.id],
+    );
+    return result.rows[0];
+  }
+
+  const result = await query<EntityRelationshipRow>(
+    `INSERT INTO entity_relationships (
+      relationship_id, user_id, source_entity_id, target_entity_id,
+      relationship_type, strength, evidence_count, source_memories,
+      edge_source, confidence, reinforcement_count, last_reinforced_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, 1, NOW())
+    RETURNING *`,
+    [params.relationshipId, params.userId, source, target, type, strength, params.sourceMemories || null, sourceKind, confidence],
   );
   return result.rows[0];
 }

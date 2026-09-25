@@ -22,7 +22,15 @@
  */
 import { query } from './client.js';
 
+export const EXPECTED_SCHEMA_VERSION = 7;
+
 const MIGRATIONS = [
+  // A single explicit gate makes schema drift visible instead of allowing a
+  // newly started instance to serve traffic against an unknown schema.
+  `CREATE TABLE IF NOT EXISTS schema_migrations (
+    version         INTEGER PRIMARY KEY,
+    applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
   // ═══════════════════════════════════════════════════════════
   // SHARED TABLES (needed by both landing app and MCP server)
   // Using IF NOT EXISTS — safe even if landing app already created them.
@@ -659,6 +667,7 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_entities_user ON entities(user_id)`,
   `CREATE INDEX IF NOT EXISTS idx_entities_canonical ON entities(canonical_name)`,
   `CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type)`,
+  `CREATE INDEX IF NOT EXISTS idx_entities_user_mentions ON entities(user_id, mention_count DESC)`,
 
   `DO $$ BEGIN
      CREATE INDEX IF NOT EXISTS idx_entities_embedding
@@ -680,6 +689,10 @@ const MIGRATIONS = [
     strength            REAL DEFAULT 0.5,
     evidence_count      INTEGER DEFAULT 1,
     source_memories     TEXT[],
+    edge_source         VARCHAR(20) NOT NULL DEFAULT 'explicit',
+    confidence          REAL NOT NULL DEFAULT 0.5,
+    reinforcement_count INTEGER NOT NULL DEFAULT 1,
+    last_reinforced_at  TIMESTAMPTZ DEFAULT NOW(),
 
     created_at          TIMESTAMPTZ DEFAULT NOW()
   )`,
@@ -688,6 +701,23 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_entity_rels_source ON entity_relationships(source_entity_id)`,
   `CREATE INDEX IF NOT EXISTS idx_entity_rels_target ON entity_relationships(target_entity_id)`,
   `CREATE INDEX IF NOT EXISTS idx_entity_rels_type ON entity_relationships(relationship_type)`,
+  `DO $$ BEGIN
+     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'edge_source') THEN
+       ALTER TABLE entity_relationships ADD COLUMN edge_source VARCHAR(20) NOT NULL DEFAULT 'explicit';
+     END IF;
+     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'confidence') THEN
+       ALTER TABLE entity_relationships ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5;
+     END IF;
+     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'reinforcement_count') THEN
+       ALTER TABLE entity_relationships ADD COLUMN reinforcement_count INTEGER NOT NULL DEFAULT 1;
+     END IF;
+     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'last_reinforced_at') THEN
+       ALTER TABLE entity_relationships ADD COLUMN last_reinforced_at TIMESTAMPTZ DEFAULT NOW();
+     END IF;
+   END $$`,
+
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_source_kind ON entity_relationships(user_id, edge_source)`,
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_user_strength ON entity_relationships(user_id, strength DESC)`,
 
   // ─── Memory Packets (cached retrieval results) ───────────────
   `CREATE TABLE IF NOT EXISTS memory_packets (
@@ -932,6 +962,69 @@ const MIGRATIONS = [
    END $$`,
 
   `CREATE INDEX IF NOT EXISTS idx_atomic_memories_content_tsv ON atomic_memories USING GIN (content_tsv)`
+  ,
+
+  // Durable analysis queue. Postgres keeps the queue on the same reliability
+  // boundary as the memory write, and SKIP LOCKED allows multiple workers.
+  `CREATE TABLE IF NOT EXISTS analysis_jobs (
+    id              BIGSERIAL PRIMARY KEY,
+    job_type        VARCHAR(64) NOT NULL,
+    session_id      VARCHAR(100) NOT NULL,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    payload         JSONB NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'queued',
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    available_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    locked_at       TIMESTAMPTZ,
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_analysis_jobs_ready
+   ON analysis_jobs(status, available_at, id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_jobs_session_type
+   ON analysis_jobs(session_id, job_type)
+   WHERE status IN ('queued', 'running')`,
+
+  // Existing installations were created with narrower legacy columns. Keep
+  // entity types and memory pointers wide enough for extracted taxonomy names
+  // and real memory identifiers before graph indexing writes new rows.
+  `DO $$ BEGIN
+     ALTER TABLE entities ALTER COLUMN entity_type TYPE VARCHAR(100);
+     ALTER TABLE entities ALTER COLUMN first_seen_in TYPE VARCHAR(255);
+     ALTER TABLE memories ALTER COLUMN pointer_id TYPE VARCHAR(64);
+     ALTER TABLE forensic_snapshots ALTER COLUMN pointer_id TYPE VARCHAR(64);
+     ALTER TABLE graph_edges ALTER COLUMN source_pointer_id TYPE VARCHAR(64);
+   EXCEPTION WHEN undefined_table THEN NULL;
+   END $$`,
+
+  // Keep all active retrieval paths in the same 1024-dimensional vector space
+  // required by the configured free OpenRouter embedding endpoint.
+  // Existing vectors are invalidated because vectors from different models
+  // cannot be compared; the backfill regenerates them with the configured
+  // provider after this migration.
+  // Migrate each existing retrieval table independently. A missing legacy
+  // table must not roll back the migrations for every other table.
+  `DO $$ BEGIN
+     UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL;
+     ALTER TABLE memories ALTER COLUMN embedding TYPE vector(1024);
+   EXCEPTION WHEN undefined_table THEN NULL;
+   END $$`,
+  `DO $$ BEGIN
+     UPDATE atomic_memories SET embedding = NULL WHERE embedding IS NOT NULL;
+     ALTER TABLE atomic_memories ALTER COLUMN embedding TYPE vector(1024);
+   EXCEPTION WHEN undefined_table THEN NULL;
+   END $$`,
+  `DO $$ BEGIN
+     UPDATE entities SET embedding = NULL WHERE embedding IS NOT NULL;
+     ALTER TABLE entities ALTER COLUMN embedding TYPE vector(1024);
+   EXCEPTION WHEN undefined_table THEN NULL;
+   END $$`,
+  `DO $$ BEGIN
+     UPDATE memory_packets SET query_embedding = NULL WHERE query_embedding IS NOT NULL;
+     ALTER TABLE memory_packets ALTER COLUMN query_embedding TYPE vector(1024);
+   EXCEPTION WHEN undefined_table THEN NULL;
+   END $$`
 ];
 
 /**
@@ -939,6 +1032,22 @@ const MIGRATIONS = [
  */
 export async function runMigrations(): Promise<void> {
   const start = Date.now();
+
+  // Serialize migration runners across instances. The lock is transaction
+  // scoped and is released automatically if the process crashes.
+  await query('BEGIN');
+  try {
+    await query('SELECT pg_advisory_xact_lock($1)', [41872601]);
+    await query(MIGRATIONS[0]);
+    const current = await query<{ version: number }>('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1');
+    if (current.rows[0] && Number(current.rows[0].version) > EXPECTED_SCHEMA_VERSION) {
+      throw new Error(`Schema is newer than application: database=${current.rows[0].version}, application=${EXPECTED_SCHEMA_VERSION}`);
+    }
+    await query('COMMIT');
+  } catch (error) {
+    await query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
 
   // Separate cleanup statements (DELETE) from DDL — DELETE can't be in same
   // transaction as CREATE TABLE in some edge cases with FK constraints.
@@ -955,7 +1064,7 @@ export async function runMigrations(): Promise<void> {
 
   // Run all DDL in a single transaction — 1 round-trip instead of 30+
   try {
-    const batch = ['BEGIN', ...ddlStatements, 'COMMIT'].join(';\n');
+    const batch = ['BEGIN', 'SELECT pg_advisory_xact_lock(41872601)', ...ddlStatements, 'COMMIT'].join(';\n');
     await query(batch);
   } catch (batchError) {
     // If batch fails, fall back to sequential execution so we get
@@ -987,6 +1096,12 @@ export async function runMigrations(): Promise<void> {
       // Cleanup is best-effort
     }
   }
+
+  await query(
+    `INSERT INTO schema_migrations(version) VALUES ($1)
+     ON CONFLICT (version) DO NOTHING`,
+    [EXPECTED_SCHEMA_VERSION],
+  );
 
   console.log(`[DB] Schema ready (${Date.now() - start}ms)`);
 }

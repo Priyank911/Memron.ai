@@ -8,8 +8,12 @@
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerCoreVerbs } from './core-verbs.js';
+import { registerProfileTools } from './profile.js';
 
 export function registerAllTools(server: McpServer): void {
   // Register the 4 consolidated core verbs (stays well below agent confusion threshold)
   registerCoreVerbs(server);
+  // Profile inspection is intentionally read-only and lets authenticated
+  // clients verify which Memron account their bearer key belongs to.
+  registerProfileTools(server);
 }

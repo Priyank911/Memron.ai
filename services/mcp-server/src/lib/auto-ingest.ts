@@ -16,11 +16,13 @@ import {
   insertAtomicMemory,
   insertRecipe,
   insertEntity,
-  insertEntityRelationship,
+  getEntityByCanonicalName,
+  upsertEntityRelationship,
   getUningestedConversations,
   markConversationIngested,
 } from '../db/queries-analysis.js';
 import { config } from '../config.js';
+import { enqueueAnalysisJob } from './analysis-queue.js';
 
 export interface AutoIngestResult {
   success: boolean;
@@ -129,10 +131,14 @@ export async function autoIngest(params: {
   }
 
   // Store entities
+  const stableEntityIds = new Map<string, string>();
   for (const entity of result.entities) {
     try {
+      const existing = await getEntityByCanonicalName(entity.canonicalName, params.userId);
+      const stableEntityId = existing?.entity_id || entity.entityId;
+      stableEntityIds.set(entity.entityId, stableEntityId);
       await insertEntity({
-        entityId: entity.entityId,
+        entityId: stableEntityId,
         userId: params.userId,
         name: entity.name,
         canonicalName: entity.canonicalName,
@@ -146,21 +152,60 @@ export async function autoIngest(params: {
     }
   }
 
-  // Store relationships
+  // Store explicit relationships, reinforcing an existing normalized pair.
+  const explicitPairs = new Set<string>();
   for (const rel of result.relationships) {
     try {
-      await insertEntityRelationship({
+      const sourceEntityId = stableEntityIds.get(rel.sourceEntityId) || rel.sourceEntityId;
+      const targetEntityId = stableEntityIds.get(rel.targetEntityId) || rel.targetEntityId;
+      const pair = [sourceEntityId, targetEntityId].sort().join('|');
+      explicitPairs.add(`${pair}|${rel.relationshipType}`);
+      await upsertEntityRelationship({
         relationshipId: `rel_${nanoid(12)}`,
         userId: params.userId,
-        sourceEntityId: rel.sourceEntityId,
-        targetEntityId: rel.targetEntityId,
+        sourceEntityId,
+        targetEntityId,
         relationshipType: rel.relationshipType,
         strength: rel.strength,
-        evidenceCount: rel.evidenceCount,
+        confidence: rel.strength,
+        edgeSource: 'explicit',
         sourceMemories: rel.sourceMemories,
       });
     } catch (err) {
       console.warn(`[AutoIngest] Failed to insert relationship:`, err);
+    }
+  }
+
+  // Weak ties keep the graph useful when extraction cannot produce a predicate.
+  // Bound the pair count so a long conversation cannot create an O(n²) graph.
+  const cooccurrenceEntities = result.entities
+    .slice()
+    .sort((a, b) => b.mentionCount - a.mentionCount)
+    .slice(0, 12);
+  const provenance = result.memories.slice(0, 5).map(memory => memory.memoryId);
+  for (let i = 0; i < cooccurrenceEntities.length; i++) {
+    for (let j = i + 1; j < cooccurrenceEntities.length; j++) {
+      const pair = [cooccurrenceEntities[i].entityId, cooccurrenceEntities[j].entityId].sort().join('|');
+      if (explicitPairs.has(`${pair}|mentioned_with`)) continue;
+      const hasAnyExplicit = result.relationships.some(rel =>
+        [stableEntityIds.get(rel.sourceEntityId) || rel.sourceEntityId, stableEntityIds.get(rel.targetEntityId) || rel.targetEntityId].sort().join('|') === pair,
+      );
+      if (hasAnyExplicit) continue;
+      try {
+        await upsertEntityRelationship({
+          relationshipId: `rel_${nanoid(12)}`,
+          userId: params.userId,
+          sourceEntityId: stableEntityIds.get(cooccurrenceEntities[i].entityId) || cooccurrenceEntities[i].entityId,
+          targetEntityId: stableEntityIds.get(cooccurrenceEntities[j].entityId) || cooccurrenceEntities[j].entityId,
+          relationshipType: 'mentioned_with',
+          strength: 0.2,
+          confidence: 0.2,
+          edgeSource: 'co_occurrence',
+          sourceMemories: provenance,
+        });
+      } catch (err) {
+        console.warn('[AutoIngest] Failed to insert co-occurrence relationship:', err);
+      }
     }
   }
 
@@ -197,15 +242,12 @@ export async function recoverUningestedConversations(): Promise<void> {
           continue;
         }
 
-        await autoIngest({
+        await enqueueAnalysisJob({
           sessionId: conv.session_id,
           userId: conv.user_id!,
           messages,
-          useLLM: config.autoIngest.useLLM,
         });
-
-        await markConversationIngested(conv.session_id);
-        console.log(`[AutoIngest] Recovered session ${conv.session_id}`);
+        console.log(`[AutoIngest] Re-queued session ${conv.session_id}`);
       } catch (err) {
         console.warn(`[AutoIngest] Failed to recover session ${conv.session_id}:`, err);
       }

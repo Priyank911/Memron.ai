@@ -26,7 +26,7 @@ const PUBLIC_ROUTES = [
 ];
 
 const AUTH_ROUTES = ['/login', '/sign-up', '/forgot-password'];
-const DASHBOARD_ROUTES = ['/dashboard', '/playground', '/api/dashboard'];
+const DASHBOARD_ROUTES = ['/dashboard', '/playground', '/api/dashboard', '/api/v1/dashboard'];
 const ONBOARDING_ROUTES = ['/onboarding'];
 
 function matchesRoute(pathname: string, routes: string[]): boolean {
@@ -82,6 +82,12 @@ function isValidSessionSeal(token: string): boolean {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isVersionedDashboardApi = pathname.startsWith('/api/v1/dashboard');
+  // Keep existing clients working while making /api/v1 the canonical public
+  // contract. The route handlers remain single-sourced under /api/dashboard.
+  const internalPathname = isVersionedDashboardApi
+    ? pathname.replace(/^\/api\/v1(?=\/)/, '/api')
+    : pathname;
   
   // Get session cookie and validate format
   const rawCookie = request.cookies.get('__session')?.value;
@@ -115,8 +121,8 @@ export async function middleware(request: NextRequest) {
   }
 
   // ─── Dashboard Routes ──────────────────────────────────────────────────────
-  if (isDashboardRoute(pathname)) {
-    const isApiRoute = pathname.startsWith('/api/');
+  if (isDashboardRoute(internalPathname)) {
+    const isApiRoute = internalPathname.startsWith('/api/');
 
     // Not authenticated
     if (!isAuthenticated) {
@@ -138,16 +144,21 @@ export async function middleware(request: NextRequest) {
   }
 
   // ─── Protected Routes (not public, not dashboard, not onboarding) ──────────
-  if (!isPublicRoute(pathname) && !isDashboardRoute(pathname) && !isOnboardingRoute(pathname)) {
+  if (!isPublicRoute(internalPathname) && !isDashboardRoute(internalPathname) && !isOnboardingRoute(internalPathname)) {
     if (!isAuthenticated) {
       // API routes get 401, pages get redirected
-      if (pathname.startsWith('/api/')) {
+      if (internalPathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
       return NextResponse.redirect(new URL('/login', request.url));
     }
   }
 
+  if (isVersionedDashboardApi) {
+    const rewritten = request.nextUrl.clone();
+    rewritten.pathname = internalPathname;
+    return NextResponse.rewrite(rewritten);
+  }
   return NextResponse.next();
 }
 

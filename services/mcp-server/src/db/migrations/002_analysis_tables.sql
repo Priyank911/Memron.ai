@@ -193,6 +193,10 @@ CREATE TABLE IF NOT EXISTS entity_relationships (
   strength REAL DEFAULT 0.5,
   evidence_count INTEGER DEFAULT 1,
   source_memories TEXT[],
+  edge_source VARCHAR(20) NOT NULL DEFAULT 'explicit',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  reinforcement_count INTEGER NOT NULL DEFAULT 1,
+  last_reinforced_at TIMESTAMPTZ DEFAULT NOW(),
 
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -201,6 +205,22 @@ CREATE INDEX IF NOT EXISTS idx_entity_rels_user ON entity_relationships(user_id)
 CREATE INDEX IF NOT EXISTS idx_entity_rels_source ON entity_relationships(source_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_rels_target ON entity_relationships(target_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_rels_type ON entity_relationships(relationship_type);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'edge_source') THEN
+    ALTER TABLE entity_relationships ADD COLUMN edge_source VARCHAR(20) NOT NULL DEFAULT 'explicit';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'confidence') THEN
+    ALTER TABLE entity_relationships ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'reinforcement_count') THEN
+    ALTER TABLE entity_relationships ADD COLUMN reinforcement_count INTEGER NOT NULL DEFAULT 1;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'entity_relationships' AND column_name = 'last_reinforced_at') THEN
+    ALTER TABLE entity_relationships ADD COLUMN last_reinforced_at TIMESTAMPTZ DEFAULT NOW();
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_entity_rels_source_kind ON entity_relationships(user_id, edge_source);
 
 -- ============================================================================
 -- Prompt Templates Table

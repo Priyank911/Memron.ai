@@ -357,14 +357,30 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const dbUser = await getUserFromPostgres(userId);
+        // The first authenticated request after a database reset may arrive
+        // before the client-side sync effect. Establish the primary identity
+        // here so routing never treats a missing row as a valid onboarding
+        // state. WorkOS claims remain the only source for email/identity.
+        let dbUser = await getUserFromPostgres(userId);
+        if (!dbUser && session.email) {
+            const provider = isOAuthProvider(session.provider) ? session.provider : 'email';
+            const syncResult = await syncUser({
+                workosUserId: userId,
+                email: session.email,
+                firstName: session.firstName,
+                lastName: session.lastName,
+                fullName: session.fullName,
+                imageUrl: session.imageUrl,
+                provider,
+            });
+            if (!syncResult.postgres.success) {
+                return NextResponse.json({ error: 'Identity database is unavailable' }, { status: 503 });
+            }
+            dbUser = await getUserFromPostgres(userId);
+        }
         
         if (!dbUser) {
-            return NextResponse.json({
-                isOnboarded: false,
-                hasOrganization: false,
-                hasApiKey: false,
-            });
+            return NextResponse.json({ error: 'Identity record could not be established' }, { status: 503 });
         }
 
         const [org, apiKeys] = await Promise.all([
@@ -407,6 +423,16 @@ export async function GET(request: NextRequest) {
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
                 maxAge: 60 * 60 * 24 * 365, // 1 year
+                path: '/',
+            });
+        } else {
+            // Remove stale client routing state after a reset or account
+            // migration. The next navigation cannot skip onboarding.
+            responseBody.cookies.set('memron_onboarded', '', {
+                httpOnly: false,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax',
+                maxAge: 0,
                 path: '/',
             });
         }

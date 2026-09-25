@@ -345,18 +345,21 @@ export default function DashboardPage() {
 
   /* Generate smooth SVG path using cubic bezier */
   const generateSmoothPath = useCallback((data: number[], width: number, height: number, padding = 5) => {
-    if (data.length === 0) return `M 0,${height} L ${width},${height}`;
-    if (data.length === 1) {
-      const y = height - padding - ((data[0] || 0) / Math.max(data[0] || 0, 1)) * (height - padding * 2);
+    const safeData = data.map(value => Number.isFinite(value) ? value : 0);
+    if (safeData.length === 0) return `M 0,${height} L ${width},${height}`;
+    if (safeData.length === 1) {
+      const y = height - padding - ((safeData[0] || 0) / Math.max(safeData[0] || 0, 1)) * (height - padding * 2);
       return `M 0,${y} L ${width},${y}`;
     }
-    const max = Math.max(...data, 1);
-    const points = data.map((v, i) => ({
+    const max = Math.max(...safeData, 1);
+    const points = safeData.map((v, i) => ({
       x: (i / (data.length - 1)) * width,
       y: height - padding - (v / max) * (height - padding * 2),
     }));
 
-    if (points.length < 2) return '';
+    // Always return a valid moveto path. An empty path later concatenated with
+    // an area close command produces the browser error: "Expected moveto".
+    if (points.length < 2) return `M 0,${height} L ${width},${height}`;
 
     let path = `M ${points[0].x},${points[0].y}`;
     for (let i = 0; i < points.length - 1; i++) {

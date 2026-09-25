@@ -18,6 +18,8 @@ import * as db from '../db/queries.js';
 import { getPinnedFacts, insertPinnedFact, deletePinnedFact } from '../db/queries-graph.js';
 import { memoryEvents } from '../lib/event-bus.js';
 import { recordRun } from '../versioning/run-recorder.js';
+import { indexStoredMemoryInGraph } from '../lib/memory-graph.js';
+import { hybridRetrieve } from '../retrieval/hybrid-retrieval.js';
 
 function getUserId(authInfo?: AuthInfo): number {
   const uid = authInfo?.extra?.userId;
@@ -42,16 +44,16 @@ export function registerCoreVerbs(server: McpServer): void {
   // ═══════════════════════════════════════════════════════════
   server.tool(
     'memory_store',
-    'Store any content into Memron (working context, knowledge clip, fact, recipe, preference, or agent result). Stored items land in the human Inbox for triage by default.',
+    'Store content into Memron. Use type=context for short-lived conversation context (bucket conversation), type=knowledge for durable knowledge (bucket knowledge), type=preference for user preferences, and type=recipe for reusable procedures. Direct writes are indexed into the knowledge graph immediately.',
     {
       content: z.string().min(1).max(config.memory.maxContentLength).describe('The content or payload to store'),
       title: z.string().max(500).optional().describe('Summary title (auto-generated from first 100 chars if omitted)'),
       type: z.enum(['context', 'knowledge', 'fact', 'preference', 'entity', 'relationship', 'recipe', 'run_event', 'clip']).optional().default('context').describe('The semantic type of the memory'),
       source: z.enum(['agent', 'membrow', 'cli', 'user', 'browser', 'import']).optional().default('agent').describe('The source origin of the memory (e.g. agent mid-session or membrow browser clip)'),
-      bucket: z.string().max(100).optional().describe('Bucket slug (defaults to auto-classified bucket or default)'),
+      bucket: z.string().max(100).optional().describe('Bucket slug. Context maps to conversation; knowledge, fact, entity, relationship, recipe, and clip map to knowledge unless explicitly overridden.'),
       tags: z.array(z.string().max(50)).max(20).optional().describe('Descriptive tags for search, organization, and filtering'),
       metadata: z.record(z.unknown()).optional().describe('Arbitrary structured metadata (e.g. { platform, author, category, url, takeaways } for research clips)'),
-      status: z.enum(['untriaged', 'context', 'knowledge']).optional().default('untriaged').describe('Lifecycle status (defaults to untriaged so it lands in human Inbox)'),
+      status: z.enum(['untriaged', 'context', 'knowledge']).optional().describe('Lifecycle status. Omit to infer context/knowledge from type, or use untriaged to send the item to Inbox.'),
     },
     async (args, extra) => {
       try {
@@ -60,13 +62,24 @@ export function registerCoreVerbs(server: McpServer): void {
         const apiKeyId = getApiKeyId(extra.authInfo);
         const content = args.content;
 
-        // Resolve bucket
+        const durableType = ['knowledge', 'fact', 'entity', 'relationship', 'recipe', 'clip'].includes(args.type || 'context');
+        // Inbox is the lifecycle default. Type/source determines the semantic
+        // bucket, while the human explicitly promotes an item into Context or
+        // Knowledge during triage (or passes status intentionally).
+        const inferredStatus = args.status || 'untriaged';
+
+        // Resolve bucket. Explicit semantic types take precedence over the
+        // keyword classifier so agents can reliably target Context/Knowledge.
         let bucket = args.bucket;
         if (bucket) {
           const isValid = await db.isValidUserBucket(userId, bucket);
           if (!isValid && !VALID_BUCKETS.includes(bucket as any)) {
             bucket = 'default';
           }
+        } else if (args.source === 'membrow' || durableType) {
+          bucket = 'knowledge';
+        } else if (args.type === 'context') {
+          bucket = 'conversation';
         } else {
           bucket = classifyBucket(content);
         }
@@ -89,7 +102,7 @@ export function registerCoreVerbs(server: McpServer): void {
           ...(args.metadata || {}),
           type: args.type,
           source: args.source,
-          status: args.status,
+          status: inferredStatus,
           decay_exempt: args.type === 'knowledge' || args.source === 'membrow',
           created_via: 'mcp:memory_store',
         };
@@ -108,12 +121,25 @@ export function registerCoreVerbs(server: McpServer): void {
           tokenCount: pointerTokens,
           originalTokens,
           metadata,
-          status: args.status,
+          status: inferredStatus,
           source: args.source,
           decayExempt: args.type === 'knowledge' || args.source === 'membrow',
           apiKeyId,
           importance: args.type === 'preference' || args.type === 'recipe' ? 0.8 : 0.5,
           embedding: embeddingStr,
+        });
+
+        // Keep graph indexing off the critical write path. The memory is
+        // already durable; a failed graph extraction must never turn a
+        // successful memory_store into a 500 response.
+        void indexStoredMemoryInGraph({
+          userId,
+          pointerId,
+          title,
+          content,
+          createMemoryNode: true,
+        }).catch(error => {
+          console.warn('[memory_store] graph indexing failed:', error);
         });
 
         // A run_event is both a memory artifact and an analytics record. This
@@ -174,7 +200,7 @@ export function registerCoreVerbs(server: McpServer): void {
             title,
             type: args.type,
             source: args.source,
-            status: args.status,
+            status: inferredStatus,
           },
         });
 
@@ -190,11 +216,12 @@ export function registerCoreVerbs(server: McpServer): void {
                   bucket,
                   type: args.type,
                   source: args.source,
-                  inboxStatus: args.status,
+                  inboxStatus: inferredStatus,
                   tokensSaved: compression.saved,
                   compressionRatio: compression.ratio,
                   pointerRef: `[Memory: ${pointerId} — "${title}"]`,
-                  hint: args.status === 'untriaged' ? 'Stored in Inbox for human triage.' : 'Stored and indexed for recall.',
+                  hint: inferredStatus === 'untriaged' ? 'Stored in Inbox for human triage.' : 'Stored and indexed for recall.',
+                  semanticIndex: embedding ? { status: 'ready', dimensions: embedding.length } : { status: 'keyword_only' },
                   ...(runRecordId ? { runRecordId } : {}),
                 },
                 null,
@@ -232,7 +259,50 @@ export function registerCoreVerbs(server: McpServer): void {
       try {
         const userId = getUserId(extra.authInfo);
 
-        // Fetch candidate memories using searchMemories
+        // The hybrid mode is the production default. It combines BM25,
+        // recency, vector (when configured), and graph signals. Keep the
+        // direct encrypted-table search as a compatibility fallback for
+        // category/bucket queries and deployments with an older schema.
+        if (args.mode === 'hybrid' && !args.bucket && !args.tags?.length) {
+          const queryEmbedding = await generateEmbedding(buildEmbeddingInput(args.query, [], ''));
+          const hybrid = await hybridRetrieve({
+            userId,
+            query: args.query,
+            embedding: queryEmbedding || undefined,
+            topK: args.limit,
+            tokenBudget: args.tokenBudget,
+          });
+          const hybridResults = hybrid.memories
+            .filter(item => item.source === 'memory' || item.source === 'atomic_memory')
+            .filter(item => {
+              const type = item.metadata?.type || item.memoryType;
+              if (args.category === 'all') return true;
+              if (args.category === 'knowledge') return type === 'knowledge' || item.metadata?.source === 'membrow';
+              if (args.category === 'context') return type === 'context';
+              if (args.category === 'recipes') return type === 'recipe';
+              if (args.category === 'preferences') return type === 'preference';
+              return true;
+            })
+            .map(item => ({
+              pointerId: item.id,
+              title: item.title || item.memoryType || 'Memory',
+              bucket: item.bucket || (item.memoryType === 'recipe' ? 'knowledge' : 'conversation'),
+              content: item.content,
+              tags: item.tags || [],
+              metadata: item.metadata || { type: item.memoryType },
+            }));
+          if (hybridResults.length > 0) {
+            const pinnedRules = await getPinnedFacts(userId).then(pins => pins.map(p => p.label || p.pin_id)).catch(() => [] as string[]);
+            const tokenCount = hybrid.tokenEstimate;
+            if (args.format === 'xml') {
+              const xmlContext = ['<memron_context>', ...pinnedRules.map(rule => `  <pinned_rule>${rule}</pinned_rule>`), ...hybridResults.map(r => `  <memory pointer="${r.pointerId}" title="${r.title}">\n    ${r.content}\n  </memory>`), '</memron_context>'].join('\n');
+              return { content: [{ type: 'text', text: xmlContext }] };
+            }
+            return { content: [{ type: 'text', text: JSON.stringify({ query: args.query, totalFound: hybridResults.length, tokenCount, tokenBudget: args.tokenBudget, pinnedRules, results: hybridResults }, null, 2) }] };
+          }
+        }
+
+        // Fetch candidate memories using the encrypted-table compatibility path.
         const candidates = await db.searchMemories({
           userId,
           queryText: args.query,

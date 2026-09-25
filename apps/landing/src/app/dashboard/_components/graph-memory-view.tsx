@@ -20,6 +20,15 @@ export interface GraphNode {
   vx?: number;
   vy?: number;
   radius?: number;
+  summary?: string;
+  firstSeenIn?: string;
+  evidence?: Array<{
+    pointerId: string;
+    title: string;
+    bucket: string;
+    summary?: string;
+    createdAt?: string;
+  }>;
 }
 
 export interface GraphEdge {
@@ -31,6 +40,12 @@ export interface GraphEdge {
   isValid: boolean;
   validFrom?: string;
   validTo?: string | null;
+  edgeSource?: 'explicit' | 'co_occurrence' | 'semantic_similarity' | 'legacy_anchor' | string;
+  confidence?: number;
+  evidenceCount?: number;
+  reinforcementCount?: number;
+  lastReinforcedAt?: string;
+  sourceMemories?: string[];
 }
 
 export interface GraphData {
@@ -40,6 +55,7 @@ export interface GraphData {
     totalNodes: number;
     totalEdges: number;
     activeEdges: number;
+    isolatedNodes?: number;
     density: number;
   };
 }
@@ -58,7 +74,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [layoutMode, setLayoutMode] = useState<'orbital' | 'force'>('orbital');
+  const [gravityOn, setGravityOn] = useState(true);
   
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const isDraggingRef = useRef(false);
@@ -69,6 +85,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
   const simNodesRef = useRef<GraphNode[]>([]);
   const animFrameRef = useRef<number>(0);
+  const lastFrameRef = useRef<number>(0);
 
   const fetchGraph = useCallback(async () => {
     try {
@@ -84,25 +101,16 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       const height = containerRef.current?.clientHeight || 600;
       const cx = width / 2;
       const cy = height / 2;
+      const degree = new Map<string, number>();
+      (json.edges || []).forEach(edge => {
+        degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+        degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+      });
 
       const initializedNodes: GraphNode[] = (json.nodes || []).map((node, idx) => {
-        if (node.isRoot || node.id === 'root') {
-          return {
-            ...node,
-            x: cx,
-            y: cy,
-            vx: 0,
-            vy: 0,
-            radius: 28,
-          };
-        }
-
-        const totalNonRoot = (json.nodes || []).filter(n => !n.isRoot && n.id !== 'root').length || 1;
-        const nonRootIdx = (json.nodes || []).filter(n => !n.isRoot && n.id !== 'root').indexOf(node);
-        const angle = (nonRootIdx / totalNonRoot) * Math.PI * 2 + (idx * 0.2);
-        
-        const dist = 140 + (node.importanceScore * 120) + ((idx % 3) * 45);
-        const nodeRadius = 14 + Math.round(node.importanceScore * 18);
+        const angle = idx * 2.39996;
+        const dist = 92 + Math.sqrt(idx + 1) * 66;
+        const nodeRadius = 10 + Math.min(15, (degree.get(node.id) || 0) * 1.9) + Math.round(node.importanceScore * 4);
 
         return {
           ...node,
@@ -115,6 +123,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       });
 
       simNodesRef.current = initializedNodes;
+      lastFrameRef.current = 0;
     } catch (err) {
       console.warn('[GraphMemoryView] Error loading graph:', err);
     } finally {
@@ -133,7 +142,11 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       data.nodes
         .filter(n => {
           const matchesSearch = !searchQuery || n.label.toLowerCase().includes(searchQuery.toLowerCase());
-          const matchesType = selectedType === 'all' || n.type.toLowerCase() === selectedType.toLowerCase() || n.isRoot;
+          const normalizedType = n.type.toLowerCase();
+          const matchesType = selectedType === 'all'
+            || normalizedType === selectedType.toLowerCase()
+            || (selectedType === 'knowledge' && (normalizedType === 'memory' || normalizedType === 'knowledge'))
+            || n.isRoot;
           return matchesSearch && matchesType;
         })
         .map(n => n.id)
@@ -150,6 +163,9 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
     const render = (time: number) => {
       const elapsed = (time - startTime) / 1000;
+      const frameDelta = lastFrameRef.current ? Math.min(2, (time - lastFrameRef.current) / 16.67) : 1;
+      lastFrameRef.current = time;
+      const simStep = Math.min(0.12, 0.075 * frameDelta);
       const dpr = window.devicePixelRatio || 1;
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
@@ -164,7 +180,9 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
       const isLight = document.documentElement.getAttribute('data-mm-theme') === 'light';
 
-      ctx.fillStyle = isLight ? '#f8f8fa' : '#000000';
+      // The graph deliberately uses a neutral monochrome palette. Semantic
+      // meaning comes from line style and node geometry, not accent colors.
+      ctx.fillStyle = isLight ? '#f7f7f7' : '#050505';
       ctx.fillRect(0, 0, width, height);
 
       ctx.translate(width / 2 + transform.x, height / 2 + transform.y);
@@ -172,28 +190,57 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       ctx.translate(-width / 2, -height / 2);
 
       const nodes = simNodesRef.current;
-      const rootNode = nodes.find(n => n.isRoot || n.id === 'root');
-      const cx = rootNode ? rootNode.x! : width / 2;
-      const cy = rootNode ? rootNode.y! : height / 2;
-
-      ctx.save();
-      [140, 240, 330].forEach((r, idx) => {
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.strokeStyle = isLight
-          ? `rgba(0, 0, 0, ${0.05 - idx * 0.01})`
-          : `rgba(255, 255, 255, ${0.04 - idx * 0.01})`;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 8]);
-        ctx.stroke();
-      });
-      ctx.restore();
-
-      if (layoutMode === 'orbital') {
-        nodes.forEach(n => {
-          if (n.isRoot || n === draggedNodeRef.current) return;
-          n.x! += Math.sin(elapsed + n.radius!) * 0.12;
-          n.y! += Math.cos(elapsed + n.radius!) * 0.12;
+      {
+        const iterations = gravityOn ? 0.34 : 0.18;
+        const repulsion = gravityOn ? 6200 : 12500;
+        const collisionPadding = gravityOn ? 34 : 58;
+        for (let i = 0; i < nodes.length; i++) {
+          const a = nodes[i];
+          if (a === draggedNodeRef.current) continue;
+          let fx = (width / 2 - a.x!) * 0.0008;
+          let fy = (height / 2 - a.y!) * 0.0008;
+          for (let j = i + 1; j < nodes.length; j++) {
+            const b = nodes[j];
+            const dx = a.x! - b.x!;
+            const dy = a.y! - b.y!;
+            const distSq = Math.max(dx * dx + dy * dy, 1600);
+            const force = repulsion / distSq;
+            fx += (dx / Math.sqrt(distSq)) * force;
+            fy += (dy / Math.sqrt(distSq)) * force;
+            if (b !== draggedNodeRef.current) {
+              b.vx = (b.vx || 0) - (dx / Math.sqrt(distSq)) * force * 0.02 * iterations * simStep;
+              b.vy = (b.vy || 0) - (dy / Math.sqrt(distSq)) * force * 0.02 * iterations * simStep;
+            }
+            const minDistance = (a.radius || 18) + (b.radius || 18) + collisionPadding;
+            const actualDistance = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (actualDistance < minDistance) {
+              const push = (minDistance - actualDistance) / minDistance;
+              const nx = dx / actualDistance;
+              const ny = dy / actualDistance;
+              fx += nx * push * 2.4;
+              fy += ny * push * 2.4;
+              if (b !== draggedNodeRef.current) {
+                b.x! -= nx * push * 0.8;
+                b.y! -= ny * push * 0.8;
+              }
+            }
+          }
+          a.vx = ((a.vx || 0) + fx * simStep) * 0.87;
+          a.vy = ((a.vy || 0) + fy * simStep) * 0.87;
+          a.x! += (a.vx || 0) * simStep * iterations;
+          a.y! += (a.vy || 0) * simStep * iterations;
+        }
+        (data?.edges || []).forEach(edge => {
+          const s = nodes.find(n => n.id === edge.source);
+          const t = nodes.find(n => n.id === edge.target);
+          if (!s || !t) return;
+          const dx = t.x! - s.x!;
+          const dy = t.y! - s.y!;
+          const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+          const targetDistance = gravityOn ? 142 : 238;
+          const force = (distance - targetDistance) * 0.0008;
+          if (s !== draggedNodeRef.current) { s.x! += dx * force * simStep; s.y! += dy * force * simStep; }
+          if (t !== draggedNodeRef.current) { t.x! -= dx * force * simStep; t.y! -= dy * force * simStep; }
         });
       }
 
@@ -203,7 +250,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
           const t = nodes.find(n => n.id === edge.target);
           if (!s || !t) return;
 
-          const isHovered = hoveredNodeId === s.id || hoveredNodeId === t.id;
+          const isHovered = hoveredNodeId === s.id || hoveredNodeId === t.id || selectedNode?.id === s.id || selectedNode?.id === t.id;
           const isDimmed = hoveredNodeId && !isHovered;
 
           ctx.save();
@@ -212,16 +259,19 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
           ctx.lineTo(t.x!, t.y!);
 
           if (isHovered) {
-            ctx.strokeStyle = '#7c3aed';
-            ctx.lineWidth = 2;
-            ctx.shadowColor = '#7c3aed';
-            ctx.shadowBlur = 8;
+            ctx.strokeStyle = isLight ? '#111111' : '#ffffff';
+            ctx.lineWidth = 2.2;
+            ctx.shadowColor = isLight ? 'rgba(0,0,0,0.24)' : 'rgba(255,255,255,0.4)';
+            ctx.shadowBlur = 7;
           } else if (isDimmed) {
             ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.03)' : 'rgba(255, 255, 255, 0.03)';
             ctx.lineWidth = 0.8;
           } else {
-            ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.12)';
-            ctx.lineWidth = 1;
+            const weak = edge.edgeSource === 'co_occurrence';
+            ctx.strokeStyle = isLight ? (weak ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.68)') : (weak ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.68)');
+            ctx.lineWidth = weak ? 1.15 : Math.max(1.5, Math.min(2.8, 1.3 + (edge.confidence || edge.strength) * 1.5));
+            if (weak) ctx.setLineDash([5, 6]);
+            if (!isDimmed) { ctx.shadowColor = weak ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.16)'; ctx.shadowBlur = 4; }
           }
 
           if (!edge.isValid) {
@@ -238,7 +288,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
             ctx.beginPath();
             ctx.arc(px, py, 1.8, 0, Math.PI * 2);
-            ctx.fillStyle = isHovered ? '#8b5cf6' : (isLight ? '#7c3aed' : '#c4b5fd');
+            ctx.fillStyle = isHovered ? '#ffffff' : (isLight ? '#222222' : '#d4d4d4');
             ctx.fill();
           }
         });
@@ -253,65 +303,15 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
         ctx.save();
         ctx.globalAlpha = isMatched ? 1.0 : 0.18;
 
-        if (node.isRoot || node.id === 'root') {
-          const pulseR = r + (Math.sin(elapsed * 2) + 1) * 8;
-          ctx.beginPath();
-          ctx.arc(node.x!, node.y!, pulseR, 0, Math.PI * 2);
-          ctx.strokeStyle = isLight ? 'rgba(124, 58, 237, 0.25)' : 'rgba(139, 92, 246, 0.3)';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.arc(node.x!, node.y!, r + 6, 0, Math.PI * 2);
-          ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.25)' : 'rgba(255, 255, 255, 0.4)';
-          ctx.setLineDash([3, 3]);
-          ctx.lineWidth = 2;
-          ctx.stroke();
-
-          const rootGrad = ctx.createRadialGradient(
-            node.x! - r * 0.35, node.y! - r * 0.35, r * 0.1,
-            node.x!, node.y!, r
-          );
-          if (isLight) {
-            rootGrad.addColorStop(0, '#7c3aed');
-            rootGrad.addColorStop(0.6, '#5b21b6');
-            rootGrad.addColorStop(1, '#2e1065');
-          } else {
-            rootGrad.addColorStop(0, '#ffffff');
-            rootGrad.addColorStop(0.6, '#e2e8f0');
-            rootGrad.addColorStop(1, '#94a3b8');
-          }
-
-          ctx.beginPath();
-          ctx.arc(node.x!, node.y!, r, 0, Math.PI * 2);
-          ctx.fillStyle = rootGrad;
-          ctx.shadowColor = isLight ? 'rgba(124, 58, 237, 0.4)' : 'rgba(255, 255, 255, 0.6)';
-          ctx.shadowBlur = 18;
-          ctx.fill();
-        } else {
-          const orbGrad = ctx.createRadialGradient(
-            node.x! - r * 0.38, node.y! - r * 0.38, r * 0.08,
-            node.x!, node.y!, r
-          );
-          
-          orbGrad.addColorStop(0, '#ddd6fe');
-          orbGrad.addColorStop(0.25, '#8b5cf6');
-          orbGrad.addColorStop(0.7, '#6d28d9');
-          orbGrad.addColorStop(1, '#3b0764');
-
-          ctx.beginPath();
-          ctx.arc(node.x!, node.y!, r, 0, Math.PI * 2);
-          ctx.fillStyle = orbGrad;
-
-          if (isHovered || isSelected) {
-            ctx.shadowColor = '#7c3aed';
-            ctx.shadowBlur = 24;
-          } else {
-            ctx.shadowColor = 'rgba(124, 58, 237, 0.35)';
-            ctx.shadowBlur = 12;
-          }
-          ctx.fill();
-        }
+        ctx.beginPath();
+        ctx.arc(node.x!, node.y!, r, 0, Math.PI * 2);
+        ctx.fillStyle = isLight ? (isSelected ? '#111111' : '#d5d5d5') : (isSelected ? '#f5f5f5' : '#242424');
+        ctx.strokeStyle = isHovered || isSelected ? (isLight ? '#000000' : '#ffffff') : (isLight ? '#555555' : '#9a9a9a');
+        ctx.lineWidth = isHovered || isSelected ? 2 : 1;
+        ctx.shadowColor = isHovered || isSelected ? (isLight ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.38)') : 'transparent';
+        ctx.shadowBlur = isHovered || isSelected ? 12 : 0;
+        ctx.fill();
+        ctx.stroke();
 
         const labelText = node.label;
         ctx.font = '500 10.5px "Inter", sans-serif';
@@ -333,14 +333,14 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
         ctx.fill();
 
         ctx.strokeStyle = (isHovered || isSelected)
-          ? '#7c3aed'
+          ? (isLight ? '#111111' : '#ffffff')
           : (isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.14)');
         ctx.lineWidth = 1;
         ctx.stroke();
 
         ctx.fillStyle = isLight
-          ? (isHovered || isSelected ? '#7c3aed' : '#111113')
-          : (isHovered || isSelected ? '#ffffff' : '#ededef');
+          ? (isHovered || isSelected ? '#ffffff' : '#111111')
+          : (isHovered || isSelected ? '#ffffff' : '#e5e5e5');
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(labelText, node.x!, pillY + pillHeight / 2);
@@ -355,7 +355,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
     animFrameRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animFrameRef.current);
-  }, [data, transform, hoveredNodeId, selectedNode, filteredNodeIds, layoutMode]);
+  }, [data, transform, hoveredNodeId, selectedNode, filteredNodeIds, gravityOn]);
 
   function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
     ctx.moveTo(x + r, y);
@@ -506,7 +506,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
           </div>
 
           <div className="mm-graph-filter-seg">
-            {['all', 'tool', 'concept', 'system', 'framework'].map(type => (
+            {['all', 'knowledge', 'tool', 'concept', 'system', 'framework'].map(type => (
               <button
                 key={type}
                 onClick={() => setSelectedType(type)}
@@ -520,11 +520,14 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
         <div className="mm-graph-actions">
           <button
-            onClick={() => setLayoutMode(l => (l === 'orbital' ? 'force' : 'orbital'))}
+            onClick={() => setGravityOn(value => !value)}
+            aria-pressed={gravityOn}
             className="mm-graph-btn"
+            title={gravityOn ? 'Gravity on: bring connected nodes closer' : 'Gravity off: give nodes more breathing room'}
           >
             <Layers size={13} />
-            <span>{layoutMode === 'orbital' ? 'Orbital Radial' : 'Force Physics'}</span>
+            <span>Gravity</span>
+            <span className="mm-graph-toggle-state">{gravityOn ? 'On' : 'Off'}</span>
           </button>
 
           <button
@@ -592,23 +595,23 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
           <div className="mm-graph-legend-card">
             <div className="mm-graph-legend-title">Topology Legend</div>
             <div className="mm-graph-legend-row">
-              <span className="mm-graph-legend-dot-root" />
-              <span>Central Anchor Hub (root)</span>
+              <span className="mm-graph-legend-line mm-graph-legend-line-explicit" />
+              <span>Explicit relationship</span>
             </div>
             <div className="mm-graph-legend-row">
               <span className="mm-graph-legend-dot-entity" />
-              <span>Entity Nodes (size = importance)</span>
+              <span>Entity nodes (size = connectivity)</span>
             </div>
             <div className="mm-graph-legend-row">
-              <span className="mm-graph-legend-line" />
-              <span>Active Bi-Temporal Edges</span>
+              <span className="mm-graph-legend-line mm-graph-legend-line-weak" />
+              <span>Co-occurrence relationship</span>
             </div>
           </div>
         )}
 
         <div className="mm-graph-watermark">
           <Shield size={12} />
-          <span>Click on any entity sphere to inspect bi-temporal relationships • Drag to pan • Scroll to zoom</span>
+          <span>Click an entity to inspect evidence • Drag to pan • Scroll to zoom</span>
         </div>
 
         {selectedNode && (
@@ -650,6 +653,28 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
               )}
 
               <div>
+                <div className="mm-graph-section-title">Node summary</div>
+                <p className="mm-graph-node-summary">
+                  {selectedNode.summary || selectedNode.description || 'No extracted summary is available for this node yet.'}
+                </p>
+              </div>
+
+              {selectedNode.evidence && selectedNode.evidence.length > 0 && (
+                <div>
+                  <div className="mm-graph-section-title">Relevant memories ({selectedNode.evidence.length})</div>
+                  <div className="mm-graph-evidence-list">
+                    {selectedNode.evidence.map(memory => (
+                      <div key={memory.pointerId} className="mm-graph-evidence-item">
+                        <div className="mm-graph-evidence-title">{memory.title}</div>
+                        <div className="mm-graph-evidence-meta">{memory.bucket}</div>
+                        {memory.summary && <p>{memory.summary}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
                 <div className="mm-graph-section-title">
                   Connected Relationships ({selectedNodeEdges.length})
                 </div>
@@ -663,8 +688,11 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
                       const otherNode = data?.nodes.find(n => n.id === otherId);
                       return (
                         <div key={edge.id} className="mm-graph-edge-item">
-                          <span className="mm-graph-edge-type">{edge.relationshipType}</span>
-                          <span className="mm-graph-edge-target">{otherNode?.label || otherId}</span>
+                          <div className="mm-graph-edge-main">
+                            <span className="mm-graph-edge-type">{edge.relationshipType}</span>
+                            <span className="mm-graph-edge-target" title={otherNode?.label || otherId}>{otherNode?.label || otherId}</span>
+                          </div>
+                          <span className="mm-graph-edge-meta">{edge.edgeSource === 'co_occurrence' ? 'co-occurrence' : 'explicit'} · {edge.reinforcementCount || 1}×</span>
                         </div>
                       );
                     })

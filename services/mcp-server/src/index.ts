@@ -38,7 +38,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { config } from './config.js';
 import { testConnection, warmPool, close as closeDb, query as dbQuery, getPoolStats, logPoolStats } from './db/client.js';
-import { runMigrations } from './db/schema.js';
+import { runMigrations, EXPECTED_SCHEMA_VERSION } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
 import { MemronTokenVerifier } from './auth/verify.js';
@@ -48,6 +48,7 @@ import * as db from './db/queries.js';
 import * as collector from './lib/conversation-collector.js';
 import { recoverUningestedConversations } from './lib/auto-ingest.js';
 import { userCache } from './lib/user-cache.js';
+import { processAnalysisJobs } from './lib/analysis-jobs.js';
 
 // ─────────────────────────────────────────────────────────────
 // Initialization
@@ -839,6 +840,37 @@ app.get('/health', async (_req, res) => {
   });
 });
 
+/**
+ * Operational status is intentionally separate from /health. Health is safe
+ * for load balancers; status exposes pool and queue telemetry only to an
+ * operator who presents ADMIN_SECRET.
+ */
+app.get('/status', async (req, res) => {
+  const expected = process.env.ADMIN_SECRET;
+  const provided = req.headers['x-admin-secret'];
+  if (!expected || typeof provided !== 'string' || provided !== expected) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  try {
+    const [schema, queue] = await Promise.all([
+      dbQuery<{ version: number }>('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1'),
+      dbQuery<{ status: string; count: string }>('SELECT status, COUNT(*)::text AS count FROM analysis_jobs GROUP BY status'),
+    ]);
+    res.json({
+      service: 'memron-mcp-server',
+      schemaVersion: schema.rows[0]?.version ?? null,
+      expectedSchemaVersion: EXPECTED_SCHEMA_VERSION,
+      pool: getPoolStats(),
+      analysisQueue: Object.fromEntries(queue.rows.map(row => [row.status, Number(row.count)])),
+      activeSessions: sessions.size,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({ error: 'Status unavailable', detail: config.isDev ? String(error) : undefined });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // Idle Session Sweeper
 // ─────────────────────────────────────────────────────────────
@@ -863,6 +895,24 @@ function sweepIdleSessions(): void {
 }
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
+let analysisTimer: ReturnType<typeof setTimeout> | null = null;
+let analysisTickRunning = false;
+
+async function runAnalysisTick(): Promise<void> {
+  if (analysisTickRunning) return;
+  analysisTickRunning = true;
+  try {
+    const processed = await processAnalysisJobs(3);
+    // Back off while idle. This prevents remote Postgres from being polled
+    // every second and avoids overlapping workers when a query is slow.
+    analysisTimer = setTimeout(runAnalysisTick, processed > 0 ? 250 : 5000);
+  } catch (error) {
+    console.warn('[AnalysisJobs] Worker tick failed:', error instanceof Error ? error.message : error);
+    analysisTimer = setTimeout(runAnalysisTick, 10000);
+  } finally {
+    analysisTickRunning = false;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // Index Verification (Performance Check)
@@ -935,6 +985,8 @@ async function main() {
   logPoolStats();
 
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
+  // Analysis is durable and retried outside the MCP request/teardown path.
+  analysisTimer = setTimeout(runAnalysisTick, 1000);
 
   // Bind to 0.0.0.0 in cloud environments (Railway, Render) or production for external access
   const host = (config.isRailway || config.isRender || config.nodeEnv === 'production') ? '0.0.0.0' : '127.0.0.1';
@@ -956,6 +1008,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     console.log(`\n[${signal}] Shutting down...`);
     if (sweepTimer) clearInterval(sweepTimer);
+    if (analysisTimer) clearInterval(analysisTimer);
 
     // Flush all conversation buffers before closing sessions
     await collector.flushAll().catch(() => {});

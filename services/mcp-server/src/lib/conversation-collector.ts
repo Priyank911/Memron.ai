@@ -7,11 +7,8 @@
  */
 
 import type { ConversationMessage } from '@memron/analysis-engine';
-import {
-  upsertConversationHistory,
-  markConversationIngested,
-} from '../db/queries-analysis.js';
-import { autoIngest } from './auto-ingest.js';
+import { upsertConversationHistory } from '../db/queries-analysis.js';
+import { enqueueAnalysisJob } from './analysis-queue.js';
 import { config } from '../config.js';
 
 /** Tools excluded from recording (already run pipeline or are diagnostic-only) */
@@ -138,9 +135,8 @@ async function persistBuffer(sessionId: string): Promise<void> {
 }
 
 /**
- * Flush a session: persist remaining buffer to DB, run analysis pipeline if
- * threshold is met, mark as ingested. Fire-and-forget — errors are logged,
- * never propagated to callers.
+ * Flush a session: persist remaining buffer and enqueue analysis. Analysis is
+ * deliberately not run during MCP teardown; the durable worker owns retries.
  */
 export async function flushSession(sessionId: string): Promise<void> {
   const buffer = buffers.get(sessionId);
@@ -166,20 +162,12 @@ export async function flushSession(sessionId: string): Promise<void> {
       buffer.toolCallCount >= config.autoIngest.minCalls &&
       buffer.userId != null
     ) {
-      const result = await autoIngest({
+      await enqueueAnalysisJob({
         sessionId: buffer.sessionId,
         userId: buffer.userId,
         messages: buffer.messages,
-        useLLM: config.autoIngest.useLLM,
       });
-
-      await markConversationIngested(buffer.sessionId);
-
-      console.log(
-        `[Collector] Flushed session ${sessionId}: ` +
-        `${result.stats.episodes} episodes, ${result.stats.memories} memories, ` +
-        `${result.stats.recipes} recipes, ${result.stats.entities} entities`
-      );
+      console.log(`[Collector] Queued analysis for session ${sessionId}`);
     }
   } catch (err) {
     console.warn(`[Collector] Flush failed for session ${sessionId}:`, err);

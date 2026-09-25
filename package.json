@@ -15,6 +15,7 @@
     "dev:landing": "turbo dev --filter=@memron/landing",
     "dev:mcp": "turbo dev --filter=@memron/mcp-server",
     "dev:all": "turbo dev --filter=@memron/landing --filter=@memron/mcp-server",
+    "test:mcp:profile": "node scripts/mcp-test-profile.mjs",
     "build": "turbo build",
     "build:landing": "turbo build --filter=@memron/landing",
     "build:mcp": "turbo build --filter=@memron/mcp-server",
