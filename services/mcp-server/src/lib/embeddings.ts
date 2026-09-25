@@ -246,6 +246,64 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   }
 }
 
+/** Generate a bounded batch of embeddings for the indexing worker. */
+export async function generateEmbeddings(texts: string[]): Promise<Array<number[] | null>> {
+  if (texts.length === 0) return [];
+  const provider = resolveProvider();
+  if (!provider) return texts.map(() => null);
+  const normalized = texts.map(text => text.trim());
+  if (normalized.some(text => !text)) return texts.map(() => null);
+  if (circuitOpen()) return texts.map(() => null);
+
+  const slot = await acquireSlot();
+  if (!slot) return texts.map(() => null);
+  const started = Date.now();
+  try {
+    // Gemini's batch endpoint is the only provider-specific batch path. Other
+    // providers retain safe single-request behavior until a batch API is added.
+    if (provider.name !== 'gemini') return texts.map(() => null);
+
+    const model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': provider.apiKey },
+      body: JSON.stringify({
+        requests: normalized.map(text => ({
+          model: `models/${model}`,
+          content: { parts: [{ text }] },
+          output_dimensionality: EMBEDDING_DIMENSIONS,
+        })),
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`[Embeddings] gemini batch error ${res.status}: ${body.slice(0, 240)}`);
+      _failures++;
+      _lastFail = Date.now();
+      return texts.map(() => null);
+    }
+    const data = await res.json() as { embeddings?: Array<{ values?: number[] }> };
+    const values = data.embeddings?.map(item => item.values || null) || [];
+    if (values.length !== texts.length || values.some(value => !value || value.length !== EMBEDDING_DIMENSIONS)) {
+      console.warn(`[Embeddings] gemini batch returned ${values.length} results for ${texts.length} inputs`);
+      _failures++;
+      _lastFail = Date.now();
+      return texts.map(() => null);
+    }
+    _failures = 0;
+    console.info(JSON.stringify({ event: 'embedding_batch', provider: 'gemini', batchSize: texts.length, latencyMs: Date.now() - started }));
+    return values;
+  } catch (error) {
+    console.warn(`[Embeddings] batch failure: ${error instanceof Error ? error.message : String(error)}`);
+    _failures++;
+    _lastFail = Date.now();
+    return texts.map(() => null);
+  } finally {
+    releaseSlot();
+  }
+}
+
 export function toPgVector(embedding: number[]): string {
   return `[${embedding.join(',')}]`;
 }

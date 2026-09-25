@@ -49,6 +49,7 @@ import * as collector from './lib/conversation-collector.js';
 import { recoverUningestedConversations } from './lib/auto-ingest.js';
 import { userCache } from './lib/user-cache.js';
 import { processAnalysisJobs } from './lib/analysis-jobs.js';
+import { processMemoryIndexBatch, getMemoryIndexQueueDepth } from './lib/memory-index-jobs.js';
 
 // ─────────────────────────────────────────────────────────────
 // Initialization
@@ -853,9 +854,10 @@ app.get('/status', async (req, res) => {
     return;
   }
   try {
-    const [schema, queue] = await Promise.all([
+    const [schema, queue, memoryQueue] = await Promise.all([
       dbQuery<{ version: number }>('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1'),
       dbQuery<{ status: string; count: string }>('SELECT status, COUNT(*)::text AS count FROM analysis_jobs GROUP BY status'),
+      dbQuery<{ status: string; count: string }>('SELECT status, COUNT(*)::text AS count FROM memory_index_jobs GROUP BY status'),
     ]);
     res.json({
       service: 'memron-mcp-server',
@@ -863,6 +865,7 @@ app.get('/status', async (req, res) => {
       expectedSchemaVersion: EXPECTED_SCHEMA_VERSION,
       pool: getPoolStats(),
       analysisQueue: Object.fromEntries(queue.rows.map(row => [row.status, Number(row.count)])),
+      memoryIndexQueue: Object.fromEntries(memoryQueue.rows.map(row => [row.status, Number(row.count)])),
       activeSessions: sessions.size,
       timestamp: new Date().toISOString(),
     });
@@ -897,6 +900,8 @@ function sweepIdleSessions(): void {
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let analysisTimer: ReturnType<typeof setTimeout> | null = null;
 let analysisTickRunning = false;
+let memoryIndexTimer: ReturnType<typeof setTimeout> | null = null;
+let memoryIndexTickRunning = false;
 
 async function runAnalysisTick(): Promise<void> {
   if (analysisTickRunning) return;
@@ -911,6 +916,22 @@ async function runAnalysisTick(): Promise<void> {
     analysisTimer = setTimeout(runAnalysisTick, 10000);
   } finally {
     analysisTickRunning = false;
+  }
+}
+
+async function runMemoryIndexTick(): Promise<void> {
+  if (memoryIndexTickRunning) return;
+  memoryIndexTickRunning = true;
+  try {
+    const depth = await getMemoryIndexQueueDepth();
+    if (depth > 0) console.info(JSON.stringify({ event: 'memory_index_queue', depth }));
+    const processed = await processMemoryIndexBatch();
+    memoryIndexTimer = setTimeout(runMemoryIndexTick, processed > 0 ? 250 : 5000);
+  } catch (error) {
+    console.warn('[MemoryIndexJobs] Worker tick failed:', error instanceof Error ? error.message : error);
+    memoryIndexTimer = setTimeout(runMemoryIndexTick, 10000);
+  } finally {
+    memoryIndexTickRunning = false;
   }
 }
 
@@ -987,6 +1008,7 @@ async function main() {
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
   // Analysis is durable and retried outside the MCP request/teardown path.
   analysisTimer = setTimeout(runAnalysisTick, 1000);
+  memoryIndexTimer = setTimeout(runMemoryIndexTick, 1000);
 
   // Bind to 0.0.0.0 in cloud environments (Railway, Render) or production for external access
   const host = (config.isRailway || config.isRender || config.nodeEnv === 'production') ? '0.0.0.0' : '127.0.0.1';
@@ -1009,6 +1031,7 @@ async function main() {
     console.log(`\n[${signal}] Shutting down...`);
     if (sweepTimer) clearInterval(sweepTimer);
     if (analysisTimer) clearInterval(analysisTimer);
+    if (memoryIndexTimer) clearTimeout(memoryIndexTimer);
 
     // Flush all conversation buffers before closing sessions
     await collector.flushAll().catch(() => {});

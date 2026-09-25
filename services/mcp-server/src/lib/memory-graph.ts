@@ -21,6 +21,7 @@ export async function indexStoredMemoryInGraph(params: {
   title: string;
   content: string;
   createMemoryNode?: boolean;
+  memoryEmbedding?: number[] | null;
 }): Promise<{ entities: number; relationships: number }> {
   const episode: Episode = {
     episodeId: `memory:${params.pointerId}`,
@@ -34,7 +35,7 @@ export async function indexStoredMemoryInGraph(params: {
   const result = extractEntitiesSync(episode, String(params.userId), { minMentions: 1 });
   const stableIds = new Map<string, string>();
   const memoryEmbedding = params.createMemoryNode
-    ? await generateEmbedding(buildEmbeddingInput(params.title, [], params.content))
+    ? (params.memoryEmbedding ?? await generateEmbedding(buildEmbeddingInput(params.title, [], params.content)))
     : null;
 
   // A stored memory gets a real document/topic node, not a synthetic global
