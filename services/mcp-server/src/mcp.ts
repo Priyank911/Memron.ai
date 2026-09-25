@@ -11,7 +11,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerAllTools } from './tools/index.js';
 import { config } from './config.js';
 import * as collector from './lib/conversation-collector.js';
-import { indexStoredMemoryInGraph } from './lib/memory-graph.js';
 
 /**
  * Mutable session context — populated after the transport is initialized.
@@ -79,19 +78,9 @@ export function createMcpServer(ctx?: SessionContext): McpServer {
             const args = handlerArgs[0]; // first arg is the parsed params
             const userId = (handlerArgs[1] as any)?.authInfo?.extra?.userId ?? ctx.userId ?? null;
             collector.recordToolCall(ctx.sessionId, userId, toolName, args, result);
-            // Do not wait for MCP session teardown for graph visibility. Many
-            // clients keep one session open for hours; the durable episode
-            // worker still runs later for richer analysis.
-            if (typeof userId === 'number') {
-              void indexStoredMemoryInGraph({
-                userId,
-                pointerId: `turn:${ctx.sessionId}:${Date.now()}`,
-                title: `MCP ${toolName}`,
-                content: `${JSON.stringify(args)}\n${JSON.stringify(result)}`,
-              }).catch(error => {
-                console.warn('[MCP] immediate graph indexing failed:', error instanceof Error ? error.message : error);
-              });
-            }
+            // Graph indexing is handled by the durable memory index queue.
+            // Conversation capture remains asynchronous and is processed by
+            // the existing analysis queue, so no graph work runs here.
           } catch {
             // Never propagate recording errors
           }

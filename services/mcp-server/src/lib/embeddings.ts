@@ -6,12 +6,13 @@
  * content in the memories table for vector similarity search.
  *
  * Provider selection:
- *   1. OPENROUTER_API_KEY → LiquidAI LFM2.5 Embedding 350M (free, 1024d)
- *   2. EMBEDDING_PROVIDER=openai → OpenAI text-embedding-3-small (explicit)
- *   3. No configured provider → embeddings disabled, keyword-only search
+ *   1. GEMINI_API_KEY → Gemini Embedding 2 (1024d output)
+ *   2. EMBEDDING_PROVIDER=openrouter → LiquidAI LFM2.5 (explicit legacy option)
+ *   3. EMBEDDING_PROVIDER=openai → OpenAI text-embedding-3-small (explicit)
+ *   4. No configured provider → embeddings disabled, keyword-only search
  *
- * OpenRouter is the default provider. OpenAI is available only when selected
- * explicitly with EMBEDDING_PROVIDER=openai.
+ * Gemini is the default provider. OpenRouter and OpenAI remain available only
+ * when selected explicitly.
  *
  * Production features:
  *   - Circuit breaker: 5 failures → 5min cooldown
@@ -19,36 +20,59 @@
  */
 
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || 1024);
-const TIMEOUT_MS = 10_000;
-const MAX_CONCURRENT = 10;
+const TIMEOUT_MS = 15_000;
+// Free hosted embedding endpoints are rate-limited. A small queue is safer
+// than allowing a memory burst to create a provider 429 storm.
+const MAX_CONCURRENT = 2;
 const MAX_QUEUED = 100;
-const CIRCUIT_THRESHOLD = 5;
-const CIRCUIT_RESET_MS = 5 * 60_000;
+const CIRCUIT_THRESHOLD = 3;
+const CIRCUIT_RESET_MS = 60_000;
 
 // ─── Provider resolution ────────────────────────────────────
 
 interface ProviderConfig {
   name: string;
   url: string;
-  model: string;
   apiKey: string;
-  extraBody?: Record<string, unknown>;
+  buildBody: (input: string) => Record<string, unknown>;
   headers?: Record<string, string>;
 }
 
 let _loggedDisabled = false;
 
 function resolveProvider(): ProviderConfig | null {
-  const requestedProvider = (process.env.EMBEDDING_PROVIDER || 'openrouter').toLowerCase();
+  const requestedProvider = (process.env.EMBEDDING_PROVIDER || 'gemini').toLowerCase();
+  const geminiKey = process.env.GEMINI_API_KEY;
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const openaiKey = process.env.OPENAI_API_KEY;
+
+  if (requestedProvider === 'gemini' && geminiKey) {
+    const model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+    return {
+      name: 'gemini',
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`,
+      apiKey: geminiKey,
+      buildBody: (input) => ({
+        model: `models/${model}`,
+        content: { parts: [{ text: input }] },
+        // The database and vector indexes use vector(1024). Gemini's native
+        // 3072 output is reduced server-side before storage.
+        output_dimensionality: EMBEDDING_DIMENSIONS,
+      }),
+      headers: { 'x-goog-api-key': geminiKey },
+    };
+  }
+
   if (requestedProvider === 'openrouter' && openRouterKey) {
     return {
       name: 'openrouter',
       url: 'https://openrouter.ai/api/v1/embeddings',
-      model: process.env.OPENROUTER_EMBEDDING_MODEL || 'liquid/lfm-2.5-embedding-350m:free',
       apiKey: openRouterKey,
-      extraBody: { dimensions: EMBEDDING_DIMENSIONS },
+      buildBody: (input) => ({
+        model: process.env.OPENROUTER_EMBEDDING_MODEL || 'liquid/lfm-2.5-embedding-350m:free',
+        input,
+        dimensions: EMBEDDING_DIMENSIONS,
+      }),
       headers: {
         'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://memron.ai',
         'X-Title': process.env.OPENROUTER_APP_TITLE || 'Memron',
@@ -60,9 +84,12 @@ function resolveProvider(): ProviderConfig | null {
     return {
       name: 'openai',
       url: 'https://api.openai.com/v1/embeddings',
-      model: 'text-embedding-3-small',
       apiKey: openaiKey,
-      extraBody: { dimensions: EMBEDDING_DIMENSIONS },
+      buildBody: (input) => ({
+        model: 'text-embedding-3-small',
+        input,
+        dimensions: EMBEDDING_DIMENSIONS,
+      }),
     };
   }
 
@@ -147,10 +174,10 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey}`,
+        ...(provider.name === 'gemini' ? {} : { 'Authorization': `Bearer ${provider.apiKey}` }),
         ...(provider.headers || {}),
       },
-      body: JSON.stringify({ model: provider.model, input, ...provider.extraBody }),
+      body: JSON.stringify(provider.buildBody(input)),
       signal: controller.signal,
     });
 
@@ -158,7 +185,8 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      const isBillingFailure = res.status === 429 && /insufficient|credits|billing/i.test(errBody);
+      const isRateLimitFailure = res.status === 429;
+      const isBillingFailure = isRateLimitFailure && /insufficient|credits|billing/i.test(errBody);
       if (isBillingFailure) {
         // Do not hammer the provider once it has explicitly rejected the
         // account for billing. Memories remain durable and keyword search
@@ -169,6 +197,16 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
           _loggedDisabled = true;
           console.error('[Embeddings] OpenAI rejected the request because the account has no API credits. Semantic indexing paused for 5 minutes; keyword and graph extraction remain available.');
         }
+      } else if (isRateLimitFailure) {
+        // Stop sending more requests for a short window after a provider
+        // throttle. Memory writes continue without vectors and hybrid search
+        // falls back to keyword/graph signals until the window expires.
+        _failures = CIRCUIT_THRESHOLD;
+        _lastFail = Date.now();
+        if (!_loggedDisabled) {
+          _loggedDisabled = true;
+          console.warn('[Embeddings] OpenRouter rate limit reached. Semantic indexing paused for 60 seconds; memory writes remain available.');
+        }
       } else {
         console.warn(`[Embeddings] ${provider.name} error ${res.status}: ${errBody.slice(0, 200)}`);
         _failures++; _lastFail = Date.now();
@@ -177,7 +215,9 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
     }
 
     const data = await res.json();
-    const embedding: number[] = data?.data?.[0]?.embedding;
+    const embedding: number[] = provider.name === 'gemini'
+      ? (data?.embedding?.values ?? data?.embeddings?.[0]?.values)
+      : data?.data?.[0]?.embedding;
 
     if (!embedding || !Array.isArray(embedding)) {
       console.warn(`[Embeddings] ${provider.name} unexpected response shape`);

@@ -70,7 +70,14 @@ export const config = {
     ssl: process.env.PG_SSL !== 'false'
       ? { rejectUnauthorized: process.env.PG_CA_CERT ? true : false, ca: process.env.PG_CA_CERT }
       : false,
-    maxConnections: parseInt(process.env.PG_MAX_CONNECTIONS || (isRailway ? '10' : '15'), 10),
+    // Supabase session poolers commonly expose a 15-client ceiling shared by
+    // the deployment's processes. Keep each MCP instance below that ceiling
+    // so concurrent memory writes queue in Node instead of being rejected by
+    // the pooler with EMAXCONNSESSION.
+    maxConnections: Math.min(
+      parseInt(process.env.PG_MAX_CONNECTIONS || (isRailway ? '5' : '8'), 10),
+      parseInt(process.env.PG_POOL_HARD_LIMIT || (isRailway ? '5' : '10'), 10),
+    ),
     idleTimeout: parseInt(process.env.PG_IDLE_TIMEOUT || '20000', 10),
     connectionTimeout: parseInt(process.env.PG_CONNECTION_TIMEOUT || '10000', 10),
   },

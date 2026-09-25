@@ -22,7 +22,7 @@
  */
 import { query } from './client.js';
 
-export const EXPECTED_SCHEMA_VERSION = 7;
+export const EXPECTED_SCHEMA_VERSION = 8;
 
 const MIGRATIONS = [
   // A single explicit gate makes schema drift visible instead of allowing a
@@ -985,6 +985,27 @@ const MIGRATIONS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_jobs_session_type
    ON analysis_jobs(session_id, job_type)
    WHERE status IN ('queued', 'running')`,
+
+  // Durable post-write graph indexing queue. The payload contains the
+  // plaintext needed by the indexing worker, matching the existing analysis
+  // queue pattern; memory storage itself remains encrypted at rest.
+  `CREATE TABLE IF NOT EXISTS memory_index_jobs (
+    id              BIGSERIAL PRIMARY KEY,
+    pointer_id      VARCHAR(64) UNIQUE NOT NULL,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id          INTEGER,
+    payload         JSONB NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'queued',
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    available_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    locked_at       TIMESTAMPTZ,
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    indexed_at      TIMESTAMPTZ
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_ready
+   ON memory_index_jobs(status, available_at, id)`,
 
   // Existing installations were created with narrower legacy columns. Keep
   // entity types and memory pointers wide enough for extracted taxonomy names
