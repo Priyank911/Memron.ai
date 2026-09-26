@@ -111,6 +111,7 @@ export async function processMemoryIndexBatch(): Promise<number> {
 }
 
 export async function getMemoryIndexQueueDepth(): Promise<number> {
+  // Use partial index for faster COUNT on queued jobs
   const result = await query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM memory_index_jobs WHERE status = 'queued'`);
   return Number(result.rows[0]?.count || 0);
 }

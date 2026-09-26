@@ -982,6 +982,8 @@ const MIGRATIONS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_analysis_jobs_ready
    ON analysis_jobs(status, available_at, id)`,
+  `CREATE INDEX IF NOT EXISTS idx_analysis_jobs_status_count
+   ON analysis_jobs(status) WHERE status = 'queued'`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_jobs_session_type
    ON analysis_jobs(session_id, job_type)
    WHERE status IN ('queued', 'running')`,
@@ -1004,8 +1006,10 @@ const MIGRATIONS = [
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     indexed_at      TIMESTAMPTZ
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_ready
-   ON memory_index_jobs(status, available_at, id)`,
+  `CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_claim
+   ON memory_index_jobs(status, available_at, id) WHERE status = 'queued'`,
+  `CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_status_count
+   ON memory_index_jobs(status) WHERE status = 'queued'`,
 
   // Existing installations were created with narrower legacy columns. Keep
   // entity types and memory pointers wide enough for extracted taxonomy names
