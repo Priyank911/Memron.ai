@@ -19,41 +19,25 @@ export async function searchMemoriesBM25(params: {
 }): Promise<BM25Result[]> {
   const limit = params.limit ?? 20;
 
-  // Try to use the generated search_tsv column if it exists
-  const sqlWithTsv = `
+  // search_tsv generated column was removed (to_tsvector is not immutable on all PG versions).
+  // Use dynamic to_tsvector directly — one extra CPU cycle per row but no error spam.
+  const sql = `
     SELECT
       pointer_id as id,
-      ts_rank_cd(search_tsv, plainto_tsquery('english', $2)) as rank
+      ts_rank_cd(
+        to_tsvector('english', coalesce(title, '') || ' ' || coalesce(tags::text, '') || ' ' || coalesce(bucket, '')),
+        plainto_tsquery('english', $2)
+      ) as rank
     FROM memories
     WHERE user_id = $1
       AND is_active = true
-      AND search_tsv @@ plainto_tsquery('english', $2)
+      AND to_tsvector('english', coalesce(title, '') || ' ' || coalesce(tags::text, '') || ' ' || coalesce(bucket, '')) @@ plainto_tsquery('english', $2)
     ORDER BY rank DESC
     LIMIT $3
   `;
 
-  try {
-    const result = await query<{ id: string; rank: number }>(sqlWithTsv, [params.userId, params.query, limit]);
-    return result.rows;
-  } catch (error) {
-    // Fallback to dynamic tsvector if column doesn't exist
-    const fallbackSql = `
-      SELECT
-        pointer_id as id,
-        ts_rank_cd(
-          to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')),
-          plainto_tsquery('english', $2)
-        ) as rank
-      FROM memories
-      WHERE user_id = $1
-        AND is_active = true
-        AND to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')) @@ plainto_tsquery('english', $2)
-      ORDER BY rank DESC
-      LIMIT $3
-    `;
-    const result = await query<{ id: string; rank: number }>(fallbackSql, [params.userId, params.query, limit]);
-    return result.rows;
-  }
+  const result = await query<{ id: string; rank: number }>(sql, [params.userId, params.query, limit]);
+  return result.rows;
 }
 
 export async function searchAtomicMemoriesBM25(params: {

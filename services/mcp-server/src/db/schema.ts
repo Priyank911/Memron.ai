@@ -159,7 +159,10 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories USING GIN(tags)`,
   `CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(is_active) WHERE is_active = true`,
   `CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_memories_title_search ON memories USING GIN(to_tsvector('english', title))`,
+  `DO $$ BEGIN
+     CREATE INDEX IF NOT EXISTS idx_memories_title_search ON memories USING GIN(to_tsvector('english', title));
+   EXCEPTION WHEN others THEN NULL;
+   END $$`,
 
   // Dashboard triage lifecycle fields. Keep these as first-class columns so
   // filtering and decay jobs do not need to parse metadata JSONB.
@@ -956,23 +959,21 @@ const MIGRATIONS = [
    END $$`,
 
   // ─── BM25 Full-Text Search ─────────────────────────────────
-  // memories table: search_tsv for full-text search on title + tags (content is encrypted)
-  `DO $$ BEGIN
-     ALTER TABLE memories ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (
-       to_tsvector('english', coalesce(title, '') || ' ' || coalesce(array_to_string(tags, ' '), ''))
-     ) STORED;
-   EXCEPTION WHEN duplicate_column THEN NULL;
-   END $$`,
+  // NOTE: search_tsv generated column was removed because to_tsvector(regconfig, text)
+  // is not immutable on all PostgreSQL versions, causing "generation expression is not
+  // immutable" errors. BM25 search uses dynamic to_tsvector in queries instead (see
+  // bm25-search.ts fallback path). A GIN index on title provides adequate performance.
 
-  `CREATE INDEX IF NOT EXISTS idx_memories_search_tsv ON memories USING GIN (search_tsv)`,
-
-  // atomic_memories table: content_tsv
+  // atomic_memories table: content_tsv (may fail with immutability error on some PG versions)
   `DO $$ BEGIN
      ALTER TABLE atomic_memories ADD COLUMN content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
-   EXCEPTION WHEN duplicate_column THEN NULL;
+   EXCEPTION WHEN duplicate_column THEN NULL; WHEN others THEN NULL;
    END $$`,
 
-  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_content_tsv ON atomic_memories USING GIN (content_tsv)`,
+  `DO $$ BEGIN
+     CREATE INDEX IF NOT EXISTS idx_atomic_memories_content_tsv ON atomic_memories USING GIN (content_tsv);
+   EXCEPTION WHEN undefined_column THEN NULL; WHEN others THEN NULL;
+   END $$`,
 
   // Durable analysis queue. Postgres keeps the queue on the same reliability
   // boundary as the memory write, and SKIP LOCKED allows multiple workers.
