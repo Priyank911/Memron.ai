@@ -19,28 +19,24 @@ export async function searchMemoriesBM25(params: {
 }): Promise<BM25Result[]> {
   const limit = params.limit ?? 20;
 
-  // Search title + tags + bucket with phrase matching for better precision
-  // Use phraseto_tsquery for exact phrase matching when possible
-  const sql = `
+  // Try to use the generated search_tsv column if it exists
+  const sqlWithTsv = `
     SELECT
       pointer_id as id,
-      ts_rank_cd(
-        to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')),
-        phraseto_tsquery('english', $2)
-      ) as rank
+      ts_rank_cd(search_tsv, plainto_tsquery('english', $2)) as rank
     FROM memories
     WHERE user_id = $1
       AND is_active = true
-      AND to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')) @@ phraseto_tsquery('english', $2)
+      AND search_tsv @@ plainto_tsquery('english', $2)
     ORDER BY rank DESC
     LIMIT $3
   `;
 
   try {
-    const result = await query<{ id: string; rank: number }>(sql, [params.userId, params.query, limit]);
+    const result = await query<{ id: string; rank: number }>(sqlWithTsv, [params.userId, params.query, limit]);
     return result.rows;
   } catch (error) {
-    // Fallback to plainto_tsquery if phrase matching fails
+    // Fallback to dynamic tsvector if column doesn't exist
     const fallbackSql = `
       SELECT
         pointer_id as id,
