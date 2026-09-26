@@ -1,7 +1,8 @@
 /** Postgres-backed consumer for asynchronous memory graph indexing. */
 import { query } from '../db/client.js';
-import { buildEmbeddingInput, generateEmbeddings, isEmbeddingConfigured } from './embeddings.js';
+import { buildEmbeddingInput, generateEmbeddings, isEmbeddingConfigured, toPgVector } from './embeddings.js';
 import { indexStoredMemoryInGraph } from './memory-graph.js';
+import { updateMemoryEmbeddingByPointer } from '../db/queries.js';
 
 const MAX_ATTEMPTS = 5;
 const BATCH_SIZE = 10;
@@ -86,6 +87,13 @@ export async function processMemoryIndexBatch(): Promise<number> {
         createMemoryNode: true,
         memoryEmbedding: embeddings[i],
       });
+      if (embeddings[i]) {
+        await updateMemoryEmbeddingByPointer(
+          job.pointer_id,
+          job.user_id,
+          toPgVector(embeddings[i]!),
+        );
+      }
       await query(
         `UPDATE memory_index_jobs
          SET status = 'completed', indexed_at = NOW(), updated_at = NOW(), last_error = NULL

@@ -259,9 +259,12 @@ export async function generateEmbeddings(texts: string[]): Promise<Array<number[
   if (!slot) return texts.map(() => null);
   const started = Date.now();
   try {
-    // Gemini's batch endpoint is the only provider-specific batch path. Other
-    // providers retain safe single-request behavior until a batch API is added.
-    if (provider.name !== 'gemini') return texts.map(() => null);
+    // Gemini has a native batch endpoint. Other providers use the same
+    // single-input path as foreground queries so queued memories are not
+    // silently left without vectors.
+    if (provider.name !== 'gemini') {
+      return await Promise.all(normalized.map(text => generateEmbedding(text)));
+    }
 
     const model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`, {

@@ -126,6 +126,35 @@ export async function updateMemoryEmbedding(memoryId: number, embedding: string)
   );
 }
 
+export async function updateMemoryEmbeddingByPointer(
+  pointerId: string,
+  userId: number,
+  embedding: string,
+): Promise<void> {
+  await query(
+    `UPDATE memories SET embedding = $1, updated_at = NOW()
+     WHERE pointer_id = $2 AND user_id = $3 AND is_active = true`,
+    [embedding, pointerId, userId],
+  );
+}
+
+export async function searchMemoriesByVector(params: {
+  userId: number;
+  embedding: number[];
+  limit?: number;
+}): Promise<(MemoryRow & { similarity: number })[]> {
+  const embeddingStr = `[${params.embedding.join(',')}]`;
+  const result = await query<MemoryRow & { similarity: number }>(
+    `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
+     FROM memories
+     WHERE user_id = $2 AND is_active = true AND embedding IS NOT NULL
+     ORDER BY embedding <=> $1::vector
+     LIMIT $3`,
+    [embeddingStr, params.userId, params.limit || 10],
+  );
+  return result.rows;
+}
+
 export async function getMemoryByPointer(pointerId: string, userId: number): Promise<MemoryRow | null> {
   const result = await query<MemoryRow>(
     `SELECT * FROM memories WHERE pointer_id = $1 AND user_id = $2 AND is_active = true`,

@@ -10,6 +10,7 @@
  */
 
 import { searchAtomicMemoriesByVector } from '../db/queries-analysis.js';
+import { searchMemoriesByVector } from '../db/queries.js';
 import { searchMemoriesBM25, searchAtomicMemoriesBM25 } from './bm25-search.js';
 import { traverseSubgraph, getGraphNodeByBlindHash } from '../db/queries-graph.js';
 import { calculateDecayScore } from '../lib/memory-decay.js';
@@ -78,11 +79,18 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   let vectorPromise = Promise.resolve<{ id: string; score: number }[]>([]);
   if (options.embedding) {
     signalsUsed.push('vector');
-    vectorPromise = searchAtomicMemoriesByVector({
-      userId: options.userId,
-      embedding: options.embedding,
-      limit: topK * 2,
-    }).then(rows => rows.map(r => ({ id: r.memory_id, score: r.similarity })))
+    vectorPromise = Promise.all([
+      searchAtomicMemoriesByVector({
+        userId: options.userId,
+        embedding: options.embedding,
+        limit: topK * 2,
+      }).then(rows => rows.map(r => ({ id: r.memory_id, score: r.similarity }))),
+      searchMemoriesByVector({
+        userId: options.userId,
+        embedding: options.embedding,
+        limit: topK * 2,
+      }).then(rows => rows.map(r => ({ id: r.pointer_id, score: r.similarity }))),
+    ]).then(([atomic, memories]) => [...atomic, ...memories])
       .catch(() => []);
   }
 
@@ -166,21 +174,30 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const recencyPromise = (async () => {
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const recent = await query<{ memory_id: string; created_at: Date; updated_at: Date; confidence: number }>(
-        `SELECT memory_id, created_at, updated_at, confidence FROM atomic_memories 
+      const [recentAtomic, recentStored] = await Promise.all([
+        query<{ id: string; created_at: Date; updated_at: Date; importance: number }>(
+        `SELECT memory_id AS id, created_at, updated_at, confidence AS importance FROM atomic_memories
          WHERE user_id = $1 AND created_at > $2
          ORDER BY created_at DESC LIMIT $3`,
-        [options.userId, thirtyDaysAgo, topK * 2]
-      );
-      
-      return recent.rows.map(r => {
+          [options.userId, thirtyDaysAgo, topK * 2],
+        ),
+        query<{ id: string; created_at: Date; updated_at: Date; importance: number }>(
+          `SELECT pointer_id AS id, created_at, updated_at, importance
+           FROM memories
+           WHERE user_id = $1 AND is_active = true AND created_at > $2
+           ORDER BY created_at DESC LIMIT $3`,
+          [options.userId, thirtyDaysAgo, topK * 2],
+        ),
+      ]);
+
+      return [...recentAtomic.rows, ...recentStored.rows].map(r => {
         const decayScore = calculateDecayScore({
-          importance: r.confidence || 0.5,
+          importance: r.importance || 0.5,
           accessCount: 0,
           lastAccessedAt: r.updated_at,
           createdAt: r.created_at,
         });
-        return { id: r.memory_id, score: decayScore };
+        return { id: r.id, score: decayScore };
       });
     } catch {
       return [];
@@ -218,6 +235,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     if (amRes.rows.length > 0) {
       const r = amRes.rows[0];
       const content = r.content;
+      const estimate = Math.ceil(content.length / 4);
+      if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
       retrievedMemories.push({
         id: r.memory_id,
         source: 'atomic_memory',
@@ -228,7 +247,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         signals: result.signals,
         createdAt: r.created_at,
       });
-      tokenEstimate += Math.ceil(content.length / 4);
+      tokenEstimate += estimate;
       continue;
     }
 
@@ -274,6 +293,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
           }
         }
         
+        const estimate = Math.ceil(content.length / 4);
+        if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
         retrievedMemories.push({
           id: r.pointer_id || r.id,
           source: 'memory',
@@ -286,7 +307,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
           signals: result.signals,
           createdAt: r.created_at,
         });
-        tokenEstimate += Math.ceil(content.length / 4);
+        tokenEstimate += estimate;
         continue;
       }
     } catch {
