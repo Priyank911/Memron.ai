@@ -160,6 +160,7 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(is_active) WHERE is_active = true`,
   `CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_memories_title_search ON memories USING GIN(to_tsvector('english', title))`,
+  `CREATE INDEX IF NOT EXISTS idx_memories_bm25 ON memories USING GIN(to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')))`,
 
   // Dashboard triage lifecycle fields. Keep these as first-class columns so
   // filtering and decay jobs do not need to parse metadata JSONB.

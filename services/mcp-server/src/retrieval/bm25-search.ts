@@ -19,19 +19,19 @@ export async function searchMemoriesBM25(params: {
 }): Promise<BM25Result[]> {
   const limit = params.limit ?? 20;
 
-  // Try to search with decrypted content first (if a decrypted view exists)
-  // Fall back to title + tags search only
+  // Search title + tags + bucket with phrase matching for better precision
+  // Use phraseto_tsquery for exact phrase matching when possible
   const sql = `
     SELECT
       pointer_id as id,
       ts_rank_cd(
-        to_tsvector('english', title || ' ' || COALESCE(tags::text, '')),
-        plainto_tsquery('english', $2)
+        to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')),
+        phraseto_tsquery('english', $2)
       ) as rank
     FROM memories
     WHERE user_id = $1
       AND is_active = true
-      AND to_tsvector('english', title || ' ' || COALESCE(tags::text, '')) @@ plainto_tsquery('english', $2)
+      AND to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')) @@ phraseto_tsquery('english', $2)
     ORDER BY rank DESC
     LIMIT $3
   `;
@@ -40,8 +40,23 @@ export async function searchMemoriesBM25(params: {
     const result = await query<{ id: string; rank: number }>(sql, [params.userId, params.query, limit]);
     return result.rows;
   } catch (error) {
-    // Return empty if the table doesn't exist or other errors
-    return [];
+    // Fallback to plainto_tsquery if phrase matching fails
+    const fallbackSql = `
+      SELECT
+        pointer_id as id,
+        ts_rank_cd(
+          to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')),
+          plainto_tsquery('english', $2)
+        ) as rank
+      FROM memories
+      WHERE user_id = $1
+        AND is_active = true
+        AND to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, '')) @@ plainto_tsquery('english', $2)
+      ORDER BY rank DESC
+      LIMIT $3
+    `;
+    const result = await query<{ id: string; rank: number }>(fallbackSql, [params.userId, params.query, limit]);
+    return result.rows;
   }
 }
 

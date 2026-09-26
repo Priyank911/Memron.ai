@@ -21,10 +21,10 @@ export interface RRFResult {
 }
 
 export const DEFAULT_SIGNAL_WEIGHTS = {
-  vector: 1.0,
-  bm25: 0.8,
-  graph: 1.2,
-  recency: 0.6,
+  vector: 2.0,  // Increased - semantic similarity is most important
+  bm25: 1.5,    // Increased - keyword matching crucial for exact terms
+  graph: 0.8,   // Decreased - graph can add noise for simple queries
+  recency: 0.4,  // Decreased - time less important than semantic match
 };
 
 /**

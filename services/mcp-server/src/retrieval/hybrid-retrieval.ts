@@ -282,7 +282,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
 
     // Check normal memory
     try {
-      const memRes = await query<any>(`SELECT * FROM memories WHERE pointer_id = $1 OR id = $1`, [result.id]);
+      // pointer_id is VARCHAR, id is BIGSERIAL - use pointer_id first, then try id as text
+      const memRes = await query<any>(`SELECT * FROM memories WHERE pointer_id = $1`, [result.id]);
       if (memRes.rows.length > 0) {
         const r = memRes.rows[0];
         let content = r.content || '';
@@ -293,7 +294,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
             content = '';
           }
         }
-        
+
         const estimate = Math.ceil(content.length / 4);
         if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
         retrievedMemories.push({
