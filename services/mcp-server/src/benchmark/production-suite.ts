@@ -18,6 +18,7 @@
  *   pnpm --filter @memron/mcp-server tsx src/benchmark/production-suite.ts
  */
 
+import 'dotenv/config';
 import { query, testConnection } from '../db/client.js';
 import { encrypt, decrypt } from '../lib/encryption.js';
 import { generatePointerId, estimateTokens } from '../lib/pointer.js';
