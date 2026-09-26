@@ -161,13 +161,6 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_memories_title_search ON memories USING GIN(to_tsvector('english', title))`,
 
-  // Add BM25 search column and index
-  `DO $$ BEGIN
-     ALTER TABLE memories ADD COLUMN IF NOT EXISTS search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', title || ' ' || COALESCE(tags::text, '') || ' ' || COALESCE(bucket, ''))) STORED;
-   EXCEPTION WHEN duplicate_column THEN NULL;
-   END $$`,
-  `CREATE INDEX IF NOT EXISTS idx_memories_bm25 ON memories USING GIN(search_tsv)`,
-
   // Dashboard triage lifecycle fields. Keep these as first-class columns so
   // filtering and decay jobs do not need to parse metadata JSONB.
   `DO $$ BEGIN
