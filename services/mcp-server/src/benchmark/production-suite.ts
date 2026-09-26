@@ -32,7 +32,7 @@ import {
   updateAtomicMemory,
 } from '../db/queries-analysis.js';
 
-const TEST_USER_ID = 999996;
+const TEST_USER_ID = 1; // Use existing user ID
 const TEST_ENCRYPTION_SECRET = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 // ============================================================================

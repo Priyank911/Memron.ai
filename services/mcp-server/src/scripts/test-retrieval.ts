@@ -10,6 +10,7 @@
  *   pnpm --filter @memron/mcp-server tsx src/scripts/test-retrieval.ts
  */
 
+import 'dotenv/config';
 import { query, testConnection } from '../db/client.js';
 import { encrypt, decrypt } from '../lib/encryption.js';
 import { generatePointerId, estimateTokens } from '../lib/pointer.js';
@@ -17,7 +18,7 @@ import { generateEmbedding, buildEmbeddingInput, toPgVector } from '../lib/embed
 import { insertMemory, searchMemoriesByVector } from '../db/queries.js';
 import { hybridRetrieve } from '../retrieval/hybrid-retrieval.js';
 
-const TEST_USER_ID = 999999;
+const TEST_USER_ID = 1; // Use existing user ID
 const TEST_ENCRYPTION_SECRET = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 async function setupTestEnvironment() {

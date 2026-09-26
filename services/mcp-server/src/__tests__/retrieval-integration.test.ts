@@ -13,6 +13,7 @@
  * Run with: pnpm test:integration
  */
 
+import 'dotenv/config';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 // Test configuration
