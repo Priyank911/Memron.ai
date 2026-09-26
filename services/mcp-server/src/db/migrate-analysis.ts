@@ -8,7 +8,7 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import pg from 'pg';
+import * as pg from 'pg';
 import 'dotenv/config';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

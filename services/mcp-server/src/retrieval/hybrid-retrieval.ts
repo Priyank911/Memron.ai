@@ -89,7 +89,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         userId: options.userId,
         embedding: options.embedding,
         limit: topK * 2,
-      }).then(rows => rows.map(r => ({ id: r.pointer_id, score: r.similarity }))),
+      }).then(rows => rows.map(r => ({ id: r.pointer_id, score: r.similarity })))
+        .catch(() => []), // Handle case where embedding column doesn't exist yet
     ]).then(([atomic, memories]) => [...atomic, ...memories])
       .catch(() => []);
   }

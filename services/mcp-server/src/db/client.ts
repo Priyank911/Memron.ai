@@ -8,7 +8,7 @@
  * - Pool health monitoring
  * - Slow query detection with smart thresholds
  */
-import pg from 'pg';
+import * as pg from 'pg';
 import { config } from '../config.js';
 
 const { Pool } = pg;

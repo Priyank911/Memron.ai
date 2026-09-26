@@ -150,9 +150,9 @@ export function registerMemoryTools(server: McpServer): void {
   // ─── memory.search ─────────────────────────────────────────
   server.tool(
     'memory_search',
-    'Search across stored memories by query text, bucket, or tags. Returns matching memories with metadata (not decrypted content).',
+    'Search across stored memories using hybrid retrieval (vector + BM25 + graph + recency). Returns matching memories with relevance scores and metadata (not decrypted content). Use this to find relevant memories by semantic meaning, not just keyword matching.',
     {
-      query: z.string().max(500).optional().describe('Search query text (matches against titles and tags)'),
+      query: z.string().max(500).optional().describe('Search query text (uses semantic search)'),
       bucket: z.enum(VALID_BUCKETS as unknown as [string, ...string[]]).optional().describe('Filter by bucket'),
       tags: z.array(z.string()).optional().describe('Filter by tags (matches any)'),
       limit: z.number().min(1).max(50).optional().describe('Max results (default 20)'),
@@ -160,23 +160,77 @@ export function registerMemoryTools(server: McpServer): void {
     async (args, extra) => {
       try {
         const userId = getUserId(extra.authInfo);
+        const limit = args.limit ?? 20;
 
-        const memories = await db.searchMemories({
+        // If no query provided, fall back to basic filtering
+        if (!args.query) {
+          const memories = await db.searchMemories({
+            userId,
+            bucket: args.bucket,
+            tags: args.tags,
+            limit,
+          });
+
+          const results = memories.map((m) => ({
+            pointerId: m.pointer_id,
+            title: m.title,
+            bucket: m.bucket,
+            tags: m.tags,
+            originalTokens: m.original_tokens,
+            relevance: 1.0, // Default relevance when no query
+            createdAt: m.created_at,
+            updatedAt: m.updated_at,
+          }));
+
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                count: results.length,
+                results,
+                searchType: 'filter',
+              }, null, 2),
+            }],
+          };
+        }
+
+        // Use hybrid retrieval for semantic search
+        const { hybridRetrieve } = await import('../retrieval/hybrid-retrieval.js');
+        const { generateEmbedding, buildEmbeddingInput } = await import('../lib/embeddings.js');
+
+        // Generate embedding for the query
+        const embeddingInput = buildEmbeddingInput(args.query, [], args.query);
+        const embedding = await generateEmbedding(embeddingInput);
+
+        const retrievalResult = await hybridRetrieve({
           userId,
-          queryText: args.query,
-          bucket: args.bucket,
-          tags: args.tags,
-          limit: args.limit ?? 20,
+          query: args.query,
+          embedding: embedding || undefined,
+          topK: limit * 2, // Fetch extra for filtering
+          tokenBudget: 10000, // High budget for search results
         });
 
-        const results = memories.map((m) => ({
-          pointerId: m.pointer_id,
+        // Filter by bucket/tags if specified
+        let filteredMemories = retrievalResult.memories;
+        if (args.bucket) {
+          filteredMemories = filteredMemories.filter(m => m.bucket === args.bucket);
+        }
+        if (args.tags && args.tags.length > 0) {
+          filteredMemories = filteredMemories.filter(m =>
+            m.tags && args.tags!.some(tag => m.tags!.includes(tag))
+          );
+        }
+
+        const results = filteredMemories.slice(0, limit).map((m) => ({
+          pointerId: m.id,
           title: m.title,
           bucket: m.bucket,
           tags: m.tags,
-          originalTokens: m.original_tokens,
-          createdAt: m.created_at,
-          updatedAt: m.updated_at,
+          originalTokens: estimateTokens(m.content),
+          relevance: Math.round(m.fusedScore * 100) / 100,
+          signals: m.signals,
+          source: m.source,
+          createdAt: m.createdAt,
         }));
 
         return {
@@ -185,6 +239,10 @@ export function registerMemoryTools(server: McpServer): void {
             text: JSON.stringify({
               count: results.length,
               results,
+              searchType: 'hybrid',
+              signalsUsed: retrievalResult.signalsUsed,
+              totalCandidates: retrievalResult.totalCandidates,
+              retrievalTimeMs: retrievalResult.retrievalTimeMs,
             }, null, 2),
           }],
         };

@@ -7,6 +7,12 @@
  *
  * This is the "anti-needle-in-haystack" feature — surgical precision
  * context injection instead of full history replay.
+ *
+ * Now uses hybrid retrieval (vector + BM25 + graph + recency) for
+ * semantic search instead of simple recency-based fetching.
+ *
+ * Enhanced with adaptive token budgeting and memory compression
+ * for maximum efficiency.
  */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -15,34 +21,20 @@ import { decrypt } from '../lib/encryption.js';
 import { estimateTokens, VALID_BUCKETS } from '../lib/pointer.js';
 import { formatToolError } from '../lib/errors.js';
 import { config } from '../config.js';
+import { generateEmbedding, buildEmbeddingInput } from '../lib/embeddings.js';
+import { hybridRetrieve, type HybridRetrievalOptions } from '../retrieval/hybrid-retrieval.js';
+import {
+  calculateQueryComplexity,
+  calculateAdaptiveBudget,
+  prioritizeMemories,
+  type MemoryWithTokens,
+} from '../lib/token-optimizer.js';
 import * as db from '../db/queries.js';
 
 function getUserId(authInfo?: AuthInfo): number {
   const uid = authInfo?.extra?.userId;
   if (!uid || typeof uid !== 'number') throw new Error('Authentication required');
   return uid;
-}
-
-/**
- * Simple relevance scoring based on keyword overlap between query and content.
- * Returns a score between 0 and 1.
- */
-function scoreRelevance(query: string, title: string, tags: string[]): number {
-  const queryWords = new Set(
-    query.toLowerCase().split(/\s+/).filter((w) => w.length > 2),
-  );
-  if (queryWords.size === 0) return 0.5; // No query = neutral relevance
-
-  let matches = 0;
-  const titleLower = title.toLowerCase();
-  const tagString = tags.join(' ').toLowerCase();
-
-  for (const word of queryWords) {
-    if (titleLower.includes(word)) matches += 2;
-    if (tagString.includes(word)) matches += 1;
-  }
-
-  return Math.min(1, matches / (queryWords.size * 2));
 }
 
 /**
@@ -53,7 +45,7 @@ export function registerContextTools(server: McpServer): void {
   // ─── context.build ─────────────────────────────────────────
   server.tool(
     'context_build',
-    'Build an optimized context injection from your stored memories. Finds relevant memories matching your query, decrypts them, ranks by relevance, and assembles a context window within your token budget. Use this instead of replaying full conversation history.',
+    'Build an optimized context injection from your stored memories. Uses hybrid retrieval (vector + BM25 + graph + recency) to find semantically relevant memories, decrypts them, and assembles a context window within your token budget. This is the surgical precision alternative to replaying full conversation history.',
     {
       query: z.string().min(1).max(1000).describe('What context do you need? Describe what you\'re looking for.'),
       tokenBudget: z.number().min(100).max(32000).optional().describe('Maximum tokens for the context window (default: 4000)'),
@@ -63,17 +55,35 @@ export function registerContextTools(server: McpServer): void {
     async (args, extra) => {
       try {
         const userId = getUserId(extra.authInfo);
-        const tokenBudget = args.tokenBudget ?? config.memory.defaultTokenBudget;
+        const baseTokenBudget = args.tokenBudget ?? config.memory.defaultTokenBudget;
         const maxMemories = args.maxMemories ?? 20;
 
-        // Step 1: Find candidate memories
-        const candidates = await db.getMemoriesForContext({
-          userId,
-          buckets: args.buckets,
-          limit: Math.min(maxMemories * 3, 100), // Fetch extra for ranking
-        });
+        // Step 1: Calculate query complexity for adaptive budgeting
+        const queryComplexity = calculateQueryComplexity(args.query);
+        const adaptiveBudget = calculateAdaptiveBudget(baseTokenBudget, queryComplexity, maxMemories);
 
-        if (candidates.length === 0) {
+        // Step 2: Generate embedding for the query
+        const embeddingInput = buildEmbeddingInput(args.query, [], args.query);
+        const embedding = await generateEmbedding(embeddingInput);
+
+        // Step 3: Use hybrid retrieval to find relevant memories
+        const retrievalOptions: HybridRetrievalOptions = {
+          userId,
+          query: args.query,
+          embedding: embedding || undefined,
+          topK: Math.min(maxMemories * 3, 100), // Fetch extra for filtering
+          tokenBudget: adaptiveBudget.total,
+          signals: {
+            vector: 1.0,    // Semantic similarity
+            bm25: 0.8,      // Keyword matching
+            graph: 0.6,     // Knowledge graph connections
+            recency: 0.4,   // Temporal relevance
+          },
+        };
+
+        const retrievalResult = await hybridRetrieve(retrievalOptions);
+
+        if (retrievalResult.memories.length === 0) {
           return {
             content: [{
               type: 'text',
@@ -81,88 +91,92 @@ export function registerContextTools(server: McpServer): void {
                 context: '',
                 memoriesUsed: 0,
                 tokensUsed: 0,
-                tokenBudget,
-                note: 'No memories found matching your criteria.',
+                tokenBudget: baseTokenBudget,
+                adaptiveBudget: adaptiveBudget.total,
+                queryComplexity: queryComplexity.toFixed(2),
+                note: 'No memories found matching your query.',
+                signalsUsed: retrievalResult.signalsUsed,
+                retrievalTimeMs: retrievalResult.retrievalTimeMs,
               }, null, 2),
             }],
           };
         }
 
-        // Step 2: Score relevance and sort
-        const scored = candidates.map((mem) => ({
-          memory: mem,
-          score: scoreRelevance(args.query, mem.title, mem.tags),
+        // Step 4: Convert to MemoryWithTokens format for optimization
+        const memoriesWithTokens: MemoryWithTokens[] = retrievalResult.memories.map(mem => ({
+          content: mem.content,
+          tokens: estimateTokens(mem.content),
+          priority: mem.fusedScore,
+          metadata: {
+            memoryType: mem.memoryType,
+            confidence: mem.confidence,
+          },
         }));
 
-        scored.sort((a, b) => b.score - a.score);
+        // Step 5: Filter by buckets if specified
+        let filteredMemories = memoriesWithTokens;
+        if (args.buckets && args.buckets.length > 0) {
+          const filteredRetrieval = retrievalResult.memories.filter(m =>
+            m.bucket && args.buckets!.includes(m.bucket as any)
+          );
+          filteredMemories = filteredRetrieval.map(mem => ({
+            content: mem.content,
+            tokens: estimateTokens(mem.content),
+            priority: mem.fusedScore,
+            metadata: {
+              memoryType: mem.memoryType,
+              confidence: mem.confidence,
+            },
+          }));
+        }
 
-        // Step 3: Decrypt and fill context window up to budget
+        // Step 6: Prioritize and select memories within adaptive budget
+        const selectedMemories = prioritizeMemories(filteredMemories, adaptiveBudget.total);
+
+        // Step 7: Assemble the context with optimized selection
         const contextSlices: Array<{
-          pointerId: string;
-          bucket: string;
-          title: string;
+          id: string;
+          source: string;
+          bucket?: string;
+          title?: string;
           content: string;
           tokens: number;
           relevance: number;
+          signals: Record<string, number>;
         }> = [];
 
         let tokensUsed = 0;
 
-        for (const { memory, score } of scored) {
+        // Map back to original retrieval results for metadata
+        const selectedIds = new Set(selectedMemories.map(m => m.content));
+        for (const memory of retrievalResult.memories) {
+          if (!selectedIds.has(memory.content)) continue;
           if (contextSlices.length >= maxMemories) break;
-          if (tokensUsed >= tokenBudget) break;
 
-          try {
-            // Decrypt the memory content
-            const content = decrypt({
-              encrypted: memory.content_encrypted,
-              iv: memory.content_iv,
-              tag: memory.content_tag,
-            });
+          const selectedMem = selectedMemories.find(m => m.content === memory.content);
+          if (!selectedMem) continue;
 
-            const contentTokens = estimateTokens(content);
-
-            // Check if it fits in the budget
-            if (tokensUsed + contentTokens > tokenBudget) {
-              // Try to fit a truncated version
-              const remainingTokens = tokenBudget - tokensUsed;
-              if (remainingTokens < 50) break; // Too small to be useful
-
-              const truncatedContent = content.slice(0, remainingTokens * 4) + '...';
-              const truncatedTokens = estimateTokens(truncatedContent);
-
-              contextSlices.push({
-                pointerId: memory.pointer_id,
-                bucket: memory.bucket,
-                title: memory.title,
-                content: truncatedContent,
-                tokens: truncatedTokens,
-                relevance: Math.round(score * 100) / 100,
-              });
-              tokensUsed += truncatedTokens;
-              break;
-            }
-
-            contextSlices.push({
-              pointerId: memory.pointer_id,
-              bucket: memory.bucket,
-              title: memory.title,
-              content,
-              tokens: contentTokens,
-              relevance: Math.round(score * 100) / 100,
-            });
-            tokensUsed += contentTokens;
-          } catch {
-            // Skip memories that fail to decrypt
-            continue;
-          }
+          contextSlices.push({
+            id: memory.id,
+            source: memory.source,
+            bucket: memory.bucket,
+            title: memory.title,
+            content: selectedMem.content, // Use potentially truncated version
+            tokens: selectedMem.tokens,
+            relevance: Math.round(memory.fusedScore * 100) / 100,
+            signals: memory.signals,
+          });
+          tokensUsed += selectedMem.tokens;
         }
 
-        // Step 4: Assemble the context
+        // Step 8: Assemble the context
         const assembledContext = contextSlices
-          .map((slice) =>
-            `--- [${slice.bucket}] ${slice.title} (${slice.pointerId}) ---\n${slice.content}`,
-          )
+          .map((slice) => {
+            const header = slice.title
+              ? `--- [${slice.bucket || 'memory'}] ${slice.title} (${slice.id}) ---`
+              : `--- [${slice.source}] ${slice.id} ---`;
+            return `${header}\n${slice.content}`;
+          })
           .join('\n\n');
 
         return {
@@ -172,7 +186,12 @@ export function registerContextTools(server: McpServer): void {
               context: assembledContext,
               memoriesUsed: contextSlices.length,
               tokensUsed,
-              tokenBudget,
+              tokenBudget: baseTokenBudget,
+              adaptiveBudget: adaptiveBudget.total,
+              queryComplexity: queryComplexity.toFixed(2),
+              totalCandidates: retrievalResult.totalCandidates,
+              signalsUsed: retrievalResult.signalsUsed,
+              retrievalTimeMs: retrievalResult.retrievalTimeMs,
               slices: contextSlices.map(({ content, ...meta }) => meta), // Metadata only in summary
             }, null, 2),
           }],

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import pg from 'pg';
+import * as pg from 'pg';
 
 const email = process.argv[2]?.trim().toLowerCase();
 if (!email) throw new Error('Usage: npm run db:resolve-user -- email@example.com');

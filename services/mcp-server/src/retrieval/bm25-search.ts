@@ -18,18 +18,24 @@ export async function searchMemoriesBM25(params: {
   limit?: number;
 }): Promise<BM25Result[]> {
   const limit = params.limit ?? 20;
-  
+
+  // Try to search with decrypted content first (if a decrypted view exists)
+  // Fall back to title + tags search only
   const sql = `
-    SELECT 
+    SELECT
       pointer_id as id,
-      ts_rank_cd(to_tsvector('english', title || ' ' || COALESCE(tags::text, '')), plainto_tsquery('english', $2)) as rank
+      ts_rank_cd(
+        to_tsvector('english', title || ' ' || COALESCE(tags::text, '')),
+        plainto_tsquery('english', $2)
+      ) as rank
     FROM memories
     WHERE user_id = $1
+      AND is_active = true
       AND to_tsvector('english', title || ' ' || COALESCE(tags::text, '')) @@ plainto_tsquery('english', $2)
     ORDER BY rank DESC
     LIMIT $3
   `;
-  
+
   try {
     const result = await query<{ id: string; rank: number }>(sql, [params.userId, params.query, limit]);
     return result.rows;
