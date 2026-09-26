@@ -22,7 +22,7 @@
  */
 import { query } from './client.js';
 
-export const EXPECTED_SCHEMA_VERSION = 8;
+export const EXPECTED_SCHEMA_VERSION = 9;
 
 const MIGRATIONS = [
   // A single explicit gate makes schema drift visible instead of allowing a
@@ -956,13 +956,23 @@ const MIGRATIONS = [
    END $$`,
 
   // ─── BM25 Full-Text Search ─────────────────────────────────
+  // memories table: search_tsv for full-text search on title + tags (content is encrypted)
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (
+       to_tsvector('english', coalesce(title, '') || ' ' || coalesce(array_to_string(tags, ' '), ''))
+     ) STORED;
+   EXCEPTION WHEN duplicate_column THEN NULL;
+   END $$`,
+
+  `CREATE INDEX IF NOT EXISTS idx_memories_search_tsv ON memories USING GIN (search_tsv)`,
+
+  // atomic_memories table: content_tsv
   `DO $$ BEGIN
      ALTER TABLE atomic_memories ADD COLUMN content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
    EXCEPTION WHEN duplicate_column THEN NULL;
    END $$`,
 
-  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_content_tsv ON atomic_memories USING GIN (content_tsv)`
-  ,
+  `CREATE INDEX IF NOT EXISTS idx_atomic_memories_content_tsv ON atomic_memories USING GIN (content_tsv)`,
 
   // Durable analysis queue. Postgres keeps the queue on the same reliability
   // boundary as the memory write, and SKIP LOCKED allows multiple workers.

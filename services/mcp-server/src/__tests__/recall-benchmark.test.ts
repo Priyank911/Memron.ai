@@ -25,25 +25,69 @@ const isLive = !!LIVE_URL && !!LIVE_KEY;
 
 // ─── Live server helpers ────────────────────────────────────
 
-async function mcpCall(method: string, params: Record<string, unknown>) {
+let _mcpSessionId: string | undefined;
+
+async function mcpRaw(method: string, params: Record<string, unknown> = {}) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream',
+    'Authorization': `Bearer ${LIVE_KEY}`,
+  };
+  if (_mcpSessionId) headers['Mcp-Session-Id'] = _mcpSessionId;
+
   const res = await fetch(`${LIVE_URL}/mcp`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'Authorization': `Bearer ${LIVE_KEY}`,
-    },
+    headers,
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: Date.now(),
-      method: 'tools/call',
-      params: { name: method, arguments: params },
+      method,
+      params,
     }),
   });
-  const json = await res.json() as { result?: { content?: { text: string }[] }; error?: unknown };
+
+  // Capture session ID from response headers
+  const sessionId = res.headers.get('mcp-session-id');
+  if (sessionId) _mcpSessionId = sessionId;
+
+  const text = await res.text();
+  // MCP Streamable HTTP returns SSE: "event: message\ndata: {...}"
+  const dataLine = text.split('\n').find(l => l.startsWith('data: '));
+  const jsonStr = dataLine ? dataLine.slice(6) : text;
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    // If it's a plain text error from the server, wrap it
+    throw new Error(`MCP raw response: ${text.slice(0, 500)}`);
+  }
+}
+
+async function mcpInit() {
+  const initRes = await mcpRaw('initialize', {
+    protocolVersion: '2025-03-26',
+    capabilities: {},
+    clientInfo: { name: 'recall-benchmark', version: '1.0.0' },
+  });
+  if (initRes.error) throw new Error(`Init failed: ${JSON.stringify(initRes.error)}`);
+
+  // Send initialized notification
+  await fetch(`${LIVE_URL}/mcp`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'Authorization': `Bearer ${LIVE_KEY}`,
+      ...(_mcpSessionId ? { 'Mcp-Session-Id': _mcpSessionId } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+  });
+}
+
+async function mcpCall(tool: string, args: Record<string, unknown>) {
+  const json = await mcpRaw('tools/call', { name: tool, arguments: args });
   if (json.error) throw new Error(JSON.stringify(json.error));
-  const text = json.result?.content?.[0]?.text ?? '{}';
-  return JSON.parse(text);
+  const resultText = json.result?.content?.[0]?.text ?? '{}';
+  return JSON.parse(resultText);
 }
 
 async function storeFact(content: string, opts: { type?: string; tags?: string[]; bucket?: string } = {}) {
@@ -52,7 +96,7 @@ async function storeFact(content: string, opts: { type?: string; tags?: string[]
     type: opts.type || 'fact',
     tags: opts.tags || [],
     bucket: opts.bucket || 'knowledge',
-    source: 'benchmark',
+    source: 'cli',
   });
 }
 
@@ -78,6 +122,11 @@ function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 describe.skipIf(!isLive)('Memron Recall Accuracy Benchmark', () => {
   // Track stored pointer IDs for cleanup
   const stored: string[] = [];
+
+  beforeAll(async () => {
+    if (!isLive) return;
+    await mcpInit();
+  }, 30_000);
 
   afterAll(async () => {
     if (!isLive) return;
