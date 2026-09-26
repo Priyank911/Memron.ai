@@ -21,10 +21,10 @@ export interface RRFResult {
 }
 
 export const DEFAULT_SIGNAL_WEIGHTS = {
-  vector: 2.0,  // Increased - semantic similarity is most important
-  bm25: 1.5,    // Increased - keyword matching crucial for exact terms
-  graph: 0.8,   // Decreased - graph can add noise for simple queries
-  recency: 0.4,  // Decreased - time less important than semantic match
+  vector: 3.0,   // Semantic similarity is the primary signal — it understands meaning, not just keywords
+  bm25: 0.8,     // Reduced — keyword overlap causes false positives (e.g. "key" matching unrelated docs)
+  graph: 1.0,    // Moderate — graph adds useful context when entities are recognized
+  recency: 0.4,  // Low — time decay is supplementary, not primary
 };
 
 /**
@@ -71,8 +71,15 @@ export function fuseWithRRF(
     });
   }
 
-  // Convert map to array and sort by fused score descending
+  // Convert map to array, filter noise, and sort by fused score descending.
+  // Minimum threshold: a result must earn at least 1% of the max possible
+  // single-signal score to be included. This eliminates padding results that
+  // add noise without relevance.
+  const maxSingleSignal = Math.max(...signals.map(s => s.weight / (k + 1)), 0.01);
+  const minScore = maxSingleSignal * 0.15;
+
   const fusedResults = Array.from(documentScores.values())
+    .filter(r => r.fusedScore >= minScore)
     .sort((a, b) => b.fusedScore - a.fusedScore)
     .slice(0, topK);
 

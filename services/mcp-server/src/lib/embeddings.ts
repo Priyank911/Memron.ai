@@ -198,14 +198,13 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
           console.error('[Embeddings] OpenAI rejected the request because the account has no API credits. Semantic indexing paused for 5 minutes; keyword and graph extraction remain available.');
         }
       } else if (isRateLimitFailure) {
-        // Stop sending more requests for a short window after a provider
-        // throttle. Memory writes continue without vectors and hybrid search
-        // falls back to keyword/graph signals until the window expires.
-        _failures = CIRCUIT_THRESHOLD;
+        // Rate limit: brief cooldown instead of full circuit breaker.
+        // A single 429 should not block embeddings for 60 seconds.
+        _failures = Math.min(_failures + 1, CIRCUIT_THRESHOLD - 1);
         _lastFail = Date.now();
         if (!_loggedDisabled) {
           _loggedDisabled = true;
-          console.warn('[Embeddings] OpenRouter rate limit reached. Semantic indexing paused for 60 seconds; memory writes remain available.');
+          console.warn('[Embeddings] Rate limit hit — brief cooldown before retry');
         }
       } else {
         console.warn(`[Embeddings] ${provider.name} error ${res.status}: ${errBody.slice(0, 200)}`);

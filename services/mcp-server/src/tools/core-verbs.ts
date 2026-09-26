@@ -106,13 +106,20 @@ export function registerCoreVerbs(server: McpServer): void {
         // The background worker still handles graph extraction and can
         // re-generate if the synchronous call failed (e.g. circuit breaker open).
         let embeddingStr: string | undefined;
-        try {
-          const emb = await generateEmbedding(buildEmbeddingInput(title, args.tags || [], content));
-          if (emb) {
-            embeddingStr = toPgVector(emb);
-          }
-        } catch {
-          // Non-fatal: graph extraction still runs, keyword search remains available
+        const embInput = buildEmbeddingInput(title, args.tags || [], content);
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const emb = await generateEmbedding(embInput);
+            if (emb) {
+              embeddingStr = toPgVector(emb);
+              break;
+            }
+          } catch { /* non-fatal */ }
+          // Brief delay before retry to let rate-limit windows or circuit breaker recover
+          if (attempt < 2) await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+        }
+        if (!embeddingStr) {
+          console.warn(JSON.stringify({ event: 'sync_embedding_failed', pointerId, title: title.slice(0, 80), attempts: 3 }));
         }
 
         const memory = await db.insertMemory({
