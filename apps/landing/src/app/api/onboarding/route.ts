@@ -52,8 +52,9 @@ export async function POST(request: NextRequest) {
         if (!dbUser && session.email) {
             const provider = isOAuthProvider(session.provider) ? (session.provider as string) : 'email';
 
-            // Try syncing with retry logic (2 attempts)
-            for (let attempt = 1; attempt <= 2; attempt++) {
+            // Try syncing with retry logic (3 attempts with backoff — a
+            // saturated pooler frees up within seconds as instances drain)
+            for (let attempt = 1; attempt <= 3; attempt++) {
                 const syncResult = await syncUser({
                     workosUserId: userId,
                     email: session.email,
@@ -68,10 +69,10 @@ export async function POST(request: NextRequest) {
                     break;
                 }
                 
-                // If first attempt fails, wait 1s before retry
-                if (attempt === 1) {
-                    console.log('[Onboarding API] First sync attempt failed, retrying in 1s...');
-                    await new Promise(r => setTimeout(r, 1000));
+                // Backoff before retry (1s, then 2s)
+                if (attempt < 3) {
+                    console.log(`[Onboarding API] Sync attempt ${attempt} failed, retrying...`);
+                    await new Promise(r => setTimeout(r, 1000 * attempt));
                 }
             }
             

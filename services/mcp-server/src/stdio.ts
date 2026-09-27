@@ -22,14 +22,14 @@
 import 'dotenv/config';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { testConnection, warmPool, close as closeDb } from './db/client.js';
+import { waitForDatabase, warmPool, close as closeDb } from './db/client.js';
 import { runMigrations } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { createMcpServer } from './mcp.js';
 
 async function main() {
   // Validate environment
-  const dbOk = await testConnection();
+  const dbOk = await waitForDatabase();
   if (!dbOk) {
     console.error('[FATAL] Cannot connect to PostgreSQL. Check PG_* environment variables.');
     process.exit(1);

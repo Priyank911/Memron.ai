@@ -37,7 +37,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { config } from './config.js';
-import { testConnection, warmPool, close as closeDb, query as dbQuery, getPoolStats, logPoolStats } from './db/client.js';
+import { testConnection, waitForDatabase, warmPool, close as closeDb, query as dbQuery, getPoolStats, logPoolStats } from './db/client.js';
 import { runMigrations, EXPECTED_SCHEMA_VERSION } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
@@ -983,7 +983,10 @@ async function verifyIndexes(): Promise<void> {
 
 async function main() {
 
-  const dbOk = await testConnection();
+  // Retry with backoff: a saturated pooler (deploy overlap, traffic burst)
+  // frees up within seconds as old instances drain. Crash-looping on the
+  // first refusal turns a 10-second blip into a full outage.
+  const dbOk = await waitForDatabase();
   if (!dbOk) {
     console.error('[FATAL] Cannot connect to PostgreSQL. Check PG_* environment variables.');
     process.exit(1);

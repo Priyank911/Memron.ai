@@ -32,6 +32,16 @@ export const pool = new Pool({
   keepAliveInitialDelayMillis: 10000,
 });
 
+// Production guard: session poolers (Supabase/Aiven free tiers) cap total
+// clients around 15 across ALL processes. One oversized pool can starve
+// every other service into EMAXCONNSESSION crash loops.
+if (config.db.maxConnections > 10) {
+  console.warn(
+    `[DB] WARNING: pool max (${config.db.maxConnections}) exceeds the safe ceiling ` +
+    `for a shared 15-client pooler. Lower PG_MAX_CONNECTIONS to ≤4 per process.`
+  );
+}
+
 // Pool stats for monitoring
 let totalQueries = 0;
 let failedQueries = 0;
@@ -170,7 +180,14 @@ function isRetryableError(error: Error): boolean {
     message.includes('econnreset') ||
     message.includes('econnrefused') ||
     message.includes('socket') ||
-    message.includes('network')
+    message.includes('network') ||
+    // Pooler saturation (Supabase session pooler EMAXCONNSESSION, Postgres
+    // "too many clients"). Transient: old instances drain within seconds,
+    // so backing off and retrying is correct — failing fast is not.
+    message.includes('max clients') ||
+    message.includes('emaxconnsession') ||
+    message.includes('too many clients') ||
+    message.includes('remaining connection slots')
   );
 }
 
@@ -221,6 +238,54 @@ export async function testConnection(): Promise<boolean> {
     console.error('[DB] Connection test failed:', msg);
     return false;
   }
+}
+
+/** Error kinds that mean "config is wrong" — retrying will never help. */
+function isFatalConfigError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('password authentication failed') ||
+    m.includes('role') && m.includes('does not exist') ||
+    m.includes('database') && m.includes('does not exist') ||
+    m.includes('postgreSQL not configured'.toLowerCase())
+  );
+}
+
+/**
+ * Wait for the database to become reachable, retrying with exponential
+ * backoff. Survives transient pooler saturation (EMAXCONNSESSION during
+ * zero-downtime deploy overlap or traffic bursts) without crash-looping,
+ * but fails fast on wrong credentials / missing database.
+ *
+ * Default: 8 attempts over ~2.5 minutes (2s, 4s, 8s, 16s, 30s, 30s, 30s).
+ */
+export async function waitForDatabase(options?: {
+  attempts?: number;
+  baseDelayMs?: number;
+}): Promise<boolean> {
+  const attempts = options?.attempts ?? 8;
+  const base = options?.baseDelayMs ?? 2000;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await pool.query('SELECT 1');
+      if (i > 1) console.log(`[DB] Connected on attempt ${i}/${attempts}`);
+      return true;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown';
+      if (isFatalConfigError(msg)) {
+        console.error('[DB] Connection failed (configuration error, not retrying):', msg);
+        return false;
+      }
+      if (i >= attempts) {
+        console.error(`[DB] Connection failed after ${attempts} attempts:`, msg);
+        return false;
+      }
+      const delay = Math.min(30_000, base * 2 ** (i - 1));
+      console.warn(`[DB] Connection attempt ${i}/${attempts} failed (${msg}) — retrying in ${delay}ms`);
+      await sleep(delay);
+    }
+  }
+  return false;
 }
 
 /**
