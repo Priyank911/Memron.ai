@@ -193,7 +193,22 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
       console.warn(JSON.stringify({ event: 'graph_signal_failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
       return [];
     }
-  })();
+  })().then((hits) => {
+    // Dedupe: the same memory can be reached via many entities/relationships.
+    // RRF sums a score per occurrence, so duplicates multiply a doc's weight
+    // (300 raw hits buried 2 true vector matches in the live trace). Keep the
+    // first (= strongest, evidence ordered by strength DESC) occurrence only,
+    // and cap the signal's contribution.
+    const seen = new Set<string>();
+    const deduped: { id: string; score: number }[] = [];
+    for (const h of hits) {
+      if (seen.has(h.id)) continue;
+      seen.add(h.id);
+      deduped.push(h);
+      if (deduped.length >= topK * 2) break;
+    }
+    return deduped;
+  });
 
   // 4. Recency Decay Signal
   signalsUsed.push('recency');

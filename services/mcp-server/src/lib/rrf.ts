@@ -53,10 +53,14 @@ export function fuseWithRRF(
     });
 
     sortedResults.forEach((result, index) => {
+      // Defense in depth: a document has exactly one rank per retrieval
+      // system. If a signal emits the same id twice, the first (best-ranked)
+      // occurrence wins; extras must not multiply its score.
+      let doc = documentScores.get(result.id);
+      if (doc && doc.signals[signal.name] !== undefined) return;
       const rank = index + 1; // 1-based rank
       const rrfScore = signal.weight / (k + rank);
 
-      let doc = documentScores.get(result.id);
       if (!doc) {
         doc = {
           id: result.id,
