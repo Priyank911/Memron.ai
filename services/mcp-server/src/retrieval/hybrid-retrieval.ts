@@ -29,6 +29,7 @@ export interface HybridRetrievalOptions {
   tokenBudget?: number;   // default 2000
   minVectorSimilarity?: number; // default 0.5 — cosine floor; neighbors below
                                 // this never enter RRF (abstention support)
+  traceId?: string;       // pipeline-eye: correlates every log line of one recall
   signals?: {             // override default signal weights
     vector?: number;
     bm25?: number;
@@ -54,10 +55,16 @@ export interface RetrievedMemory {
   createdAt: Date;
 }
 
+export interface SignalStat {
+  hits: number;
+  ms: number;
+}
+
 export interface HybridRetrievalResult {
   memories: RetrievedMemory[];
   totalCandidates: number;
   signalsUsed: string[];
+  signalStats: Record<string, SignalStat>;
   retrievalTimeMs: number;
   tokenEstimate: number;
 }
@@ -224,10 +231,21 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     }
   })();
 
-  // Run in parallel
-  const [vectorHits, bm25Hits, graphHits, recencyHits] = await Promise.all([
-    vectorPromise, bm25Promise, graphPromise, recencyPromise
-  ]);
+  // Run in parallel — promises start above, so awaiting one by one here
+  // costs no parallelism but yields per-signal latency for the pipeline eye.
+  const signalStats: Record<string, SignalStat> = {};
+  const tVector = performance.now();
+  const vectorHits = await vectorPromise;
+  signalStats.vector = { hits: vectorHits.length, ms: Math.round(performance.now() - tVector) };
+  const tBm25 = performance.now();
+  const bm25Hits = await bm25Promise;
+  signalStats.bm25 = { hits: bm25Hits.length, ms: Math.round(performance.now() - tBm25) };
+  const tGraph = performance.now();
+  const graphHits = await graphPromise;
+  signalStats.graph = { hits: graphHits.length, ms: Math.round(performance.now() - tGraph) };
+  const tRecency = performance.now();
+  const recencyHits = await recencyPromise;
+  signalStats.recency = { hits: recencyHits.length, ms: Math.round(performance.now() - tRecency) };
 
   if (vectorHits.length) signalResults.push({ name: 'vector', weight: weights.vector, results: vectorHits });
   if (bm25Hits.length) signalResults.push({ name: 'bm25', weight: weights.bm25, results: bm25Hits });
@@ -362,11 +380,26 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   }
 
   const endTime = performance.now();
-  
+
+  // Pipeline-eye: one structured line per recall. Grep `recall_trace` in
+  // Render logs to watch any query travel through every stage live:
+  // which signals fired, how many candidates each produced, how long each
+  // took, and how many survived fusion — without touching any data.
+  console.info(JSON.stringify({
+    event: 'recall_trace',
+    traceId: options.traceId || null,
+    query: options.query.slice(0, 120),
+    signals: signalStats,
+    candidates: totalCandidatesSet.size,
+    returned: retrievedMemories.length,
+    totalMs: Math.round(endTime - startTime),
+  }));
+
   return {
     memories: retrievedMemories,
     totalCandidates: totalCandidatesSet.size,
     signalsUsed,
+    signalStats,
     retrievalTimeMs: endTime - startTime,
     tokenEstimate,
   };

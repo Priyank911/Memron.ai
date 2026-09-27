@@ -111,6 +111,32 @@ function circuitOpen(): boolean {
   return true;
 }
 
+/**
+ * Read-only snapshot of embedding health for the pipeline eye
+ * (system_diagnostics tool). No side effects — never trips or resets.
+ */
+export function getEmbeddingHealth(): {
+  configured: boolean;
+  provider: string | null;
+  circuitOpen: boolean;
+  consecutiveFailures: number;
+  cooldownMsRemaining: number;
+  activeSlots: number;
+  queuedSlots: number;
+} {
+  const provider = resolveProvider();
+  const open = _failures >= CIRCUIT_THRESHOLD && Date.now() - _lastFail <= CIRCUIT_RESET_MS;
+  return {
+    configured: provider !== null,
+    provider: provider?.name ?? null,
+    circuitOpen: open,
+    consecutiveFailures: _failures,
+    cooldownMsRemaining: open ? Math.max(0, CIRCUIT_RESET_MS - (Date.now() - _lastFail)) : 0,
+    activeSlots: _active,
+    queuedSlots: _queue.length,
+  };
+}
+
 // ─── Concurrency limiter ────────────────────────────────────
 
 let _active = 0;

@@ -27,6 +27,8 @@ function getUserId(authInfo?: AuthInfo): number {
   return uid;
 }
 
+export { getUserId as getCoreUserId };
+
 function getOrgId(authInfo?: AuthInfo): number | undefined {
   const oid = authInfo?.extra?.orgId;
   return typeof oid === 'number' ? oid : undefined;
@@ -269,6 +271,7 @@ export function registerCoreVerbs(server: McpServer): void {
       limit: z.number().int().min(1).max(50).optional().default(8).describe('Maximum items to return'),
       tokenBudget: z.number().int().min(200).max(10000).optional().default(2000).describe('Token budget for context assembly'),
       format: z.enum(['json', 'xml', 'text']).optional().default('json').describe('Output format'),
+      traceId: z.string().max(64).optional().describe('Optional caller trace ID for pipeline debugging (auto-generated if omitted)'),
     },
     async (args, extra) => {
       try {
@@ -302,12 +305,14 @@ export function registerCoreVerbs(server: McpServer): void {
             : args.mode === 'graph'
               ? { vector: 0, bm25: 0, graph: 1.0, recency: 0 }
               : undefined;
+          const traceId = args.traceId || `tr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
           const hybrid = await hybridRetrieve({
             userId,
             query: args.query,
             embedding: queryEmbedding || undefined,
             topK: args.limit,
             tokenBudget: args.tokenBudget,
+            traceId,
             ...(signalOverride ? { signals: signalOverride } : {}),
           });
           const hybridResults = hybrid.memories
@@ -337,7 +342,9 @@ export function registerCoreVerbs(server: McpServer): void {
               fusedScore: Math.round(item.fusedScore * 10000) / 10000,
             }));
           const diagnostics = {
+            traceId,
             signalsUsed: hybrid.signalsUsed,
+            signalStats: hybrid.signalStats,
             totalCandidates: hybrid.totalCandidates,
             ...(vectorSkipped ? { vectorSkipped } : {}),
             ...(args.tags?.length ? { tagFilter: args.tags } : {}),

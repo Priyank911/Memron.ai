@@ -54,6 +54,7 @@ export async function searchAtomicMemoriesBM25(params: {
         ts_rank_cd(content_tsv, plainto_tsquery('english', $2)) as rank
       FROM atomic_memories
       WHERE user_id = $1
+        AND valid_to IS NULL
         AND content_tsv @@ plainto_tsquery('english', $2)
       ORDER BY rank DESC
       LIMIT $3
@@ -68,6 +69,7 @@ export async function searchAtomicMemoriesBM25(params: {
         ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', $2)) as rank
       FROM atomic_memories
       WHERE user_id = $1
+        AND valid_to IS NULL
         AND to_tsvector('english', content) @@ plainto_tsquery('english', $2)
       ORDER BY rank DESC
       LIMIT $3
