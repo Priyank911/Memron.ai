@@ -301,9 +301,9 @@ export function registerCoreVerbs(server: McpServer): void {
           // 'vector'/'graph' silently fell through to the legacy title-only
           // path, so vector mode could never prove vector search works.
           const signalOverride = args.mode === 'vector'
-            ? { vector: 3.0, bm25: 0, graph: 0, recency: 0 }
+            ? { vector: 3.0, bm25: 0, bm25Atomic: 0, graph: 0, recency: 0 }
             : args.mode === 'graph'
-              ? { vector: 0, bm25: 0, graph: 1.0, recency: 0 }
+              ? { vector: 0, bm25: 0, bm25Atomic: 0, graph: 1.0, recency: 0 }
               : undefined;
           const traceId = args.traceId || `tr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
           const hybrid = await hybridRetrieve({

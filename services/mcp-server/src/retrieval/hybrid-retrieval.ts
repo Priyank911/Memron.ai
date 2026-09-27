@@ -33,6 +33,7 @@ export interface HybridRetrievalOptions {
   signals?: {             // override default signal weights
     vector?: number;
     bm25?: number;
+    bm25Atomic?: number;
     graph?: number;
     recency?: number;
   };
@@ -116,17 +117,27 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
       .then(([atomic, memories]) => [...atomic, ...memories]);
   }
 
-  // 2. BM25 Signal
+  // 2. BM25 Signal — split by table. Curated `memories` keep full keyword
+  // weight; pipeline-distilled `atomic_memories` get a deliberately small
+  // weight so ingested chatter echoes (which match queries verbatim because
+  // they contain past queries) can never outrank — or even reach — results
+  // on keyword overlap alone. They still surface when vector/graph agree.
   signalsUsed.push('bm25');
-  const bm25Promise = Promise.all([
-    searchMemoriesBM25({ userId: options.userId, query: options.query, limit: topK }),
-    searchAtomicMemoriesBM25({ userId: options.userId, query: options.query, limit: topK })
-  ]).then(([memResults, atomicResults]) => {
-    return [...memResults, ...atomicResults].map(r => ({ id: r.id, score: r.rank }));
-  }).catch((e) => {
-    console.warn(JSON.stringify({ event: 'bm25_signal_failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
-    return [] as { id: string; score: number }[];
-  });
+  const bm25Promise = (async () => {
+    try {
+      const [memResults, atomicResults] = await Promise.all([
+        searchMemoriesBM25({ userId: options.userId, query: options.query, limit: topK }),
+        searchAtomicMemoriesBM25({ userId: options.userId, query: options.query, limit: topK }),
+      ]);
+      return {
+        mem: memResults.map(r => ({ id: r.id, score: r.rank })),
+        atomic: atomicResults.map(r => ({ id: r.id, score: r.rank })),
+      };
+    } catch (e) {
+      console.warn(JSON.stringify({ event: 'bm25_signal_failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
+      return { mem: [] as { id: string; score: number }[], atomic: [] as { id: string; score: number }[] };
+    }
+  })();
 
   // 3. Graph Signal
   signalsUsed.push('graph');
@@ -253,7 +264,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const vectorHits = await vectorPromise;
   signalStats.vector = { hits: vectorHits.length, ms: Math.round(performance.now() - tVector) };
   const tBm25 = performance.now();
-  const bm25Hits = await bm25Promise;
+  const bm25Split = await bm25Promise;
+  const bm25Hits = [...bm25Split.mem, ...bm25Split.atomic];
   signalStats.bm25 = { hits: bm25Hits.length, ms: Math.round(performance.now() - tBm25) };
   const tGraph = performance.now();
   const graphHits = await graphPromise;
@@ -263,13 +275,15 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   signalStats.recency = { hits: recencyHits.length, ms: Math.round(performance.now() - tRecency) };
 
   if (vectorHits.length) signalResults.push({ name: 'vector', weight: weights.vector, results: vectorHits });
-  if (bm25Hits.length) signalResults.push({ name: 'bm25', weight: weights.bm25, results: bm25Hits });
+  if (bm25Split.mem.length) signalResults.push({ name: 'bm25', weight: weights.bm25, results: bm25Split.mem });
+  if (bm25Split.atomic.length) signalResults.push({ name: 'bm25_atomic', weight: weights.bm25Atomic, results: bm25Split.atomic });
   if (graphHits.length) signalResults.push({ name: 'graph', weight: weights.graph, results: graphHits });
   if (recencyHits.length) signalResults.push({ name: 'recency', weight: weights.recency, results: recencyHits });
 
   const totalCandidatesSet = new Set<string>();
   vectorHits.forEach(h => totalCandidatesSet.add(h.id));
-  bm25Hits.forEach(h => totalCandidatesSet.add(h.id));
+  bm25Split.mem.forEach(h => totalCandidatesSet.add(h.id));
+  bm25Split.atomic.forEach(h => totalCandidatesSet.add(h.id));
   graphHits.forEach(h => totalCandidatesSet.add(h.id));
   recencyHits.forEach(h => totalCandidatesSet.add(h.id));
 

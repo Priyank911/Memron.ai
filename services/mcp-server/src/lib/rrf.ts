@@ -22,7 +22,11 @@ export interface RRFResult {
 
 export const DEFAULT_SIGNAL_WEIGHTS = {
   vector: 3.0,   // Semantic similarity is the primary signal — it understands meaning, not just keywords
-  bm25: 0.8,     // Reduced — keyword overlap causes false positives (e.g. "key" matching unrelated docs)
+  bm25: 0.8,     // Keyword overlap on curated memories (title/tags/bucket)
+  bm25Atomic: 0.3, // Keyword overlap on pipeline-distilled atomic rows. Deliberately
+                   // below the RRF noise floor on its own (0.3/61 < minScore), so
+                   // ingested chatter can only surface with vector/graph support —
+                   // never on a keyword echo alone. This is the abstention guard.
   graph: 1.0,    // Moderate — graph adds useful context when entities are recognized
   recency: 0.4,  // Low — time decay is supplementary, not primary
 };
