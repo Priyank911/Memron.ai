@@ -27,6 +27,8 @@ export interface HybridRetrievalOptions {
   graphDepth?: number;    // default 2
   activeOnly?: boolean;   // default true (only active temporal edges)
   tokenBudget?: number;   // default 2000
+  minVectorSimilarity?: number; // default 0.5 — cosine floor; neighbors below
+                                // this never enter RRF (abstention support)
   signals?: {             // override default signal weights
     vector?: number;
     bm25?: number;
@@ -65,6 +67,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const topK = options.topK ?? 20;
   const graphDepth = options.graphDepth ?? 2;
   const activeOnly = options.activeOnly ?? true;
+  const minVectorSimilarity = options.minVectorSimilarity ?? 0.5;
   
   const weights = {
     ...DEFAULT_SIGNAL_WEIGHTS,
@@ -85,6 +88,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         userId: options.userId,
         embedding: options.embedding,
         limit: topK * 2,
+        minSimilarity: minVectorSimilarity,
       }).then(rows => rows.map(r => ({ id: r.memory_id, score: r.similarity })))
         .catch((e) => {
           console.warn(JSON.stringify({ event: 'vector_signal_failed', table: 'atomic_memories', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
@@ -94,6 +98,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         userId: options.userId,
         embedding: options.embedding,
         limit: topK * 2,
+        minSimilarity: minVectorSimilarity,
       }).then(rows => rows.map(r => ({ id: r.pointer_id, score: r.similarity })))
         .catch((e) => {
           console.warn(JSON.stringify({ event: 'vector_signal_failed', table: 'memories', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));

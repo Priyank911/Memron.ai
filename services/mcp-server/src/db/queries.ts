@@ -142,6 +142,7 @@ export async function searchMemoriesByVector(params: {
   userId: number;
   embedding: number[];
   limit?: number;
+  minSimilarity?: number;
 }): Promise<(MemoryRow & { similarity: number })[]> {
   const embeddingStr = `[${params.embedding.join(',')}]`;
   const result = await query<MemoryRow & { similarity: number }>(
@@ -152,6 +153,12 @@ export async function searchMemoriesByVector(params: {
      LIMIT $3`,
     [embeddingStr, params.userId, params.limit || 10],
   );
+  // Nearest-neighbor search always returns LIMIT rows even when nothing is
+  // semantically close. Without a floor, junk neighbors enter RRF with full
+  // vector weight and defeat abstention. Mirror the atomic_memories behavior.
+  if (params.minSimilarity) {
+    return result.rows.filter((r) => r.similarity >= params.minSimilarity!);
+  }
   return result.rows;
 }
 

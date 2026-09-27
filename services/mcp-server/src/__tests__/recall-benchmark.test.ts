@@ -15,13 +15,25 @@
  *   RECALL_BENCHMARK_URL=http://localhost:5201 RECALL_BENCHMARK_KEY=mm_live_xxx \
  *     pnpm --filter @memron/mcp-server tsx src/__tests__/recall-benchmark.test.ts
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 
 // ─── Configuration ──────────────────────────────────────────
 
 const LIVE_URL = process.env.RECALL_BENCHMARK_URL;
 const LIVE_KEY = process.env.RECALL_BENCHMARK_KEY;
 const isLive = !!LIVE_URL && !!LIVE_KEY;
+
+// Live Render backend: every MCP call pays ~1.6s+ per DB round-trip through
+// the Supabase pooler (store = sync embedding + insert, recall = 4 parallel
+// signals + hydration). The 10s vitest defaults always time out, so raise
+// the ceiling when running live. Local runs keep the fast defaults.
+if (isLive) {
+  vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
+}
+
+// Normalize the endpoint: accept either the server root
+// (https://host) or the full MCP path (https://host/mcp).
+const MCP_ENDPOINT = (LIVE_URL || '').replace(/\/+$/, '').replace(/\/mcp$/, '') + '/mcp';
 
 // ─── Live server helpers ────────────────────────────────────
 
@@ -35,7 +47,7 @@ async function mcpRaw(method: string, params: Record<string, unknown> = {}) {
   };
   if (_mcpSessionId) headers['Mcp-Session-Id'] = _mcpSessionId;
 
-  const res = await fetch(`${LIVE_URL}/mcp`, {
+  const res = await fetch(MCP_ENDPOINT, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -71,7 +83,7 @@ async function mcpInit() {
   if (initRes.error) throw new Error(`Init failed: ${JSON.stringify(initRes.error)}`);
 
   // Send initialized notification
-  await fetch(`${LIVE_URL}/mcp`, {
+  await fetch(MCP_ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -126,14 +138,14 @@ describe.skipIf(!isLive)('Memron Recall Accuracy Benchmark', () => {
   beforeAll(async () => {
     if (!isLive) return;
     await mcpInit();
-  }, 30_000);
+  }, 120_000);
 
   afterAll(async () => {
     if (!isLive) return;
     for (const pid of stored) {
       try { await manage('delete', pid); } catch { /* cleanup best-effort */ }
     }
-  });
+  }, 120_000);
 
   // ═══════════════════════════════════════════════════════════
   // 1. SINGLE-HOP RECALL
