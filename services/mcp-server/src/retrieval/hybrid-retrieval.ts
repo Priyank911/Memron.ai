@@ -29,6 +29,9 @@ export interface HybridRetrievalOptions {
   tokenBudget?: number;   // default 2000
   minVectorSimilarity?: number; // default 0.5 — cosine floor; neighbors below
                                 // this never enter RRF (abstention support)
+  highConfidenceSimilarity?: number; // default 0.7 — relevance gate (below).
+                                // A vector match at/above this stands alone;
+                                // below it a candidate needs corroboration.
   traceId?: string;       // pipeline-eye: correlates every log line of one recall
   signals?: {             // override default signal weights
     vector?: number;
@@ -298,12 +301,34 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     if (typeof h.score === 'number') vectorSimilarityById.set(h.id, h.score);
   }
 
+  // Relevance gate (precision-first retrieval). Absolute similarity floors
+  // cannot work alone: in a 1024-dim space, unrelated pairs routinely score
+  // 0.5+ (live trace: 11 junk hits for a nonsense query, all above the
+  // floor). So survival requires one of:
+  //   1. standalone high-confidence semantics (sim >= HIGH), or
+  //   2. curated keyword support (memories-table BM25 — exact terms, titles,
+  //      tags; the legitimate keyword fallback), or
+  //   3. corroborated weak semantics (vector + graph agree).
+  // BM25-atomic echoes, recency-only freshness, and lone weak neighbors never
+  // qualify. Weight-aware: isolated modes (vector/graph with other weights
+  // zeroed) don't leak foreign signals back in through clause 2/3.
+  const HIGH = options.highConfidenceSimilarity ?? 0.7;
+  const bm25Allowed = (weights.bm25 || 0) > 0;
+  const graphAllowed = (weights.graph || 0) > 0;
+  const gatedResults = fusedResults.filter((r) => {
+    const sim = vectorSimilarityById.get(r.id);
+    if (sim != null && sim >= HIGH) return true;
+    if (bm25Allowed && r.signals['bm25'] !== undefined) return true;
+    if (graphAllowed && sim != null && r.signals['graph'] !== undefined) return true;
+    return false;
+  });
+
   // Hydrate & Decrypt — batched, not N+1.
   // The old code issued up to 3 sequential queries PER fused result (atomic,
   // graph node, memory). On a high-latency link (1.6s/query) topK=20 meant up
   // to 60 sequential round-trips per recall. Now: 3 queries total, assembled
   // in fused order below with identical budget/decrypt semantics.
-  const fusedIds = fusedResults.map(r => r.id);
+  const fusedIds = gatedResults.map(r => r.id);
   const [atomicRows, graphRows, memoryRows] = await Promise.all([
     fusedIds.length
       ? query<any>(`SELECT * FROM atomic_memories WHERE memory_id = ANY($1::text[])`, [fusedIds]).then(r => r.rows).catch(() => [])
@@ -322,7 +347,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const retrievedMemories: RetrievedMemory[] = [];
   let tokenEstimate = 0;
 
-  for (const result of fusedResults) {
+  for (const result of gatedResults) {
     if (retrievedMemories.length >= topK) break;
 
     // Check atomic memory

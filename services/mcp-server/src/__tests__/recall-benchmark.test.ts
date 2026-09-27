@@ -303,6 +303,12 @@ describe.skipIf(!isLive)('Memron Recall Accuracy Benchmark', () => {
     it('should return empty results for a query about something never stored', async () => {
       // Query for something we never stored
       const result = await recall('What is the capital of Atlantis?');
+      // Diagnostic table: on failure this shows exactly which gate leaked
+      // (high-sim vector hit vs keyword corroboration) instead of just a count.
+      console.log('  abstention/atlantis:',
+        JSON.stringify((result.results || []).map((r: any) => ({
+          id: r.pointerId || r.id, sim: r.vectorSimilarity ?? null, fused: r.fusedScore,
+        }))));
       // Should return 0 results, not hallucinate a memory
       expect(result.totalFound).toBe(0);
       expect(result.results).toHaveLength(0);
