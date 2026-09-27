@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { encrypt, decrypt, hashContent } from '../lib/encryption.js';
-import { generateEmbedding, buildEmbeddingInput, toPgVector } from '../lib/embeddings.js';
+import { generateEmbedding, buildEmbeddingInput, toPgVector, isEmbeddingConfigured } from '../lib/embeddings.js';
 import { generatePointerId, estimateTokens, calculateCompression, classifyBucket, VALID_BUCKETS } from '../lib/pointer.js';
 import { ValidationError, NotFoundError, formatToolError } from '../lib/errors.js';
 import { config } from '../config.js';
@@ -233,7 +233,10 @@ export function registerCoreVerbs(server: McpServer): void {
                   compressionRatio: compression.ratio,
                   pointerRef: `[Memory: ${pointerId} — "${title}"]`,
                   hint: inferredStatus === 'untriaged' ? 'Stored in Inbox for human triage.' : 'Stored and indexed for recall.',
-                  semanticIndex: { status: 'queued' },
+                  semanticIndex: {
+                    status: embeddingStr ? 'indexed' : (isEmbeddingConfigured() ? 'queued' : 'disabled'),
+                    vectorWritten: !!embeddingStr,
+                  },
                   ...(runRecordId ? { runRecordId } : {}),
                 },
                 null,
