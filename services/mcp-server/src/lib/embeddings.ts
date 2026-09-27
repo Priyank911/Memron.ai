@@ -15,8 +15,8 @@
  * when selected explicitly.
  *
  * Production features:
- *   - Circuit breaker: 5 failures → 5min cooldown
- *   - Concurrency limiter: 10 parallel, 100 queued
+ *   - Circuit breaker: 3 failures → 60s cooldown
+ *   - Concurrency limiter: 2 parallel, 100 queued
  */
 
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || 1024);

@@ -24,6 +24,8 @@ interface ConversationBuffer {
   userId: number | null;
   messages: ConversationMessage[];
   toolCallCount: number;
+  /** Set once overflow has been logged, to avoid log spam per dropped message */
+  overflowLogged?: boolean;
   /** Number of messages not yet persisted to DB */
   unpersisted: number;
   firstActivityAt: number;
@@ -74,8 +76,16 @@ export function recordToolCall(
     buffer.userId = userId;
   }
 
-  // Don't exceed max buffer size
-  if (buffer.messages.length >= MAX_BUFFER_MESSAGES) return;
+  // Don't exceed max buffer size. This only triggers on sessions with
+  // 500+ tool calls without a flush — log it so ingestion gaps are visible
+  // instead of silently dropping conversation history.
+  if (buffer.messages.length >= MAX_BUFFER_MESSAGES) {
+    if (!buffer.overflowLogged) {
+      buffer.overflowLogged = true;
+      console.warn(JSON.stringify({ event: 'conversation_buffer_overflow', sessionId, dropped: true, kept: buffer.messages.length }));
+    }
+    return;
+  }
 
   const now = new Date().toISOString();
 

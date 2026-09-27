@@ -160,7 +160,7 @@ export async function resolveSupabaseUser(firebaseUid: string, targetOrgUuid?: s
         const orgRes = await pool.query(
           `SELECT o.id FROM organizations o
            LEFT JOIN org_members om ON om.org_id = o.id AND om.user_id = $2
-           WHERE (o.org_id = $1::text OR o.slug = $1::text)
+            WHERE (o.org_id::text = $1 OR o.slug = $1::text)
              AND o.is_active = true
              AND (o.owner_id = $2 OR om.user_id = $2)
            LIMIT 1`,

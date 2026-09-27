@@ -564,7 +564,9 @@ app.post('/mcp', universalAuth, async (req, res) => {
     transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid) {
-        collector.flushSession(sid).catch(() => {}); // fire-and-forget
+        // Fire-and-forget, but never silent: a failed flush loses conversation
+        // ingestion for the session, which must be visible in logs.
+        collector.flushSession(sid).catch((e) => console.warn(JSON.stringify({ event: 'flush_session_failed', where: 'transport.onclose', sessionId: sid, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) })));
         sessions.delete(sid);
       }
     };
@@ -620,7 +622,7 @@ app.delete('/mcp', async (req, res) => {
 
   if (sessionId && sessions.has(sessionId)) {
     const session = sessions.get(sessionId)!;
-    collector.flushSession(sessionId).catch(() => {}); // fire-and-forget
+    collector.flushSession(sessionId).catch((e) => console.warn(JSON.stringify({ event: 'flush_session_failed', where: 'DELETE /mcp', sessionId, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) })));
     try {
       await session.transport.close();
       await session.server.close();
@@ -883,7 +885,7 @@ function sweepIdleSessions(): void {
   let swept = 0;
   for (const [id, session] of sessions) {
     if (now - session.lastActivity > SESSION_IDLE_MS) {
-      collector.flushSession(id).catch(() => {}); // fire-and-forget
+      collector.flushSession(id).catch((e) => console.warn(JSON.stringify({ event: 'flush_session_failed', where: 'sweepIdleSessions', sessionId: id, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) })));
       try {
         session.transport.close();
         session.server.close();
@@ -978,6 +980,23 @@ async function verifyIndexes(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Process-level safety nets (production grade)
+// ─────────────────────────────────────────────────────────────
+// Without these, a single unhandled rejection anywhere (a missed .catch in
+// a timer, worker tick, or fire-and-forget flush) crashes Node with a bare
+// stack and no context. Rejections are logged and the server keeps serving
+// (availability first — every background path is retryable/idempotent);
+// uncaught exceptions exit after a short grace period since process state
+// is then unknown.
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled promise rejection:', reason instanceof Error ? (reason.stack || reason.message) : reason);
+});
+process.on('uncaughtException', (error) => {
+  console.error('[FATAL] Uncaught exception:', error instanceof Error ? (error.stack || error.message) : error);
+  setTimeout(() => process.exit(1), 5000).unref();
+});
+
+// ─────────────────────────────────────────────────────────────
 // Server Bootstrap
 // ─────────────────────────────────────────────────────────────
 
@@ -1037,7 +1056,7 @@ async function main() {
     if (memoryIndexTimer) clearTimeout(memoryIndexTimer);
 
     // Flush all conversation buffers before closing sessions
-    await collector.flushAll().catch(() => {});
+    await collector.flushAll().catch((e) => console.error('[Shutdown] flushAll failed, some conversation ingestion may be lost:', e instanceof Error ? e.message : e));
 
     for (const [id, session] of sessions) {
       try {

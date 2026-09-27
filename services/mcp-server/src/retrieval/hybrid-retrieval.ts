@@ -48,6 +48,7 @@ export interface RetrievedMemory {
   memoryType?: string;
   confidence?: number;
   fusedScore: number;       // final RRF score
+  vectorSimilarity?: number; // raw cosine similarity when the vector signal matched (undefined otherwise)
   signals: Record<string, number>;  // per-signal rank contributions
   decayScore?: number;
   createdAt: Date;
@@ -242,42 +243,69 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   // Fuse
   const fusedResults = fuseWithRRF(signalResults, { topK });
 
-  // Hydrate & Decrypt
+  // Raw cosine similarities (vector signal score IS cosine similarity).
+  // Kept for score transparency in API responses — lets operators see the
+  // actual semantic margin instead of tuning the floor blind.
+  const vectorSimilarityById = new Map<string, number>();
+  for (const h of vectorHits) {
+    if (typeof h.score === 'number') vectorSimilarityById.set(h.id, h.score);
+  }
+
+  // Hydrate & Decrypt — batched, not N+1.
+  // The old code issued up to 3 sequential queries PER fused result (atomic,
+  // graph node, memory). On a high-latency link (1.6s/query) topK=20 meant up
+  // to 60 sequential round-trips per recall. Now: 3 queries total, assembled
+  // in fused order below with identical budget/decrypt semantics.
+  const fusedIds = fusedResults.map(r => r.id);
+  const [atomicRows, graphRows, memoryRows] = await Promise.all([
+    fusedIds.length
+      ? query<any>(`SELECT * FROM atomic_memories WHERE memory_id = ANY($1::text[])`, [fusedIds]).then(r => r.rows).catch(() => [])
+      : Promise.resolve([]),
+    fusedIds.length
+      ? query<any>(`SELECT * FROM graph_nodes WHERE node_id = ANY($1::text[])`, [fusedIds]).then(r => r.rows).catch(() => [])
+      : Promise.resolve([]),
+    fusedIds.length
+      ? query<any>(`SELECT * FROM memories WHERE pointer_id = ANY($1::text[])`, [fusedIds]).then(r => r.rows).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+  const atomicById = new Map<string, any>(atomicRows.map((r: any) => [r.memory_id, r]));
+  const graphById = new Map<string, any>(graphRows.map((r: any) => [r.node_id, r]));
+  const memoryById = new Map<string, any>(memoryRows.map((r: any) => [r.pointer_id || String(r.id), r]));
+
   const retrievedMemories: RetrievedMemory[] = [];
   let tokenEstimate = 0;
 
   for (const result of fusedResults) {
     if (retrievedMemories.length >= topK) break;
-    
+
     // Check atomic memory
-    const amRes = await query<any>(`SELECT * FROM atomic_memories WHERE memory_id = $1`, [result.id]);
-    if (amRes.rows.length > 0) {
-      const r = amRes.rows[0];
-      const content = r.content;
+    const amRow = atomicById.get(result.id);
+    if (amRow) {
+      const content = amRow.content;
       const estimate = Math.ceil(content.length / 4);
       if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
       retrievedMemories.push({
-        id: r.memory_id,
+        id: amRow.memory_id,
         source: 'atomic_memory',
         content,
-        memoryType: r.memory_type,
-        confidence: r.confidence,
+        memoryType: amRow.memory_type,
+        confidence: amRow.confidence,
         fusedScore: result.fusedScore,
+        vectorSimilarity: vectorSimilarityById.get(result.id),
         signals: result.signals,
-        createdAt: r.created_at,
+        createdAt: amRow.created_at,
       });
       tokenEstimate += estimate;
       continue;
     }
 
     // Check graph node
-    const gnRes = await query<any>(`SELECT * FROM graph_nodes WHERE node_id = $1`, [result.id]);
-    if (gnRes.rows.length > 0) {
-      const r = gnRes.rows[0];
+    const gnRow = graphById.get(result.id);
+    if (gnRow) {
       const payload: EncryptedPayload = {
-        encrypted: r.encrypted_payload,
-        iv: r.payload_iv,
-        tag: r.payload_tag
+        encrypted: gnRow.encrypted_payload,
+        iv: gnRow.payload_iv,
+        tag: gnRow.payload_tag
       };
       let content = '';
       try {
@@ -285,53 +313,51 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
       } catch {
         content = 'Error decrypting node content.';
       }
-      
+
       retrievedMemories.push({
-        id: r.node_id,
+        id: gnRow.node_id,
         source: 'graph_node',
         content,
         fusedScore: result.fusedScore,
+        vectorSimilarity: vectorSimilarityById.get(result.id),
         signals: result.signals,
-        createdAt: r.created_at,
+        createdAt: gnRow.created_at,
       });
       tokenEstimate += Math.ceil(content.length / 4);
       continue;
     }
 
-    // Check normal memory
-    try {
-      // pointer_id is VARCHAR, id is BIGSERIAL - use pointer_id first, then try id as text
-      const memRes = await query<any>(`SELECT * FROM memories WHERE pointer_id = $1`, [result.id]);
-      if (memRes.rows.length > 0) {
-        const r = memRes.rows[0];
-        let content = r.content || '';
-        if (!content && r.content_encrypted && r.content_iv && r.content_tag) {
-          try {
-            content = decrypt({ encrypted: r.content_encrypted, iv: r.content_iv, tag: r.content_tag });
-          } catch {
-            content = '';
-          }
+    // Check normal memory (same semantics as before: pointer_id lookup, no
+    // is_active filter — RRF signals already applied active-only filtering)
+    const memRow = memoryById.get(result.id);
+    if (memRow) {
+      const r = memRow;
+      let content = r.content || '';
+      if (!content && r.content_encrypted && r.content_iv && r.content_tag) {
+        try {
+          content = decrypt({ encrypted: r.content_encrypted, iv: r.content_iv, tag: r.content_tag });
+        } catch {
+          content = '';
         }
-
-        const estimate = Math.ceil(content.length / 4);
-        if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
-        retrievedMemories.push({
-          id: r.pointer_id || r.id,
-          source: 'memory',
-          content,
-          title: r.title,
-          tags: r.tags,
-          bucket: r.bucket,
-          metadata: r.metadata || {},
-          fusedScore: result.fusedScore,
-          signals: result.signals,
-          createdAt: r.created_at,
-        });
-        tokenEstimate += estimate;
-        continue;
       }
-    } catch {
-      // Ignore if memories table does not exist
+
+      const estimate = Math.ceil(content.length / 4);
+      if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
+      retrievedMemories.push({
+        id: r.pointer_id || r.id,
+        source: 'memory',
+        content,
+        title: r.title,
+        tags: r.tags,
+        bucket: r.bucket,
+        metadata: r.metadata || {},
+        fusedScore: result.fusedScore,
+        vectorSimilarity: vectorSimilarityById.get(result.id),
+        signals: result.signals,
+        createdAt: r.created_at,
+      });
+      tokenEstimate += estimate;
+      continue;
     }
   }
 

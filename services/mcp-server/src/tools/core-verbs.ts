@@ -330,6 +330,11 @@ export function registerCoreVerbs(server: McpServer): void {
               content: item.content,
               tags: item.tags || [],
               metadata: item.metadata || { type: item.memoryType },
+              // Score transparency: raw cosine similarity (vector signal) and
+              // fused RRF score, so callers can see the semantic margin and
+              // operators can calibrate the similarity floor from real data.
+              vectorSimilarity: item.vectorSimilarity == null ? null : Math.round(item.vectorSimilarity * 1000) / 1000,
+              fusedScore: Math.round(item.fusedScore * 10000) / 10000,
             }));
           const diagnostics = {
             signalsUsed: hybrid.signalsUsed,
