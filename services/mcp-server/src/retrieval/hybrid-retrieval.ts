@@ -75,24 +75,32 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const signalsUsed: string[] = [];
   const allIds = new Set<string>();
 
-  // 1. Vector Signal
+  // 1. Vector Signal — each table queried independently so a failure
+  // in one (e.g. vector dimension mismatch on a legacy table) cannot wipe
+  // out the other table's results.
   let vectorPromise = Promise.resolve<{ id: string; score: number }[]>([]);
   if (options.embedding) {
     signalsUsed.push('vector');
-    vectorPromise = Promise.all([
-      searchAtomicMemoriesByVector({
+    const atomicVector = searchAtomicMemoriesByVector({
         userId: options.userId,
         embedding: options.embedding,
         limit: topK * 2,
-      }).then(rows => rows.map(r => ({ id: r.memory_id, score: r.similarity }))),
-      searchMemoriesByVector({
+      }).then(rows => rows.map(r => ({ id: r.memory_id, score: r.similarity })))
+        .catch((e) => {
+          console.warn(JSON.stringify({ event: 'vector_signal_failed', table: 'atomic_memories', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
+          return [] as { id: string; score: number }[];
+        });
+    const storedVector = searchMemoriesByVector({
         userId: options.userId,
         embedding: options.embedding,
         limit: topK * 2,
       }).then(rows => rows.map(r => ({ id: r.pointer_id, score: r.similarity })))
-        .catch(() => []), // Handle case where embedding column doesn't exist yet
-    ]).then(([atomic, memories]) => [...atomic, ...memories])
-      .catch(() => []);
+        .catch((e) => {
+          console.warn(JSON.stringify({ event: 'vector_signal_failed', table: 'memories', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
+          return [] as { id: string; score: number }[];
+        });
+    vectorPromise = Promise.all([atomicVector, storedVector])
+      .then(([atomic, memories]) => [...atomic, ...memories]);
   }
 
   // 2. BM25 Signal
@@ -102,7 +110,10 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     searchAtomicMemoriesBM25({ userId: options.userId, query: options.query, limit: topK })
   ]).then(([memResults, atomicResults]) => {
     return [...memResults, ...atomicResults].map(r => ({ id: r.id, score: r.rank }));
-  }).catch(() => []);
+  }).catch((e) => {
+    console.warn(JSON.stringify({ event: 'bm25_signal_failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
+    return [] as { id: string; score: number }[];
+  });
 
   // 3. Graph Signal
   signalsUsed.push('graph');
@@ -165,7 +176,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         }
       }
       return graphHits;
-    } catch {
+    } catch (e) {
+      console.warn(JSON.stringify({ event: 'graph_signal_failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
       return [];
     }
   })();
@@ -200,7 +212,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         });
         return { id: r.id, score: decayScore };
       });
-    } catch {
+    } catch (e) {
+      console.warn(JSON.stringify({ event: 'recency_signal_failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) }));
       return [];
     }
   })();

@@ -272,17 +272,40 @@ export function registerCoreVerbs(server: McpServer): void {
         const userId = getUserId(extra.authInfo);
 
         // The hybrid mode is the production default. It combines BM25,
-        // recency, vector (when configured), and graph signals. Keep the
-        // direct encrypted-table search as a compatibility fallback for
-        // category/bucket queries and deployments with an older schema.
-        if (args.mode === 'hybrid' && !args.bucket && !args.tags?.length) {
-          const queryEmbedding = await generateEmbedding(buildEmbeddingInput(args.query, [], ''));
+        // recency, vector (when configured), and graph signals. Bucket/tag
+        // filters are applied AFTER retrieval (post-filter), never by
+        // diverting to the legacy title-only path — the legacy path matches
+        // queryText against title only, so a semantic query + tag filter
+        // would always return zero even when the item exists.
+        if (args.mode === 'hybrid' || args.mode === 'vector' || args.mode === 'graph') {
+          let queryEmbedding: number[] | undefined;
+          let vectorSkipped: string | null = null;
+          try {
+            const emb = await generateEmbedding(buildEmbeddingInput(args.query, [], ''));
+            if (emb) queryEmbedding = emb;
+            else vectorSkipped = 'query embedding provider returned null (rate limit, circuit open, or timeout)';
+          } catch (e) {
+            vectorSkipped = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
+          }
+          if (vectorSkipped) {
+            console.warn(JSON.stringify({ event: 'query_embedding_failed', query: args.query.slice(0, 80), reason: vectorSkipped }));
+          }
+          // Mode routing: 'vector' isolates the semantic signal, 'graph'
+          // isolates graph expansion, 'hybrid' fuses all four. Previously
+          // 'vector'/'graph' silently fell through to the legacy title-only
+          // path, so vector mode could never prove vector search works.
+          const signalOverride = args.mode === 'vector'
+            ? { vector: 3.0, bm25: 0, graph: 0, recency: 0 }
+            : args.mode === 'graph'
+              ? { vector: 0, bm25: 0, graph: 1.0, recency: 0 }
+              : undefined;
           const hybrid = await hybridRetrieve({
             userId,
             query: args.query,
             embedding: queryEmbedding || undefined,
             topK: args.limit,
             tokenBudget: args.tokenBudget,
+            ...(signalOverride ? { signals: signalOverride } : {}),
           });
           const hybridResults = hybrid.memories
             .filter(item => item.source === 'memory' || item.source === 'atomic_memory')
@@ -295,6 +318,8 @@ export function registerCoreVerbs(server: McpServer): void {
               if (args.category === 'preferences') return type === 'preference';
               return true;
             })
+            .filter(item => !args.bucket || item.bucket === args.bucket)
+            .filter(item => !args.tags?.length || (item.tags && args.tags.some(t => item.tags!.includes(t))))
             .map(item => ({
               pointerId: item.id,
               title: item.title || item.memoryType || 'Memory',
@@ -303,6 +328,12 @@ export function registerCoreVerbs(server: McpServer): void {
               tags: item.tags || [],
               metadata: item.metadata || { type: item.memoryType },
             }));
+          const diagnostics = {
+            signalsUsed: hybrid.signalsUsed,
+            totalCandidates: hybrid.totalCandidates,
+            ...(vectorSkipped ? { vectorSkipped } : {}),
+            ...(args.tags?.length ? { tagFilter: args.tags } : {}),
+          };
           if (hybridResults.length > 0) {
             const pinnedRules = await getPinnedFacts(userId).then(pins => pins.map(p => p.label || p.pin_id)).catch(() => [] as string[]);
             const tokenCount = hybrid.tokenEstimate;
@@ -310,13 +341,13 @@ export function registerCoreVerbs(server: McpServer): void {
               const xmlContext = ['<memron_context>', ...pinnedRules.map(rule => `  <pinned_rule>${rule}</pinned_rule>`), ...hybridResults.map(r => `  <memory pointer="${r.pointerId}" title="${r.title}">\n    ${r.content}\n  </memory>`), '</memron_context>'].join('\n');
               return { content: [{ type: 'text', text: xmlContext }] };
             }
-            return { content: [{ type: 'text', text: JSON.stringify({ query: args.query, totalFound: hybridResults.length, tokenCount, tokenBudget: args.tokenBudget, pinnedRules, results: hybridResults }, null, 2) }] };
+            return { content: [{ type: 'text', text: JSON.stringify({ query: args.query, totalFound: hybridResults.length, tokenCount, tokenBudget: args.tokenBudget, pinnedRules, results: hybridResults, diagnostics }, null, 2) }] };
           }
           // Hybrid was attempted but found nothing semantically relevant.
           // Do NOT fall through to the keyword/ILIKE compatibility path —
           // that would silently substitute an unrelated keyword match and
           // mask the real failure (no relevant memory stored).
-          return { content: [{ type: 'text', text: JSON.stringify({ query: args.query, totalFound: 0, tokenCount: 0, tokenBudget: args.tokenBudget, pinnedRules: [], results: [], note: 'No semantically relevant memories found. Stored facts may not have embeddings yet or may not match the query.' }, null, 2) }] };
+          return { content: [{ type: 'text', text: JSON.stringify({ query: args.query, totalFound: 0, tokenCount: 0, tokenBudget: args.tokenBudget, pinnedRules: [], results: [], diagnostics, note: 'No semantically relevant memories found. Stored facts may not have embeddings yet or may not match the query.' }, null, 2) }] };
         }
 
         // Fetch candidate memories using the encrypted-table compatibility path.
@@ -375,9 +406,9 @@ export function registerCoreVerbs(server: McpServer): void {
           }
         }
 
-        // Retrieve pinned rules if in hybrid or pinned mode
+        // Retrieve pinned rules if in pinned mode (hybrid/vector/graph return above)
         let pinnedRules: string[] = [];
-        if (args.mode === 'hybrid' || args.mode === 'pinned') {
+        if (args.mode === 'pinned') {
           try {
             const pins = await getPinnedFacts(userId);
             pinnedRules = pins.map((p) => p.label || p.pin_id);
