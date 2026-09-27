@@ -46,8 +46,8 @@ if (isConfigured) {
     user: SUPA_USER,
     password: SUPA_PASS,
     ssl: sslConfig,
-    max: 8,
-    idleTimeoutMillis: 30_000,
+    max: 3,
+    idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
     statement_timeout: 8_000,
   });

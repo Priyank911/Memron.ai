@@ -71,14 +71,16 @@ export const config = {
       ? { rejectUnauthorized: process.env.PG_CA_CERT ? true : false, ca: process.env.PG_CA_CERT }
       : false,
     // Supabase session poolers commonly expose a 15-client ceiling shared by
-    // the deployment's processes. Keep each MCP instance below that ceiling
-    // so concurrent memory writes queue in Node instead of being rejected by
-    // the pooler with EMAXCONNSESSION.
+    // every process talking to the database (MCP server + landing app pools
+    // + deploy overlap). Keep each MCP instance small so concurrent memory
+    // writes queue in Node instead of being rejected by the pooler with
+    // EMAXCONNSESSION. Budget: MCP 4 + landing PG 3 + landing Supa 3 = 10
+    // steady-state, leaving headroom for zero-downtime deploy overlap.
     maxConnections: Math.min(
-      parseInt(process.env.PG_MAX_CONNECTIONS || (isRailway ? '5' : '8'), 10),
-      parseInt(process.env.PG_POOL_HARD_LIMIT || (isRailway ? '5' : '10'), 10),
+      parseInt(process.env.PG_MAX_CONNECTIONS || (isRailway ? '5' : '4'), 10),
+      parseInt(process.env.PG_POOL_HARD_LIMIT || (isRailway ? '5' : '6'), 10),
     ),
-    idleTimeout: parseInt(process.env.PG_IDLE_TIMEOUT || '20000', 10),
+    idleTimeout: parseInt(process.env.PG_IDLE_TIMEOUT || '10000', 10),
     connectionTimeout: parseInt(process.env.PG_CONNECTION_TIMEOUT || '10000', 10),
   },
 

@@ -16,7 +16,10 @@ const sslConfig: any = process.env.PG_SSL === 'false'
 // Check if PostgreSQL is configured
 const isPgConfigured = !!(process.env.PG_HOST && process.env.PG_DATABASE && process.env.PG_USER && process.env.PG_PASSWORD);
 
-// Connection pool for PostgreSQL (Supabase Session Pooler)
+// Connection pool for PostgreSQL (Supabase Session Pooler).
+// The pooler caps total clients at 15 across ALL processes (MCP server +
+// landing pools + deploy overlap). Keep this pool small; queries queue in
+// Node instead of being rejected with EMAXCONNSESSION.
 const pool = isPgConfigured ? new Pool({
     host: process.env.PG_HOST,
     port: parseInt(process.env.PG_PORT || '5432'),
@@ -24,8 +27,8 @@ const pool = isPgConfigured ? new Pool({
     user: process.env.PG_USER,
     password: process.env.PG_PASSWORD,
     ssl: sslConfig,
-    max: 10, // Maximum connections in pool
-    idleTimeoutMillis: 30000,
+    max: 3, // Maximum connections in pool
+    idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000, // Increased from 2s to 10s for slow/remote connections
     statement_timeout: 10000, // Max time for query execution (10s)
 }) : null;
