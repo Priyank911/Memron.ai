@@ -17,6 +17,7 @@ import { calculateDecayScore } from '../lib/memory-decay.js';
 import { fuseWithRRF, type RRFSignal, DEFAULT_SIGNAL_WEIGHTS } from '../lib/rrf.js';
 import { computeBlindHash } from '../lib/blind-index.js';
 import { decrypt, type EncryptedPayload } from '../lib/encryption.js';
+import { fingerprint } from '../lib/privacy.js';
 import { query } from '../db/client.js';
 
 export interface HybridRetrievalOptions {
@@ -436,13 +437,15 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const endTime = performance.now();
 
   // Pipeline-eye: one structured line per recall. Grep `recall_trace` in
-  // Render logs to watch any query travel through every stage live:
-  // which signals fired, how many candidates each produced, how long each
-  // took, and how many survived fusion — without touching any data.
+  // logs to watch any query travel through every stage live.
+  // PRIVACY: the raw query is never logged — only a stable hash (for
+  // correlating repeat queries) and its length.
+  const queryFp = fingerprint(options.query);
   console.info(JSON.stringify({
     event: 'recall_trace',
     traceId: options.traceId || null,
-    query: options.query.slice(0, 120),
+    queryHash: queryFp.hash,
+    queryLen: queryFp.len,
     signals: signalStats,
     candidates: totalCandidatesSet.size,
     returned: retrievedMemories.length,

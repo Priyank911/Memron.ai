@@ -37,7 +37,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { config } from './config.js';
-import { testConnection, waitForDatabase, warmPool, close as closeDb, query as dbQuery, getPoolStats, logPoolStats } from './db/client.js';
+import { testConnection, waitForDatabase, warmPool, close as closeDb, query as dbQuery, getPoolStats, logPoolStats, startPoolMonitor } from './db/client.js';
 import { runMigrations, EXPECTED_SCHEMA_VERSION } from './db/schema.js';
 import { testEncryption } from './lib/encryption.js';
 import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
@@ -1026,6 +1026,7 @@ async function main() {
 
   // Log initial pool stats
   logPoolStats();
+  startPoolMonitor();
 
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
   // Analysis is durable and retried outside the MCP request/teardown path.

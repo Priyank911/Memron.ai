@@ -334,6 +334,9 @@ importers:
       express-rate-limit:
         specifier: ^7.4.0
         version: 7.5.1(express@4.22.1)
+      hono:
+        specifier: ^4.6.0
+        version: 4.11.8
       jose:
         specifier: ^5.9.0
         version: 5.10.0
@@ -8369,6 +8372,14 @@ snapshots:
     optionalDependencies:
       vite: 5.4.21(@types/node@20.19.32)(lightningcss@1.32.0)
 
+  '@vitest/mocker@2.1.9(vite@5.4.21(@types/node@22.19.11)(lightningcss@1.32.0))':
+    dependencies:
+      '@vitest/spy': 2.1.9
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 5.4.21(@types/node@22.19.11)(lightningcss@1.32.0)
+
   '@vitest/pretty-format@2.1.9':
     dependencies:
       tinyrainbow: 1.2.0
@@ -12325,7 +12336,7 @@ snapshots:
   vitest@2.1.9(@types/node@22.19.11)(lightningcss@1.32.0):
     dependencies:
       '@vitest/expect': 2.1.9
-      '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@20.19.32)(lightningcss@1.32.0))
+      '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@22.19.11)(lightningcss@1.32.0))
       '@vitest/pretty-format': 2.1.9
       '@vitest/runner': 2.1.9
       '@vitest/snapshot': 2.1.9

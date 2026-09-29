@@ -11,6 +11,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { encrypt, decrypt, hashContent } from '../lib/encryption.js';
 import { generateEmbedding, buildEmbeddingInput, toPgVector, isEmbeddingConfigured } from '../lib/embeddings.js';
+import { fingerprint } from '../lib/privacy.js';
 import { generatePointerId, estimateTokens, calculateCompression, classifyBucket, VALID_BUCKETS } from '../lib/pointer.js';
 import { ValidationError, NotFoundError, formatToolError } from '../lib/errors.js';
 import { config } from '../config.js';
@@ -121,7 +122,8 @@ export function registerCoreVerbs(server: McpServer): void {
           if (attempt < 2) await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         }
         if (!embeddingStr) {
-          console.warn(JSON.stringify({ event: 'sync_embedding_failed', pointerId, title: title.slice(0, 80), attempts: 3 }));
+          const titleFp = fingerprint(title);
+          console.warn(JSON.stringify({ event: 'sync_embedding_failed', pointerId, titleHash: titleFp.hash, titleLen: titleFp.len, attempts: 3 }));
         }
 
         const memory = await db.insertMemory({
@@ -294,7 +296,8 @@ export function registerCoreVerbs(server: McpServer): void {
             vectorSkipped = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
           }
           if (vectorSkipped) {
-            console.warn(JSON.stringify({ event: 'query_embedding_failed', query: args.query.slice(0, 80), reason: vectorSkipped }));
+            const queryFp = fingerprint(args.query);
+            console.warn(JSON.stringify({ event: 'query_embedding_failed', queryHash: queryFp.hash, queryLen: queryFp.len, reason: vectorSkipped }));
           }
           // Mode routing: 'vector' isolates the semantic signal, 'graph'
           // isolates graph expansion, 'hybrid' fuses all four. Previously

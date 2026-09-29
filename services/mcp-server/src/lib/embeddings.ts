@@ -19,7 +19,9 @@
  *   - Concurrency limiter: 2 parallel, 100 queued
  */
 
-const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || 1024);
+import { getEnv } from '../env.js';
+
+const embeddingDims = () => Number(getEnv('EMBEDDING_DIMENSIONS') || 1024);
 const TIMEOUT_MS = 15_000;
 // Free hosted embedding endpoints are rate-limited. A small queue is safer
 // than allowing a memory burst to create a provider 429 storm.
@@ -41,13 +43,13 @@ interface ProviderConfig {
 let _loggedDisabled = false;
 
 function resolveProvider(): ProviderConfig | null {
-  const requestedProvider = (process.env.EMBEDDING_PROVIDER || 'gemini').toLowerCase();
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
-  const openaiKey = process.env.OPENAI_API_KEY;
+  const requestedProvider = (getEnv('EMBEDDING_PROVIDER') || 'gemini').toLowerCase();
+  const geminiKey = getEnv('GEMINI_API_KEY');
+  const openRouterKey = getEnv('OPENROUTER_API_KEY');
+  const openaiKey = getEnv('OPENAI_API_KEY');
 
   if (requestedProvider === 'gemini' && geminiKey) {
-    const model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+    const model = getEnv('GEMINI_EMBEDDING_MODEL') || 'gemini-embedding-2';
     return {
       name: 'gemini',
       url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`,
@@ -57,7 +59,7 @@ function resolveProvider(): ProviderConfig | null {
         content: { parts: [{ text: input }] },
         // The database and vector indexes use vector(1024). Gemini's native
         // 3072 output is reduced server-side before storage.
-        output_dimensionality: EMBEDDING_DIMENSIONS,
+        output_dimensionality: embeddingDims(),
       }),
       headers: { 'x-goog-api-key': geminiKey },
     };
@@ -69,13 +71,13 @@ function resolveProvider(): ProviderConfig | null {
       url: 'https://openrouter.ai/api/v1/embeddings',
       apiKey: openRouterKey,
       buildBody: (input) => ({
-        model: process.env.OPENROUTER_EMBEDDING_MODEL || 'liquid/lfm-2.5-embedding-350m:free',
+        model: getEnv('OPENROUTER_EMBEDDING_MODEL') || 'liquid/lfm-2.5-embedding-350m:free',
         input,
-        dimensions: EMBEDDING_DIMENSIONS,
+        dimensions: embeddingDims(),
       }),
       headers: {
-        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://memron.ai',
-        'X-Title': process.env.OPENROUTER_APP_TITLE || 'Memron',
+        'HTTP-Referer': getEnv('OPENROUTER_HTTP_REFERER') || 'https://memron.ai',
+        'X-Title': getEnv('OPENROUTER_APP_TITLE') || 'Memron',
       },
     };
   }
@@ -88,7 +90,7 @@ function resolveProvider(): ProviderConfig | null {
       buildBody: (input) => ({
         model: 'text-embedding-3-small',
         input,
-        dimensions: EMBEDDING_DIMENSIONS,
+        dimensions: embeddingDims(),
       }),
     };
   }
@@ -250,8 +252,8 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
       return null;
     }
 
-    if (embedding.length !== EMBEDDING_DIMENSIONS) {
-      console.warn(`[Embeddings] ${provider.name} returned ${embedding.length} dimensions; expected ${EMBEDDING_DIMENSIONS}. Check EMBEDDING_DIMENSIONS and the database migration.`);
+    if (embedding.length !== embeddingDims()) {
+      console.warn(`[Embeddings] ${provider.name} returned ${embedding.length} dimensions; expected ${embeddingDims()}. Check EMBEDDING_DIMENSIONS and the database migration.`);
       _failures++; _lastFail = Date.now();
       return null;
     }
@@ -291,7 +293,7 @@ export async function generateEmbeddings(texts: string[]): Promise<Array<number[
       return await Promise.all(normalized.map(text => generateEmbedding(text)));
     }
 
-    const model = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+    const model = getEnv('GEMINI_EMBEDDING_MODEL') || 'gemini-embedding-2';
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': provider.apiKey },
@@ -299,7 +301,7 @@ export async function generateEmbeddings(texts: string[]): Promise<Array<number[
         requests: normalized.map(text => ({
           model: `models/${model}`,
           content: { parts: [{ text }] },
-          output_dimensionality: EMBEDDING_DIMENSIONS,
+          output_dimensionality: embeddingDims(),
         })),
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -313,7 +315,7 @@ export async function generateEmbeddings(texts: string[]): Promise<Array<number[
     }
     const data = await res.json() as { embeddings?: Array<{ values?: number[] }> };
     const values = data.embeddings?.map(item => item.values || null) || [];
-    if (values.length !== texts.length || values.some(value => !value || value.length !== EMBEDDING_DIMENSIONS)) {
+    if (values.length !== texts.length || values.some(value => !value || value.length !== embeddingDims())) {
       console.warn(`[Embeddings] gemini batch returned ${values.length} results for ${texts.length} inputs`);
       _failures++;
       _lastFail = Date.now();

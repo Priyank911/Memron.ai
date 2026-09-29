@@ -33,6 +33,8 @@ out/
 # Environment & Secrets
 # ============================================
 .env
+.dev.vars
+.wrangler/
 .env.local
 .env.development.local
 .env.test.local

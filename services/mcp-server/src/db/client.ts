@@ -10,54 +10,89 @@
  */
 import * as pg from 'pg';
 import { config } from '../config.js';
+import { getEnv } from '../env.js';
 
 const { Pool } = pg;
 
-const sslConfig = config.db.ssl || (config.nodeEnv === 'production'
-  ? { rejectUnauthorized: false }
-  : false);
+let _pool: pg.Pool | null = null;
 
-export const pool = new Pool({
-  host: config.db.host,
-  port: config.db.port,
-  database: config.db.database,
-  user: config.db.user,
-  password: config.db.password,
-  ssl: sslConfig as any,
-  max: config.db.maxConnections,
-  idleTimeoutMillis: config.db.idleTimeout,
-  connectionTimeoutMillis: config.db.connectionTimeout,
-  // Keep connections alive
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10000,
-});
+function createPool(): pg.Pool {
+  const sslConfig = config.db.ssl || (config.nodeEnv === 'production'
+    ? { rejectUnauthorized: false }
+    : false);
 
-// Production guard: session poolers (Supabase/Aiven free tiers) cap total
-// clients around 15 across ALL processes. One oversized pool can starve
-// every other service into EMAXCONNSESSION crash loops.
-if (config.db.maxConnections > 10) {
-  console.warn(
-    `[DB] WARNING: pool max (${config.db.maxConnections}) exceeds the safe ceiling ` +
-    `for a shared 15-client pooler. Lower PG_MAX_CONNECTIONS to ≤4 per process.`
-  );
+  // Cloudflare Workers reach Postgres through Hyperdrive (plain TCP is
+  // unavailable in Workers). When a Hyperdrive connection string is present
+  // it takes precedence over the individual PG_* parts.
+  const hyperdriveUrl = getEnv('HYPERDRIVE_CONNECTION_STRING');
+  const poolConfig: pg.PoolConfig = hyperdriveUrl
+    ? {
+        connectionString: hyperdriveUrl,
+        max: config.db.maxConnections,
+        idleTimeoutMillis: config.db.idleTimeout,
+        connectionTimeoutMillis: config.db.connectionTimeout,
+      }
+    : {
+        host: config.db.host,
+        port: config.db.port,
+        database: config.db.database,
+        user: config.db.user,
+        password: config.db.password,
+        ssl: sslConfig as any,
+        max: config.db.maxConnections,
+        idleTimeoutMillis: config.db.idleTimeout,
+        connectionTimeoutMillis: config.db.connectionTimeout,
+        // Keep connections alive
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000,
+      };
+
+  const p = new Pool(poolConfig);
+
+  // Production guard: session poolers (Supabase/Aiven free tiers) cap total
+  // clients around 15 across ALL processes. One oversized pool can starve
+  // every other service into EMAXCONNSESSION crash loops.
+  if (config.db.maxConnections > 10) {
+    console.warn(
+      `[DB] WARNING: pool max (${config.db.maxConnections}) exceeds the safe ceiling ` +
+      `for a shared 15-client pooler. Lower PG_MAX_CONNECTIONS to ≤4 per process.`
+    );
+  }
+
+  p.on('error', (err) => {
+    console.error('[DB] Unexpected pool error:', err.message);
+  });
+
+  p.on('connect', () => {
+    // Connection established
+  });
+
+  p.on('remove', () => {
+    // Connection removed from pool
+  });
+
+  return p;
+}
+
+/**
+ * Lazily-created pool. Module import must never open connections: on
+ * Cloudflare Workers, env (and therefore the Hyperdrive string) arrives
+ * after module load, and opening a pool at import time would use blanks.
+ */
+export function getPool(): pg.Pool {
+  if (!_pool) _pool = createPool();
+  return _pool;
+}
+
+/** Test seam: drop the cached pool so the next access re-reads config. */
+export function resetPoolForTests(): void {
+  _pool = null;
 }
 
 // Pool stats for monitoring
 let totalQueries = 0;
 let failedQueries = 0;
 let totalDuration = 0;
-
-pool.on('error', (err) => {
-  console.error('[DB] Unexpected pool error:', err.message);
-});
-
-pool.on('connect', () => {
-  // Connection established
-});
-
-pool.on('remove', () => {
-  // Connection removed from pool
-});
 
 /**
  * Get pool health stats
@@ -70,6 +105,7 @@ export function getPoolStats(): {
   failedQueries: number;
   avgDuration: string;
 } {
+  const pool = getPool();
   return {
     total: pool.totalCount,
     idle: pool.idleCount,
@@ -99,7 +135,7 @@ export async function warmPool(): Promise<void> {
     warmPromises.push(
       (async () => {
         try {
-          const client = await pool.connect();
+          const client = await getPool().connect();
           await client.query('SELECT 1');
           client.release();
         } catch {
@@ -128,7 +164,7 @@ export async function query<T extends pg.QueryResultRow = any>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const start = Date.now();
     try {
-      const result = await pool.query<T>(text, params);
+      const result = await getPool().query<T>(text, params);
       const duration = Date.now() - start;
 
       // Update stats
@@ -203,7 +239,7 @@ function sleep(ms: number): Promise<void> {
  * Caller MUST release the client when done.
  */
 export async function getClient(): Promise<pg.PoolClient> {
-  return pool.connect();
+  return getPool().connect();
 }
 
 /**
@@ -212,7 +248,7 @@ export async function getClient(): Promise<pg.PoolClient> {
 export async function transaction<T>(
   fn: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query('BEGIN');
     const result = await fn(client);
@@ -231,7 +267,7 @@ export async function transaction<T>(
  */
 export async function testConnection(): Promise<boolean> {
   try {
-    const result = await pool.query('SELECT NOW() as now');
+    const result = await getPool().query('SELECT NOW() as now');
     return true;
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -267,7 +303,7 @@ export async function waitForDatabase(options?: {
   const base = options?.baseDelayMs ?? 2000;
   for (let i = 1; i <= attempts; i++) {
     try {
-      await pool.query('SELECT 1');
+      await getPool().query('SELECT 1');
       if (i > 1) console.log(`[DB] Connected on attempt ${i}/${attempts}`);
       return true;
     } catch (error) {
@@ -292,11 +328,20 @@ export async function waitForDatabase(options?: {
  * Gracefully close all pool connections.
  */
 export async function close(): Promise<void> {
-  await pool.end();
+  if (_pool) {
+    await _pool.end();
+    _pool = null;
+  }
   console.log('[DB] Pool closed');
 }
 
-// Log pool stats every 5 minutes in production
-if (config.nodeEnv === 'production' || config.nodeEnv === 'development') {
-  setInterval(logPoolStats, 5 * 60 * 1000);
+/**
+ * Start periodic pool-stats logging. Called explicitly from the Node entry
+ * point — never auto-started at import, so Cloudflare Workers (no long-lived
+ * timers on the free plan) stay timer-free unless they opt in.
+ */
+export function startPoolMonitor(): void {
+  if (config.nodeEnv === 'production' || config.nodeEnv === 'development') {
+    setInterval(logPoolStats, 5 * 60 * 1000);
+  }
 }

@@ -1,0 +1,14 @@
+# Local `wrangler dev` variables. Copy to `.dev.vars` (gitignored, never commit).
+# For local dev, point at a DIRECT Postgres (Hyperdrive binding can also be
+# used locally via `wrangler dev --hyperdrive ...`; simplest local path is
+# plain PG_* to a local/docker database).
+PG_HOST = "localhost"
+PG_PORT = "5432"
+PG_DATABASE = "postgres"
+PG_USER = "postgres"
+PG_PASSWORD = "postgres"
+PG_SSL = "false"
+ENCRYPTION_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+JWT_SECRET = "local-dev-jwt-secret-change-me"
+GEMINI_API_KEY = ""
+ALLOWED_ORIGINS = "*"

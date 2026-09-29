@@ -13,8 +13,10 @@
 
 // ─── Helpers ─────────────────────────────────────────────────
 
+import { getEnv } from './env.js';
+
 function requireEnv(key: string, fallback?: string): string {
-  const value = process.env[key] || fallback;
+  const value = getEnv(key) || fallback;
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
@@ -22,13 +24,16 @@ function requireEnv(key: string, fallback?: string): string {
 }
 
 /** True when running on Railway (any environment: production, staging, PR deploy) */
-const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
+const envIsRailway = () => !!getEnv('RAILWAY_ENVIRONMENT');
 
 /** True when running on Render */
-const isRender = !!process.env.RENDER;
+const envIsRender = () => !!getEnv('RENDER');
+
+/** True when running on Cloudflare Workers (set by worker.ts) */
+const envIsWorker = () => getEnv('MEMRON_RUNTIME') === 'worker';
 
 /** True for local development (no RAILWAY_ENVIRONMENT, no RENDER, and NODE_ENV != production) */
-const isDev = !isRailway && !isRender && (process.env.NODE_ENV || 'development') === 'development';
+const envIsDev = () => !envIsRailway() && !envIsRender() && !envIsWorker() && (getEnv('NODE_ENV') || 'development') === 'development';
 
 /**
  * Derive the public URL.
@@ -37,19 +42,28 @@ const isDev = !isRailway && !isRender && (process.env.NODE_ENV || 'development')
  * This static value is only used for startup logs and as a fallback.
  */
 function resolveServerUrl(): string {
-  if (process.env.MCP_SERVER_URL) return process.env.MCP_SERVER_URL.replace(/\/$/, '');
-  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '');
-  if (process.env.RAILWAY_STATIC_URL) return process.env.RAILWAY_STATIC_URL.replace(/\/$/, '');
-  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
-  return `http://localhost:${process.env.PORT || '5201'}`;
+  if (getEnv('MCP_SERVER_URL')) return getEnv('MCP_SERVER_URL').replace(/\/$/, '');
+  if (getEnv('RENDER_EXTERNAL_URL')) return getEnv('RENDER_EXTERNAL_URL').replace(/\/$/, '');
+  if (getEnv('RAILWAY_STATIC_URL')) return getEnv('RAILWAY_STATIC_URL').replace(/\/$/, '');
+  if (getEnv('RAILWAY_PUBLIC_DOMAIN')) return `https://${getEnv('RAILWAY_PUBLIC_DOMAIN')}`;
+  return `http://localhost:${getEnv('PORT') || '5201'}`;
 }
 
 // ─── Config ──────────────────────────────────────────────────
+// Lazily built on every access (via Proxy below) so Cloudflare Workers —
+// where env arrives after module load — see injected values. Consumers keep
+// using `config.x` unchanged on both runtimes. Build cost is ~30 string ops
+// per access; config is read a handful of times per request.
 
-export const config = {
+function buildConfig() {
+  const isRailway = envIsRailway();
+  const isRender = envIsRender();
+  const isDev = envIsDev();
+
+  return {
   /** Server */
-  port: parseInt(process.env.PORT || '5201', 10),
-  nodeEnv: process.env.NODE_ENV || (isRailway || isRender ? 'production' : 'development'),
+  port: parseInt(getEnv('PORT') || '5201', 10),
+  nodeEnv: getEnv('NODE_ENV') || (isRailway || isRender ? 'production' : 'development'),
   isDev,
   isRailway,
   isRender,
@@ -58,17 +72,17 @@ export const config = {
   serverUrl: resolveServerUrl(),
 
   /** Landing app URL (used for "Get API Key" links) */
-  landingUrl: process.env.LANDING_URL || 'https://console.memron.ai',
+  landingUrl: getEnv('LANDING_URL') || 'https://console.memron.ai',
 
   /** PostgreSQL (Supabase Session Pooler or local) */
   db: {
-    host: process.env.PG_HOST || 'localhost',
-    port: parseInt(process.env.PG_PORT || '5432', 10),
-    database: process.env.PG_DATABASE || 'postgres',
-    user: process.env.PG_USER || 'postgres',
-    password: process.env.PG_PASSWORD || '',
-    ssl: process.env.PG_SSL !== 'false'
-      ? { rejectUnauthorized: process.env.PG_CA_CERT ? true : false, ca: process.env.PG_CA_CERT }
+    host: getEnv('PG_HOST') || 'localhost',
+    port: parseInt(getEnv('PG_PORT') || '5432', 10),
+    database: getEnv('PG_DATABASE') || 'postgres',
+    user: getEnv('PG_USER') || 'postgres',
+    password: getEnv('PG_PASSWORD') || '',
+    ssl: getEnv('PG_SSL') !== 'false'
+      ? { rejectUnauthorized: getEnv('PG_CA_CERT') ? true : false, ca: getEnv('PG_CA_CERT') }
       : false,
     // Supabase session poolers commonly expose a 15-client ceiling shared by
     // every process talking to the database (MCP server + landing app pools
@@ -77,11 +91,11 @@ export const config = {
     // EMAXCONNSESSION. Budget: MCP 4 + landing PG 3 + landing Supa 3 = 10
     // steady-state, leaving headroom for zero-downtime deploy overlap.
     maxConnections: Math.min(
-      parseInt(process.env.PG_MAX_CONNECTIONS || (isRailway ? '5' : '4'), 10),
-      parseInt(process.env.PG_POOL_HARD_LIMIT || (isRailway ? '5' : '6'), 10),
+      parseInt(getEnv('PG_MAX_CONNECTIONS') || (isRailway ? '5' : '4'), 10),
+      parseInt(getEnv('PG_POOL_HARD_LIMIT') || (isRailway ? '5' : '6'), 10),
     ),
-    idleTimeout: parseInt(process.env.PG_IDLE_TIMEOUT || '10000', 10),
-    connectionTimeout: parseInt(process.env.PG_CONNECTION_TIMEOUT || '10000', 10),
+    idleTimeout: parseInt(getEnv('PG_IDLE_TIMEOUT') || '10000', 10),
+    connectionTimeout: parseInt(getEnv('PG_CONNECTION_TIMEOUT') || '10000', 10),
   },
 
   /** AES-256-GCM encryption for memory content */
@@ -92,20 +106,20 @@ export const config = {
   /** JWT signing for access / refresh tokens */
   jwt: {
     secret: requireEnv('JWT_SECRET', isDev ? 'memron-dev-jwt-secret-CHANGE-IN-PRODUCTION' : undefined),
-    issuer: process.env.JWT_ISSUER || resolveServerUrl(),
-    accessTokenTtlSeconds: parseInt(process.env.JWT_ACCESS_TTL || '3600', 10),       // 1 hour
-    refreshTokenTtlSeconds: parseInt(process.env.JWT_REFRESH_TTL || '2592000', 10),  // 30 days
+    issuer: getEnv('JWT_ISSUER') || resolveServerUrl(),
+    accessTokenTtlSeconds: parseInt(getEnv('JWT_ACCESS_TTL') || '3600', 10),       // 1 hour
+    refreshTokenTtlSeconds: parseInt(getEnv('JWT_REFRESH_TTL') || '2592000', 10),  // 30 days
   },
 
   /** Per-user rate limiting */
   rateLimit: {
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),   // 1 minute
-    maxRequests: parseInt(process.env.RATE_LIMIT_MAX || (isRailway ? '60' : '100'), 10),
+    windowMs: parseInt(getEnv('RATE_LIMIT_WINDOW_MS') || '60000', 10),   // 1 minute
+    maxRequests: parseInt(getEnv('RATE_LIMIT_MAX') || (isRailway ? '60' : '100'), 10),
   },
 
   /** Memory defaults */
   memory: {
-    maxContentLength: parseInt(process.env.MAX_CONTENT_LENGTH || '100000', 10),  // ~100 KB
+    maxContentLength: parseInt(getEnv('MAX_CONTENT_LENGTH') || '100000', 10),  // ~100 KB
     defaultBucket: 'conversation',
     defaultTokenBudget: 4000,
     maxSearchResults: 50,
@@ -114,14 +128,24 @@ export const config = {
   /** Auto-ingest — automatic conversation capture & analysis */
   autoIngest: {
     /** Feature flag — set AUTO_INGEST_ENABLED=false to disable */
-    enabled: (process.env.AUTO_INGEST_ENABLED || 'true') === 'true',
+    enabled: (getEnv('AUTO_INGEST_ENABLED') || 'true') === 'true',
     /** Minimum tool calls before triggering analysis pipeline */
-    minCalls: parseInt(process.env.AUTO_INGEST_MIN_CALLS || '2', 10),
+    minCalls: parseInt(getEnv('AUTO_INGEST_MIN_CALLS') || '2', 10),
     /** Use LLM for analysis (false = heuristic-only, saves cost) */
-    useLLM: (process.env.AUTO_INGEST_USE_LLM || 'false') === 'true',
+    useLLM: (getEnv('AUTO_INGEST_USE_LLM') || 'false') === 'true',
     /** Persist buffer to DB every N tool calls */
-    persistEvery: parseInt(process.env.AUTO_INGEST_PERSIST_EVERY || '10', 10),
+    persistEvery: parseInt(getEnv('AUTO_INGEST_PERSIST_EVERY') || '10', 10),
   },
-} as const;
+  };
+}
 
-export type Config = typeof config;
+export type Config = ReturnType<typeof buildConfig>;
+
+/**
+ * Lazily-evaluated config proxy. Cloudflare Workers inject env after module
+ * load, so values must resolve at access time, not import time. Render/Node
+ * behavior is identical (process.env read live on every access).
+ */
+export const config: Config = new Proxy({} as Config, {
+  get: (_target, prop) => (buildConfig() as unknown as Record<string | symbol, unknown>)[prop],
+});

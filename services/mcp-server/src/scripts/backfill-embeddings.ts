@@ -12,7 +12,7 @@
  * Processes memories in batches of 50, with a 200ms delay between
  * each embedding call to respect OpenAI rate limits.
  */
-import { pool } from '../db/client.js';
+import { getPool, close } from '../db/client.js';
 import { decrypt } from '../lib/encryption.js';
 import { generateEmbedding, buildEmbeddingInput, toPgVector, isEmbeddingConfigured } from '../lib/embeddings.js';
 
@@ -37,7 +37,7 @@ async function backfill(): Promise<void> {
 
   while (true) {
     // Fetch a batch of memories without embeddings
-    const batch = await pool.query(
+    const batch = await getPool().query(
       `SELECT id, title, tags, content_encrypted, content_iv, content_tag
        FROM memories
        WHERE embedding IS NULL AND is_active = true
@@ -62,7 +62,7 @@ async function backfill(): Promise<void> {
         const embedding = await generateEmbedding(input);
 
         if (embedding) {
-          await pool.query(
+          await getPool().query(
             `UPDATE memories SET embedding = $1, updated_at = NOW() WHERE id = $2`,
             [toPgVector(embedding), row.id],
           );
@@ -84,7 +84,7 @@ async function backfill(): Promise<void> {
   }
 
   console.log(`\nBackfill complete: ${totalEmbedded} embedded, ${totalFailed} failed out of ${totalProcessed} total.`);
-  await pool.end();
+  await close();
 }
 
 backfill().catch((err) => {
