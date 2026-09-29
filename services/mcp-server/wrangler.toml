@@ -1,0 +1,42 @@
+# ─── Memron MCP Server — Cloudflare Workers (second production front door) ───
+# Render remains the full deployment (HTTP + background workers).
+# This worker serves the same tools/auth/schema over the same shared database.
+#
+# Secrets are NEVER stored here. Set them with:
+#   wrangler secret put ENCRYPTION_SECRET
+#   wrangler secret put JWT_SECRET
+#   wrangler secret put GEMINI_API_KEY
+#   wrangler secret put ADMIN_SECRET   # only if you use admin endpoints
+#
+# Hyperdrive (required — Workers have no raw TCP):
+#   1. Cloudflare dashboard → Workers & Pages → Hyperdrive → Create
+#      Point it at the DIRECT Supabase host (db.xxxxx.supabase.co:5432 from
+#      Supabase → Database settings — NOT the pooler hostname).
+#   2. Paste the Hyperdrive ID below.
+
+name = "memron-mcp"
+main = "src/worker.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Free workers.dev URL, e.g. https://memron-mcp.<account>.workers.dev
+workers_dev = true
+
+# ─── Hyperdrive (Postgres proxy) ──────────────────────────────
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "2fb315fd385d4be19b5bd30f185d9820"
+
+# ─── Non-secret tunables (safe to keep in the file) ───────────
+[vars]
+MEMRON_RUNTIME = "worker"
+PG_MAX_CONNECTIONS = "2"
+PG_POOL_HARD_LIMIT = "3"
+PG_IDLE_TIMEOUT = "10000"
+RATE_LIMIT_MCP = "100"
+EMBEDDING_PROVIDER = "gemini"
+GEMINI_EMBEDDING_MODEL = "gemini-embedding-2"
+AUTO_INGEST_ENABLED = "false"
+
+# Free plan: default limits apply (no custom CPU/memory limits allowed).
+# If you upgrade to paid later, you may add a [limits] section.
