@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionFromRequest, setEmailVerifiedCookie } from '@/lib/session';
+import { getSessionFromRequest } from '@/lib/session';
 import { isOAuthProvider } from '@/lib/workos';
 import { 
     getUserFromPostgres, 
@@ -11,7 +11,7 @@ import {
     getApiKeysByUserId,
     createMainBucket,
 } from '@/lib/postgres';
-import { generateApiKey, generateOrgSlug, hashApiKey } from '@/lib/api-key';
+import { generateApiKey, generateOrgSlug } from '@/lib/api-key';
 import { saveOnboardingProfile, saveOrganizationToFirebase, saveApiKeyToFirebase } from '@/lib/firebase';
 import { syncUser } from '@/lib/db';
 import {
@@ -23,7 +23,6 @@ import {
 // POST /api/onboarding - Complete onboarding process
 export async function POST(request: NextRequest) {
     try {
-        // Identity comes from the WorkOS sealed session cookie.
         const session = await getSessionFromRequest(request);
         
         if (!session?.sub) {
@@ -35,7 +34,6 @@ export async function POST(request: NextRequest) {
         const userId = session.sub;
 
         // SECURITY: Block unverified email users from onboarding
-        // OAuth users (Google, GitHub) are auto-verified by WorkOS
         if (!isOAuthProvider(session.provider) && !session.emailVerified) {
             return NextResponse.json(
                 { error: 'Email verification required. Please verify your email before onboarding.' },
@@ -46,14 +44,10 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { step, data } = body;
 
-        // Get user from database — auto-sync on first visit (covers brand-new registrations
-        // where the background /api/user/sync hasn't fired yet)
-        let dbUser = await getUserFromPostgres(userId);
+        let dbUser = await getUserFromPostgres(userId, session.email);
         if (!dbUser && session.email) {
             const provider = isOAuthProvider(session.provider) ? (session.provider as string) : 'email';
 
-            // Try syncing with retry logic (3 attempts with backoff — a
-            // saturated pooler frees up within seconds as instances drain)
             for (let attempt = 1; attempt <= 3; attempt++) {
                 const syncResult = await syncUser({
                     workosUserId: userId,
@@ -65,18 +59,11 @@ export async function POST(request: NextRequest) {
                     provider: provider,
                 });
                 
-                if (syncResult.success) {
-                    break;
-                }
-                
-                // Backoff before retry (1s, then 2s)
-                if (attempt < 3) {
-                    console.log(`[Onboarding API] Sync attempt ${attempt} failed, retrying...`);
-                    await new Promise(r => setTimeout(r, 1000 * attempt));
-                }
+                if (syncResult.success) break;
+                if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
             }
             
-            dbUser = await getUserFromPostgres(userId);
+            dbUser = await getUserFromPostgres(userId, session.email);
         }
         if (!dbUser) {
             return NextResponse.json(
@@ -88,6 +75,19 @@ export async function POST(request: NextRequest) {
         switch (step) {
             case 'create-organization': {
                 const { orgName, orgDescription } = data;
+
+                // Check if user already has an organization
+                const existingOrg = await getOrganizationByUserId(dbUser.id);
+                if (existingOrg) {
+                    return NextResponse.json({
+                        success: true,
+                        organization: {
+                            id: existingOrg.org_id,
+                            name: existingOrg.name,
+                            slug: existingOrg.slug,
+                        },
+                    });
+                }
 
                 if (!orgName || orgName.trim().length < 2) {
                     return NextResponse.json(
@@ -119,9 +119,8 @@ export async function POST(request: NextRequest) {
                     );
                 }
 
-                // Mirror organization to Firebase immediately (Step 1 sync)
                 saveOrganizationToFirebase({
-                    clerkId: userId, // Identity column shared across auth providers
+                    clerkId: userId,
                     orgId: orgResult.organization!.org_id,
                     name: orgResult.organization!.name,
                     slug: orgResult.organization!.slug,
@@ -129,11 +128,10 @@ export async function POST(request: NextRequest) {
                     createdAt: orgResult.organization!.created_at,
                 }).catch((e: any) => console.warn('[Onboarding API] Firebase org sync (non-fatal):', e.message));
 
-                // Mirror organization to Supabase (non-blocking)
                 syncOrgToSupabase({
                     name: orgResult.organization!.name,
                     slug: orgResult.organization!.slug,
-                    ownerClerkId: userId, // Identity column shared across auth providers
+                    ownerClerkId: userId,
                     orgUuid: orgResult.organization!.org_id,
                     description: orgDescription?.trim() || null,
                 }).catch((e: any) => console.warn('[Onboarding API] Supabase org sync (non-fatal):', e.message));
@@ -149,7 +147,6 @@ export async function POST(request: NextRequest) {
             }
 
             case 'generate-api-key': {
-                // Get user's organization
                 const org = await getOrganizationByUserId(dbUser.id);
                 if (!org) {
                     return NextResponse.json(
@@ -158,9 +155,6 @@ export async function POST(request: NextRequest) {
                     );
                 }
 
-                // Guard: if key already exists, never generate a second one.
-                // The full key is shown exactly once — returning a new one would be a
-                // security mistake and would create duplicate keys.
                 const existingKeys = await getApiKeysByUserId(dbUser.id);
                 if (existingKeys.length > 0) {
                     return NextResponse.json({
@@ -174,10 +168,8 @@ export async function POST(request: NextRequest) {
                     });
                 }
 
-                // Generate API key
                 const apiKey = generateApiKey('live');
 
-                // Save to database (only hash, never the full key)
                 const saveResult = await saveApiKey({
                     keyPrefix: apiKey.prefix,
                     keyHash: apiKey.hash,
@@ -194,10 +186,8 @@ export async function POST(request: NextRequest) {
                     );
                 }
 
-                // Mirror API key metadata to Firebase immediately (Step 2 sync)
-                // NOTE: only prefix is stored — NEVER hash or full key
                 saveApiKeyToFirebase({
-                    clerkId: userId, // Identity column shared across auth providers
+                    clerkId: userId,
                     keyId: saveResult.apiKey!.key_id,
                     keyPrefix: apiKey.prefix,
                     keyName: data.keyName || 'Default API Key',
@@ -206,7 +196,6 @@ export async function POST(request: NextRequest) {
                     createdAt: saveResult.apiKey!.created_at,
                 }).catch((e: any) => console.warn('[Onboarding API] Firebase key sync (non-fatal):', e.message));
 
-                // Mirror API key to Supabase (awaited — MCP auth depends on this)
                 await syncApiKeyToSupabase({
                     keyId: saveResult.apiKey!.key_id,
                     keyPrefix: apiKey.prefix,
@@ -219,10 +208,8 @@ export async function POST(request: NextRequest) {
                     scopes: ['memory:read', 'memory:write', 'memory:delete'],
                 }).catch((e: any) => console.error('[Onboarding API] Supabase key sync FAILED:', e.message));
 
-                // Create main bucket in primary DB
                 await createMainBucket(dbUser.id, org.id);
 
-                // Return the full key ONCE - user must save it
                 return NextResponse.json({
                     success: true,
                     apiKey: {
@@ -236,8 +223,7 @@ export async function POST(request: NextRequest) {
             }
 
             case 'complete': {
-                // Mark user as onboarded in PostgreSQL
-                const success = await markUserOnboarded(userId);
+                const success = await markUserOnboarded(userId, session.email);
 
                 if (!success) {
                     return NextResponse.json(
@@ -246,7 +232,6 @@ export async function POST(request: NextRequest) {
                     );
                 }
 
-                // Sync structured onboarding profile to Firebase (Step 3 — completion record)
                 try {
                     const org = await getOrganizationByUserId(dbUser.id);
                     const apiKeys = await getApiKeysByUserId(dbUser.id);
@@ -255,7 +240,7 @@ export async function POST(request: NextRequest) {
 
                     if (org) {
                         await saveOnboardingProfile({
-                            clerkId: userId, // Identity column shared across auth providers
+                            clerkId: userId,
                             universalId: dbUser.universal_id,
                             email: dbUser.email,
                             fullName: dbUser.full_name,
@@ -267,12 +252,9 @@ export async function POST(request: NextRequest) {
                         });
                     }
                 } catch (fbErr: any) {
-                    // Non-fatal — PostgreSQL is the source of truth
                     console.warn('[Onboarding API] Firebase profile sync failed (non-fatal):', fbErr.message);
                 }
 
-                // ── Full Supabase sync (user + org + key + bucket) ──
-                // Ensures the MCP server's database has the complete user graph.
                 try {
                     const org = await getOrganizationByUserId(dbUser.id);
                     const apiKeys = await getApiKeysByUserId(dbUser.id);
@@ -280,7 +262,7 @@ export async function POST(request: NextRequest) {
 
                     if (org && latestKey) {
                         fullOnboardingSyncToSupabase({
-                            clerkId: userId, // Identity column shared across auth providers
+                            clerkId: userId,
                             email: dbUser.email,
                             firstName: dbUser.first_name,
                             lastName: dbUser.last_name,
@@ -300,7 +282,6 @@ export async function POST(request: NextRequest) {
                     console.warn('[Onboarding API] Supabase onboarding sync failed (non-fatal):', supaErr.message);
                 }
 
-                // Set onboarded cookie for middleware
                 const response = NextResponse.json({
                     success: true,
                     message: 'Onboarding completed successfully',
@@ -311,7 +292,7 @@ export async function POST(request: NextRequest) {
                     httpOnly: false,
                     secure: process.env.NODE_ENV === 'production',
                     sameSite: 'lax',
-                    maxAge: 60 * 60 * 24 * 365, // 1 year
+                    maxAge: 60 * 60 * 24 * 365,
                     path: '/',
                 });
 
@@ -347,7 +328,6 @@ export async function GET(request: NextRequest) {
         const userId = session.sub;
 
         // SECURITY: Check email verification for email users
-        // OAuth users (Google, GitHub) are auto-verified by WorkOS
         if (!isOAuthProvider(session.provider) && !session.emailVerified) {
             return NextResponse.json(
                 { 
@@ -358,8 +338,7 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // Establish the primary identity in DB if not present
-        let dbUser = await getUserFromPostgres(userId);
+        let dbUser = await getUserFromPostgres(userId, session.email);
         if (!dbUser && session.email) {
             const provider = isOAuthProvider(session.provider) ? session.provider : 'email';
             try {
@@ -372,15 +351,13 @@ export async function GET(request: NextRequest) {
                     imageUrl: session.imageUrl,
                     provider,
                 });
-                dbUser = await getUserFromPostgres(userId);
+                dbUser = await getUserFromPostgres(userId, session.email);
             } catch (syncErr: any) {
                 console.warn('[Onboarding API] Background user sync warning:', syncErr.message);
             }
         }
         
         if (!dbUser) {
-            // User is authenticated in WorkOS, but record not yet committed to DB.
-            // Return un-onboarded state so user is guided to onboarding rather than bricking with 503!
             return NextResponse.json({
                 isOnboarded: false,
                 onboardedAt: null,
@@ -397,7 +374,6 @@ export async function GET(request: NextRequest) {
                 },
             });
         }
-
 
         const [org, apiKeys] = await Promise.all([
             getOrganizationByUserId(dbUser.id),
@@ -432,18 +408,15 @@ export async function GET(request: NextRequest) {
             },
         });
 
-        // If user is already onboarded in DB, heal the cookie in case it was cleared
         if (dbUser.is_onboarded) {
             responseBody.cookies.set('memron_onboarded', 'true', {
                 httpOnly: false,
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
-                maxAge: 60 * 60 * 24 * 365, // 1 year
+                maxAge: 60 * 60 * 24 * 365,
                 path: '/',
             });
         } else {
-            // Remove stale client routing state after a reset or account
-            // migration. The next navigation cannot skip onboarding.
             responseBody.cookies.set('memron_onboarded', '', {
                 httpOnly: false,
                 secure: process.env.NODE_ENV === 'production',

@@ -15,6 +15,7 @@ import { nanoid } from 'nanoid';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { MemronClientsStore } from './clients-store.js';
 import { MemronTokenVerifier } from './verify.js';
+import { LOGO_BLACK_BASE64, LOGO_WHITE_BASE64 } from './assets.js';
 import * as db from '../db/queries.js';
 import * as tokens from '../lib/tokens.js';
 import { config } from '../config.js';
@@ -157,10 +158,10 @@ export class MemronOAuthProvider {
 
     return {
       access_token: accessToken,
-      token_type: 'bearer',
+      token_type: 'Bearer',
       expires_in: config.jwt.accessTokenTtlSeconds,
       refresh_token: refreshTokenValue,
-      scope: authCode.scopes.join(' '),
+      scope: Array.isArray(authCode.scopes) ? authCode.scopes.join(' ') : 'memory:read memory:write',
     };
   }
 
@@ -226,10 +227,10 @@ export class MemronOAuthProvider {
 
     return {
       access_token: newAccessToken,
-      token_type: 'bearer',
+      token_type: 'Bearer',
       expires_in: config.jwt.accessTokenTtlSeconds,
       refresh_token: newRefreshToken,
-      scope: grantedScopes.join(' '),
+      scope: Array.isArray(grantedScopes) ? grantedScopes.join(' ') : 'memory:read memory:write',
     };
   }
 
@@ -277,6 +278,7 @@ export function renderLoginPage(requestId: string, error?: string): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Authorize — Memron MCP</title>
+  <link rel="icon" type="image/png" href="${LOGO_BLACK_BASE64}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
@@ -327,7 +329,7 @@ export function renderLoginPage(requestId: string, error?: string): string {
 
         <!-- Logo -->
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:2rem">
-          <img src="/logo_b.png" alt="Memron" width="40" height="40" style="object-fit:contain">
+          <img src="${LOGO_BLACK_BASE64}" alt="Memron" width="40" height="40" style="object-fit:contain">
           <span style="font-family:'Space Grotesk',sans-serif;font-size:1.35rem;font-weight:700;color:#09090b;letter-spacing:-0.025em">Memron</span>
         </div>
 
@@ -420,7 +422,7 @@ export function renderLoginPage(requestId: string, error?: string): string {
       <div style="position:absolute;bottom:-20%;left:-10%;width:450px;height:450px;border-radius:50%;background:radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%);animation:floatOrb 12s ease-in-out infinite reverse;pointer-events:none"></div>
 
       <!-- Watermark logo -->
-      <img src="/logo_w.png" alt="" width="320" height="320" aria-hidden="true" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);object-fit:contain;opacity:0.07;pointer-events:none;animation:pulse 8s ease-in-out infinite">
+      <img src="${LOGO_WHITE_BASE64}" alt="" width="320" height="320" aria-hidden="true" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);object-fit:contain;opacity:0.07;pointer-events:none;animation:pulse 8s ease-in-out infinite">
 
       <!-- Content -->
       <div class="fade-up-delay" style="position:relative;z-index:1;width:100%;max-width:520px">
@@ -560,4 +562,60 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * Render a beautiful dark success page with the official Memron logo.
+ */
+export function renderAuthSuccessPage(title = 'Authorization Successful', message = 'You can close this window and return to your terminal or agent.'): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(title)} — Memron MCP</title>
+  <link rel="icon" type="image/png" href="${LOGO_BLACK_BASE64}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #09090b; color: #fafafa; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; overflow: hidden; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes popIn { 0% { transform: scale(0.8); opacity: 0; } 70% { transform: scale(1.05); } 100% { transform: scale(1); opacity: 1; } }
+    .fade-up { animation: fadeUp 0.65s cubic-bezier(0.16,1,0.3,1) forwards; }
+    .pop-in { animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+  </style>
+</head>
+<body>
+  <!-- Ambient glow -->
+  <div style="position:absolute;top:20%;left:50%;transform:translate(-50%,-50%);width:500px;height:500px;border-radius:50%;background:radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%);pointer-events:none"></div>
+
+  <div class="fade-up" style="position:relative;z-index:1;background:rgba(24,24,27,0.7);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.08);border-radius:24px;padding:3rem 2.5rem;max-width:440px;width:100%;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,0.5)">
+    <!-- Memron Logo -->
+    <div style="display:inline-flex;align-items:center;justify-content:center;margin-bottom:1.5rem">
+      <img src="${LOGO_WHITE_BASE64}" alt="Memron" width="56" height="56" style="object-fit:contain">
+    </div>
+
+    <!-- Success Check Icon -->
+    <div class="pop-in" style="margin:0 auto 1.5rem;width:56px;height:56px;border-radius:50%;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.25);display:flex;align-items:center;justify-content:center">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+    </div>
+
+    <h1 style="font-family:'Space Grotesk',sans-serif;font-size:1.65rem;font-weight:700;letter-spacing:-0.025em;color:#fafafa;margin-bottom:0.6rem">
+      ${escapeHtml(title)}
+    </h1>
+    <p style="font-size:0.92rem;color:#a1a1aa;line-height:1.6;margin-bottom:1.75rem">
+      ${escapeHtml(message)}
+    </p>
+
+    <div style="padding:10px 16px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);border-radius:12px;display:flex;align-items:center;justify-content:center;gap:8px">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e"></span>
+      <span style="font-size:0.8rem;color:#d4d4d8;font-weight:500">MCP Client Connected</span>
+    </div>
+  </div>
+</body>
+</html>`;
 }

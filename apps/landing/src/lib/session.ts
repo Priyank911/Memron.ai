@@ -220,6 +220,18 @@ export function setEmailVerifiedCookie(response: CookieSetter, verified: boolean
   });
 }
 
+export function setOnboardedCookie(response: CookieSetter, onboarded: boolean): void {
+  response.cookies.set({
+    name: ONBOARDED_COOKIE_NAME,
+    value: onboarded ? 'true' : '',
+    httpOnly: false,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: onboarded ? SESSION_TTL_SECONDS : 0,
+    path: '/',
+  });
+}
+
 export function clearAuxiliaryCookies(response: CookieSetter): void {
   for (const name of [EMAIL_VERIFIED_COOKIE_NAME, ONBOARDED_COOKIE_NAME]) {
     response.cookies.set({

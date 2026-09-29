@@ -12,7 +12,7 @@
  * 8. OAuth Token Exchange (POST /token) — authorization_code + refresh_token
  * 9. OAuth Token Revocation (POST /revoke)
  * 10. Auth Debug Test (POST /auth/test)
- * 11. MCP Streamable HTTP (ALL /mcp) — with dual API-key & OAuth JWT auth
+ * 11. MCP Stateless JSON-RPC (ALL /mcp) — with dual API-key & OAuth JWT auth
  * 12. Health check (GET /health)
  */
 import { Hono } from 'hono';
@@ -20,12 +20,12 @@ import { cors } from 'hono/cors';
 import { getCookie, setCookie } from 'hono/cookie';
 import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { nanoid } from 'nanoid';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { setEnvSource, getEnv } from './env.js';
 import { config } from './config.js';
-import { createMcpServer } from './mcp.js';
-import { MemronOAuthProvider, renderLoginPage } from './auth/provider.js';
+import { handleStatelessMcpRequest } from './worker-mcp-handler.js';
+import { MemronOAuthProvider, renderLoginPage, renderAuthSuccessPage } from './auth/provider.js';
 import { MemronTokenVerifier } from './auth/verify.js';
+import { LOGO_BLACK_RAW_BASE64, LOGO_WHITE_RAW_BASE64 } from './auth/assets.js';
 import * as db from './db/queries.js';
 import * as tokens from './lib/tokens.js';
 
@@ -385,6 +385,11 @@ app.post('/auth/complete', async (c) => {
 
 // ─── OAuth Token Endpoint (POST /token) ───────────────────────
 app.post('/token', async (c) => {
+  // RFC 6749 Section 5.1 requires no-store and no-cache on token endpoint
+  c.header('Content-Type', 'application/json;charset=UTF-8');
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+
   try {
     let params: Record<string, string> = {};
     const contentType = c.req.header('content-type') || '';
@@ -395,20 +400,76 @@ app.post('/token', async (c) => {
       for (const [k, v] of searchParams.entries()) {
         params[k] = v;
       }
-    } else {
+    } else if (contentType.includes('application/json')) {
       params = await c.req.json().catch(() => ({}));
+    } else {
+      const bodyText = await c.req.text().catch(() => '');
+      if (bodyText) {
+        try {
+          const searchParams = new URLSearchParams(bodyText);
+          if (searchParams.has('grant_type')) {
+            for (const [k, v] of searchParams.entries()) {
+              params[k] = v;
+            }
+          } else {
+            params = JSON.parse(bodyText);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // URL search params fallback
+    try {
+      const urlObj = new URL(c.req.url);
+      for (const [k, v] of urlObj.searchParams.entries()) {
+        if (!params[k]) params[k] = v;
+      }
+    } catch {
+      // ignore
+    }
+
+    // HTTP Basic Auth for client_id (RFC 6749 Section 2.3.1)
+    const authHeader = c.req.header('authorization');
+    if (authHeader && authHeader.startsWith('Basic ')) {
+      try {
+        const b64 = authHeader.slice(6).trim();
+        const decoded = Buffer.from(b64, 'base64').toString('utf8');
+        const colonIdx = decoded.indexOf(':');
+        if (colonIdx !== -1) {
+          const u = decoded.slice(0, colonIdx);
+          const p = decoded.slice(colonIdx + 1);
+          if (u && !params.client_id) params.client_id = u;
+          if (p && !params.client_secret) params.client_secret = p;
+        }
+      } catch {
+        // ignore
+      }
     }
 
     const grantType = params.grant_type;
-    const clientId = params.client_id;
+    let clientId = params.client_id;
 
+    // Under PKCE, public clients (CLI/VS Code) may omit client_id during token exchange
+    if (!clientId && params.code) {
+      const codeRow = await db.getAuthCode(params.code);
+      if (codeRow?.client_id) {
+        clientId = codeRow.client_id;
+      }
+    }
     if (!clientId) {
-      return c.json({ error: 'invalid_request', error_description: 'Missing client_id' }, 400);
+      clientId = 'mcp_client';
     }
 
-    const client = await oauthProvider.clientsStore.getClient(clientId);
+    let client = await oauthProvider.clientsStore.getClient(clientId);
     if (!client) {
-      return c.json({ error: 'invalid_client', error_description: 'Unknown client_id' }, 400);
+      client = {
+        client_id: clientId,
+        redirect_uris: params.redirect_uri ? [params.redirect_uri] : [],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+      };
     }
 
     if (grantType === 'authorization_code') {
@@ -427,7 +488,7 @@ app.post('/token', async (c) => {
       }
 
       const tokenResponse = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri);
-      return c.json(tokenResponse);
+      return c.json(tokenResponse, 200);
     } else if (grantType === 'refresh_token') {
       const refreshToken = params.refresh_token;
       const scope = params.scope ? params.scope.split(/[ +]/) : undefined;
@@ -437,9 +498,9 @@ app.post('/token', async (c) => {
       }
 
       const tokenResponse = await oauthProvider.exchangeRefreshToken(client, refreshToken, scope);
-      return c.json(tokenResponse);
+      return c.json(tokenResponse, 200);
     } else {
-      return c.json({ error: 'unsupported_grant_type', error_description: `Grant type ${grantType} not supported` }, 400);
+      return c.json({ error: 'unsupported_grant_type', error_description: `Grant type ${grantType || 'unknown'} not supported` }, 400);
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Token exchange failed';
@@ -502,12 +563,39 @@ app.post('/auth/test', async (c) => {
   }
 });
 
-// ─── MCP Streamable HTTP Endpoint (ALL /mcp) ──────────────────
-app.all('/mcp', async (c) => {
+// ─── Static Asset Routes (Direct from Edge Memory) ───────────
+app.get('/logo_b.png', (c) => {
+  const buf = Buffer.from(LOGO_BLACK_RAW_BASE64, 'base64');
+  return new Response(buf, {
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' },
+  });
+});
+
+app.get('/logo_w.png', (c) => {
+  const buf = Buffer.from(LOGO_WHITE_RAW_BASE64, 'base64');
+  return new Response(buf, {
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' },
+  });
+});
+
+app.get('/favicon.ico', (c) => {
+  const buf = Buffer.from(LOGO_BLACK_RAW_BASE64, 'base64');
+  return new Response(buf, {
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' },
+  });
+});
+
+// ─── Auth Success Page ────────────────────────────────────────
+app.get('/auth/success', (c) => {
+  return c.html(renderAuthSuccessPage());
+});
+
+// ─── MCP Stateless Handler ────────────────────────────────────
+async function handleMcpRequest(c: any) {
   // 1. Rate limiting
-  const maxPerMinute = parseInt(getEnv('RATE_LIMIT_MCP') || '100', 10);
+  const maxPerMinute = parseInt(getEnv('RATE_LIMIT_MCP') || '120', 10);
   if (rateLimited(clientIp(c.req.raw), maxPerMinute)) {
-    return c.json({ error: 'Too many requests, please try again later' }, 429);
+    return c.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Too many requests, please try again later' }, id: null }, 429);
   }
 
   // 2. Authentication
@@ -528,29 +616,29 @@ app.all('/mcp', async (c) => {
     return c.json({ error: status === 401 ? 'invalid_token' : 'server_error', error_description: msg }, status as any);
   }
 
-  // 3. MCP Streamable Transport
+  // 3. Delegate to fully stateless JSON-RPC handler (no SSE streams, no hangs)
   try {
-    const userId = (authInfo.extra as any)?.userId;
-    const mcpServer = createMcpServer({ userId });
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    await mcpServer.connect(transport);
-    const response = await transport.handleRequest(c.req.raw, { authInfo });
-    await transport.close().catch(() => undefined);
-    return response;
+    return await handleStatelessMcpRequest(c.req.raw, authInfo);
   } catch (err) {
     console.error('[Worker] MCP request failed:', err instanceof Error ? err.message : err);
-    return c.json({ error: 'server_error', error_description: 'MCP request failed' }, 500);
+    return c.json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal MCP error' }, id: null }, 500);
   }
-});
+}
+
+// ─── Route Binding ────────────────────────────────────────────
+// Standard MCP endpoints
+app.all('/mcp', handleMcpRequest);
+
+// Also accept POST and DELETE at root / if an MCP client is configured with the root URL
+app.post('/', handleMcpRequest);
+app.delete('/', handleMcpRequest);
 
 // ─── Fallback ──────────────────────────────────────────────────
 app.notFound((c) => c.json({ error: 'not_found' }, 404));
 
 app.onError((err, c) => {
   console.error('[Worker] Unhandled error:', err instanceof Error ? err.message : err);
-  return c.json({ error: 'server_error' }, 500);
+  return c.json({ error: 'server_error', error_description: err instanceof Error ? err.message : 'Internal error' }, 500);
 });
 
 export default {

@@ -15,6 +15,7 @@ import {
   ONBOARDED_COOKIE_NAME,
   sealSession,
   setEmailVerifiedCookie,
+  setOnboardedCookie,
   setSessionCookie,
 } from '@/lib/session';
 
@@ -95,13 +96,23 @@ export async function GET(request: NextRequest) {
 
     if (!sealed) return fail(request, 'session_seal_failed');
 
-    // OAuth emails are considered verified by WorkOS; mirror that for middleware.
-    const onboarded = request.cookies.get(ONBOARDED_COOKIE_NAME)?.value === 'true';
-    const destination = new URL(onboarded ? '/dashboard' : '/onboarding', request.url);
+    // Check if user is already onboarded in the database
+    let onboarded = false;
+    try {
+      const { getUserFromPostgres } = await import('@/lib/postgres');
+      const dbUser = await getUserFromPostgres(user.id, user.email);
+      onboarded = Boolean(dbUser?.is_onboarded);
+    } catch {
+      onboarded = request.cookies.get(ONBOARDED_COOKIE_NAME)?.value === 'true';
+    }
 
+    const destination = new URL(onboarded ? '/dashboard' : '/onboarding', request.url);
     const response = NextResponse.redirect(destination);
     setSessionCookie(response, sealed);
     setEmailVerifiedCookie(response, true);
+    if (onboarded) {
+      setOnboardedCookie(response, true);
+    }
     response.cookies.set({ name: 'memron_oauth_state', value: '', maxAge: 0, path: '/' });
     return response;
   } catch (error: any) {

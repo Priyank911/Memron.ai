@@ -75,6 +75,16 @@ export async function POST(request: NextRequest) {
     });
     setSessionCookie(response, sealed);
     setEmailVerifiedCookie(response, profile.emailVerified);
+
+    try {
+      const { getUserFromPostgres } = await import('@/lib/postgres');
+      const { setOnboardedCookie } = await import('@/lib/session');
+      const dbUser = await getUserFromPostgres(profile.uid, profile.email);
+      if (dbUser?.is_onboarded) {
+        setOnboardedCookie(response, true);
+      }
+    } catch { /* non-fatal */ }
+
     return response;
   } catch (authError: any) {
     // ── Unverified account: establish a limited session and make sure the

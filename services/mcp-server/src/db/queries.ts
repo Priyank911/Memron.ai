@@ -665,7 +665,7 @@ export async function insertAuthCode(params: {
   );
 }
 
-export async function getAuthCode(code: string, clientId: string): Promise<{
+export async function getAuthCode(code: string, clientId?: string): Promise<{
   code: string;
   client_id: string;
   user_id: number;
@@ -675,12 +675,20 @@ export async function getAuthCode(code: string, clientId: string): Promise<{
   used: boolean;
   expires_at: Date;
 } | null> {
-  const result = await query(
+  if (clientId) {
+    const result = await query(
+      `SELECT * FROM mcp_auth_codes
+       WHERE code = $1 AND (client_id = $2 OR client_id IS NULL) AND used = false AND expires_at > NOW()`,
+      [code, clientId],
+    );
+    if (result.rows.length > 0) return result.rows[0];
+  }
+  const fallback = await query(
     `SELECT * FROM mcp_auth_codes
-     WHERE code = $1 AND client_id = $2 AND used = false AND expires_at > NOW()`,
-    [code, clientId],
+     WHERE code = $1 AND used = false AND expires_at > NOW()`,
+    [code],
   );
-  return result.rows[0] ?? null;
+  return fallback.rows[0] ?? null;
 }
 
 export async function markAuthCodeUsed(code: string): Promise<void> {

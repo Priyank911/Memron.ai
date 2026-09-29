@@ -69,9 +69,7 @@ export async function signAccessToken(payload: {
  * @throws if token is expired, malformed, or signature is invalid
  */
 export async function verifyAccessToken(token: string): Promise<AccessTokenPayload> {
-  const { payload } = await jwtVerify(token, getSigningKey(), {
-    issuer: config.jwt.issuer,
-  });
+  const { payload } = await jwtVerify(token, getSigningKey());
   return payload as unknown as AccessTokenPayload;
 }
 
@@ -98,9 +96,7 @@ export async function signRefreshToken(payload: {
  * Verify and decode a refresh token.
  */
 export async function verifyRefreshToken(token: string): Promise<RefreshTokenPayload> {
-  const { payload } = await jwtVerify(token, getSigningKey(), {
-    issuer: config.jwt.issuer,
-  });
+  const { payload } = await jwtVerify(token, getSigningKey());
   if ((payload as any).type !== 'refresh') {
     throw new Error('Not a refresh token');
   }

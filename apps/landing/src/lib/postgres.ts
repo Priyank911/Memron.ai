@@ -640,13 +640,46 @@ export async function saveUserToPostgres(userData: {
         // Ensure schema exists before first write
         await ensureSchemaForWrite();
 
-        // Use firebase_uid as primary key if available, otherwise fall back to clerk_id
+        // 1. Check if user already exists by email (highest fidelity identity match across auth migrations)
+        const existingByEmail = await pool.query(
+            'SELECT * FROM users WHERE email = $1 LIMIT 1',
+            [userData.email]
+        );
+
+        if (existingByEmail.rows.length > 0) {
+            const result = await pool.query(
+                `UPDATE users SET
+                   clerk_id = COALESCE($1, users.clerk_id),
+                   firebase_uid = COALESCE($2, users.firebase_uid),
+                   first_name = COALESCE($3, users.first_name),
+                   last_name = COALESCE($4, users.last_name),
+                   full_name = COALESCE($5, users.full_name),
+                   image_url = COALESCE($6, users.image_url),
+                   provider = COALESCE($7, users.provider),
+                   last_login_at = NOW()
+                 WHERE email = $8
+                 RETURNING *`,
+                [
+                    clerkId,
+                    firebaseUid,
+                    userData.firstName || null,
+                    userData.lastName || null,
+                    userData.fullName || null,
+                    userData.imageUrl || null,
+                    userData.provider || 'email',
+                    userData.email,
+                ]
+            );
+            return { success: true, user: result.rows[0] as PgUser };
+        }
+
+        // 2. Fresh user insert
         if (firebaseUid) {
             const result = await pool.query(
                 `INSERT INTO users (firebase_uid, clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-           ON CONFLICT (firebase_uid) DO UPDATE SET
-             email = EXCLUDED.email,
+           ON CONFLICT (email) DO UPDATE SET
+             clerk_id = COALESCE(EXCLUDED.clerk_id, users.clerk_id),
              first_name = COALESCE(EXCLUDED.first_name, users.first_name),
              last_name = COALESCE(EXCLUDED.last_name, users.last_name),
              full_name = COALESCE(EXCLUDED.full_name, users.full_name),
@@ -666,12 +699,11 @@ export async function saveUserToPostgres(userData: {
             );
             return { success: true, user: result.rows[0] as PgUser };
         } else {
-            // Legacy path: use clerk_id
             const result = await pool.query(
                 `INSERT INTO users (clerk_id, email, first_name, last_name, full_name, image_url, provider, last_login_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-           ON CONFLICT (clerk_id) DO UPDATE SET
-             email = EXCLUDED.email,
+           ON CONFLICT (email) DO UPDATE SET
+             clerk_id = COALESCE(EXCLUDED.clerk_id, users.clerk_id),
              first_name = COALESCE(EXCLUDED.first_name, users.first_name),
              last_name = COALESCE(EXCLUDED.last_name, users.last_name),
              full_name = COALESCE(EXCLUDED.full_name, users.full_name),
@@ -697,18 +729,22 @@ export async function saveUserToPostgres(userData: {
 }
 
 /**
- * Get a user from PostgreSQL by userId (workos_user_id, firebase_uid, clerk_id, universal_id)
+ * Get a user from PostgreSQL by userId (workos_user_id, firebase_uid, clerk_id, universal_id) or email
  */
 export async function getUserFromPostgres(
-    userId: string
+    userId: string,
+    email?: string
 ): Promise<PgUser | null> {
     if (!pool) {
         if (isSupabaseConfigured()) {
             try {
-                const res = await supaQuery(
+                let res = await supaQuery(
                     'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
                     [userId]
                 );
+                if (res.rows.length === 0 && email) {
+                    res = await supaQuery('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+                }
                 return res.rows.length > 0 ? (res.rows[0] as PgUser) : null;
             } catch {
                 return null;
@@ -724,6 +760,17 @@ export async function getUserFromPostgres(
             'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
             [userId]
         );
+
+        if (result.rows.length === 0 && email) {
+            result = await pool.query(
+                'SELECT * FROM users WHERE email = $1 LIMIT 1',
+                [email]
+            );
+            if (result.rows.length > 0 && userId) {
+                // Link new WorkOS/AuthKit ID to existing record
+                pool.query('UPDATE users SET clerk_id = $1, last_login_at = NOW() WHERE id = $2', [userId, result.rows[0].id]).catch(() => {});
+            }
+        }
         
         if (result.rows.length > 0) {
             globalForSchema.pgConnectionOk = true;
@@ -733,10 +780,13 @@ export async function getUserFromPostgres(
         // Fallback to Supabase if not found in primary
         if (isSupabaseConfigured()) {
             try {
-                const supaRes = await supaQuery(
+                let supaRes = await supaQuery(
                     'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
                     [userId]
                 );
+                if (supaRes.rows.length === 0 && email) {
+                    supaRes = await supaQuery('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+                }
                 if (supaRes.rows.length > 0) return supaRes.rows[0] as PgUser;
             } catch { /* silent */ }
         }
@@ -745,10 +795,13 @@ export async function getUserFromPostgres(
     } catch (error: any) {
         if (isSupabaseConfigured()) {
             try {
-                const supaRes = await supaQuery(
+                let supaRes = await supaQuery(
                     'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
                     [userId]
                 );
+                if (supaRes.rows.length === 0 && email) {
+                    supaRes = await supaQuery('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+                }
                 if (supaRes.rows.length > 0) return supaRes.rows[0] as PgUser;
             } catch { /* silent */ }
         }
@@ -1056,23 +1109,45 @@ export async function revokeApiKey(keyId: string, userId: number): Promise<boole
  * Mark user as onboarded
  * Supports both firebase_uid (new) and clerk_id (legacy) lookups.
  */
-export async function markUserOnboarded(userId: string): Promise<boolean> {
-    if (!pool) return false;
+export async function markUserOnboarded(userId: string, email?: string): Promise<boolean> {
+    if (!pool) {
+        if (isSupabaseConfigured()) {
+            try {
+                let res = await supaQuery(
+                    'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1',
+                    [userId]
+                );
+                if ((res.rowCount ?? 0) === 0 && email) {
+                    res = await supaQuery('UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE email = $1', [email]);
+                }
+                return (res.rowCount ?? 0) > 0;
+            } catch {
+                return false;
+            }
+        }
+        return false;
+    }
 
     try {
         await ensureSchema();
         
-        // Try firebase_uid first, then clerk_id
         let result = await pool.query(
-            'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE firebase_uid = $1',
+            'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1',
             [userId]
         );
         
-        if ((result.rowCount ?? 0) === 0) {
+        if ((result.rowCount ?? 0) === 0 && email) {
             result = await pool.query(
-                'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE clerk_id = $1',
-                [userId]
+                'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE email = $1',
+                [email]
             );
+        }
+
+        if (isSupabaseConfigured()) {
+            supaQuery(
+                'UPDATE users SET is_onboarded = true, onboarded_at = NOW() WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1',
+                [userId]
+            ).catch(() => {});
         }
         
         return (result.rowCount ?? 0) > 0;
@@ -1084,24 +1159,38 @@ export async function markUserOnboarded(userId: string): Promise<boolean> {
 
 /**
  * Check if user is onboarded
- * Supports both firebase_uid (new) and clerk_id (legacy) lookups.
  */
-export async function isUserOnboarded(userId: string): Promise<boolean> {
-    if (!pool) return false;
+export async function isUserOnboarded(userId: string, email?: string): Promise<boolean> {
+    if (!pool) {
+        if (isSupabaseConfigured()) {
+            try {
+                let res = await supaQuery(
+                    'SELECT is_onboarded FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1',
+                    [userId]
+                );
+                if (res.rows.length === 0 && email) {
+                    res = await supaQuery('SELECT is_onboarded FROM users WHERE email = $1', [email]);
+                }
+                return res.rows.length > 0 && res.rows[0].is_onboarded === true;
+            } catch {
+                return false;
+            }
+        }
+        return false;
+    }
 
     try {
         await ensureSchema();
         
-        // Try firebase_uid first, then clerk_id
         let result = await pool.query(
-            'SELECT is_onboarded FROM users WHERE firebase_uid = $1',
+            'SELECT is_onboarded FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1',
             [userId]
         );
         
-        if (result.rows.length === 0) {
+        if (result.rows.length === 0 && email) {
             result = await pool.query(
-                'SELECT is_onboarded FROM users WHERE clerk_id = $1',
-                [userId]
+                'SELECT is_onboarded FROM users WHERE email = $1',
+                [email]
             );
         }
         return result.rows.length > 0 && result.rows[0].is_onboarded === true;
