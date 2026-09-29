@@ -2,36 +2,55 @@
 // Used as the main source of truth for all structured data
 
 import { Pool, PoolClient } from 'pg';
+import { supaQuery, isSupabaseConfigured } from './supabase-read';
 
-// Build SSL config for Supabase
+// Build SSL config for Supabase / Aiven / Neon / Postgres
 // - If PG_SSL=false, disable SSL entirely (local docker-compose)
 // - If PG_CA_CERT is set, use it as the trusted CA
-// - Otherwise, use SSL with relaxed cert verification (Supabase default)
+// - Otherwise, use SSL with relaxed cert verification (default for cloud providers)
 const sslConfig: any = process.env.PG_SSL === 'false'
     ? false
     : process.env.PG_CA_CERT
         ? { rejectUnauthorized: true, ca: process.env.PG_CA_CERT }
         : { rejectUnauthorized: false };
 
-// Check if PostgreSQL is configured
-const isPgConfigured = !!(process.env.PG_HOST && process.env.PG_DATABASE && process.env.PG_USER && process.env.PG_PASSWORD);
+// Check connection string from various cloud providers (Vercel, Supabase, Neon, Render, Railway)
+const connectionString =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    process.env.PG_DATABASE_URL ||
+    process.env.SUPABASE_DATABASE_URL ||
+    '';
 
-// Connection pool for PostgreSQL (Supabase Session Pooler).
-// The pooler caps total clients at 15 across ALL processes (MCP server +
-// landing pools + deploy overlap). Keep this pool small; queries queue in
-// Node instead of being rejected with EMAXCONNSESSION.
-const pool = isPgConfigured ? new Pool({
-    host: process.env.PG_HOST,
-    port: parseInt(process.env.PG_PORT || '5432'),
-    database: process.env.PG_DATABASE,
-    user: process.env.PG_USER,
-    password: process.env.PG_PASSWORD,
-    ssl: sslConfig,
-    max: 3, // Maximum connections in pool
-    idleTimeoutMillis: 10000,
-    connectionTimeoutMillis: 10000, // Increased from 2s to 10s for slow/remote connections
-    statement_timeout: 10000, // Max time for query execution (10s)
-}) : null;
+// Check if PostgreSQL is configured (either by connection string or individual vars)
+const isPgConfigured = !!connectionString || !!(process.env.PG_HOST && process.env.PG_DATABASE && process.env.PG_USER && process.env.PG_PASSWORD);
+
+// Connection pool for PostgreSQL.
+const pool = isPgConfigured ? (
+    connectionString
+        ? new Pool({
+            connectionString,
+            ssl: sslConfig,
+            max: 3,
+            idleTimeoutMillis: 10000,
+            connectionTimeoutMillis: 10000,
+            statement_timeout: 10000,
+        })
+        : new Pool({
+            host: process.env.PG_HOST,
+            port: parseInt(process.env.PG_PORT || '5432'),
+            database: process.env.PG_DATABASE,
+            user: process.env.PG_USER,
+            password: process.env.PG_PASSWORD,
+            ssl: sslConfig,
+            max: 3,
+            idleTimeoutMillis: 10000,
+            connectionTimeoutMillis: 10000,
+            statement_timeout: 10000,
+        })
+) : null;
 
 // Schema initialization state - use global to persist across hot reloads
 const globalForSchema = globalThis as unknown as {
@@ -678,48 +697,62 @@ export async function saveUserToPostgres(userData: {
 }
 
 /**
- * Get a user from PostgreSQL by userId (firebase_uid or clerk_id)
- * Tries firebase_uid first, then falls back to clerk_id for legacy users.
+ * Get a user from PostgreSQL by userId (workos_user_id, firebase_uid, clerk_id, universal_id)
  */
 export async function getUserFromPostgres(
     userId: string
 ): Promise<PgUser | null> {
-    if (!pool) return null;
-
-    // Fast-fail if pool is known unhealthy (cached 30s)
-    if (globalForSchema.pgCheckedAt && globalForSchema.pgConnectionOk === false) {
+    if (!pool) {
+        if (isSupabaseConfigured()) {
+            try {
+                const res = await supaQuery(
+                    'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
+                    [userId]
+                );
+                return res.rows.length > 0 ? (res.rows[0] as PgUser) : null;
+            } catch {
+                return null;
+            }
+        }
         return null;
     }
 
     try {
         await ensureSchema();
         
-        // Try firebase_uid first (new users)
         let result = await pool.query(
-            'SELECT * FROM users WHERE firebase_uid = $1',
+            'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
             [userId]
         );
         
-        // Fall back to clerk_id (legacy users)
-        if (result.rows.length === 0) {
-            result = await pool.query(
-                'SELECT * FROM users WHERE clerk_id = $1',
-                [userId]
-            );
+        if (result.rows.length > 0) {
+            globalForSchema.pgConnectionOk = true;
+            return result.rows[0] as PgUser;
+        }
+
+        // Fallback to Supabase if not found in primary
+        if (isSupabaseConfigured()) {
+            try {
+                const supaRes = await supaQuery(
+                    'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
+                    [userId]
+                );
+                if (supaRes.rows.length > 0) return supaRes.rows[0] as PgUser;
+            } catch { /* silent */ }
         }
         
-        globalForSchema.pgConnectionOk = true;
-        globalForSchema.pgCheckedAt = Date.now();
-        return result.rows.length > 0 ? (result.rows[0] as PgUser) : null;
+        return null;
     } catch (error: any) {
-        const isConnIssue = error.message?.includes('timeout') || error.message?.includes('terminated') || error.message?.includes('ECONNREFUSED');
-        if (isConnIssue) {
-            console.warn('[PostgreSQL] Unavailable (fallback to Supabase):', error.message);
-        } else {
-            console.error('[PostgreSQL] Failed to get user:', error.message);
+        if (isSupabaseConfigured()) {
+            try {
+                const supaRes = await supaQuery(
+                    'SELECT * FROM users WHERE clerk_id = $1 OR firebase_uid = $1 OR universal_id::text = $1 LIMIT 1',
+                    [userId]
+                );
+                if (supaRes.rows.length > 0) return supaRes.rows[0] as PgUser;
+            } catch { /* silent */ }
         }
-        globalForSchema.pgConnectionOk = false;
-        globalForSchema.pgCheckedAt = Date.now();
+        console.warn('[PostgreSQL] getUserFromPostgres notice:', error.message);
         return null;
     }
 }
@@ -730,31 +763,45 @@ export async function getUserFromPostgres(
 export async function getUserByEmailFromPostgres(
     email: string
 ): Promise<PgUser | null> {
-    if (!pool) return null;
-
-    // Fast-fail if pool is known unhealthy (cached 30s)
-    if (globalForSchema.pgCheckedAt && globalForSchema.pgConnectionOk === false) {
+    if (!pool) {
+        if (isSupabaseConfigured()) {
+            try {
+                const res = await supaQuery('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+                return res.rows.length > 0 ? (res.rows[0] as PgUser) : null;
+            } catch {
+                return null;
+            }
+        }
         return null;
     }
 
     try {
         await ensureSchema();
         const result = await pool.query(
-            'SELECT * FROM users WHERE email = $1',
+            'SELECT * FROM users WHERE email = $1 LIMIT 1',
             [email]
         );
-        globalForSchema.pgConnectionOk = true;
-        globalForSchema.pgCheckedAt = Date.now();
-        return result.rows.length > 0 ? (result.rows[0] as PgUser) : null;
-    } catch (error: any) {
-        const isConnIssue = error.message?.includes('timeout') || error.message?.includes('terminated') || error.message?.includes('ECONNREFUSED');
-        if (isConnIssue) {
-            console.warn('[PostgreSQL] Unavailable (fallback to Supabase):', error.message);
-        } else {
-            console.error('[PostgreSQL] Failed to get user by email:', error.message);
+        if (result.rows.length > 0) {
+            globalForSchema.pgConnectionOk = true;
+            return result.rows[0] as PgUser;
         }
-        globalForSchema.pgConnectionOk = false;
-        globalForSchema.pgCheckedAt = Date.now();
+
+        if (isSupabaseConfigured()) {
+            try {
+                const supaRes = await supaQuery('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+                if (supaRes.rows.length > 0) return supaRes.rows[0] as PgUser;
+            } catch { /* silent */ }
+        }
+
+        return null;
+    } catch (error: any) {
+        if (isSupabaseConfigured()) {
+            try {
+                const supaRes = await supaQuery('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+                if (supaRes.rows.length > 0) return supaRes.rows[0] as PgUser;
+            } catch { /* silent */ }
+        }
+        console.warn('[PostgreSQL] getUserByEmailFromPostgres notice:', error.message);
         return null;
     }
 }

@@ -47,7 +47,7 @@ import * as tokens from './lib/tokens.js';
 import * as db from './db/queries.js';
 import * as collector from './lib/conversation-collector.js';
 import { recoverUningestedConversations } from './lib/auto-ingest.js';
-import { userCache } from './lib/user-cache.js';
+import { userCache, startUserCacheMaintenance } from './lib/user-cache.js';
 import { processAnalysisJobs } from './lib/analysis-jobs.js';
 import { processMemoryIndexBatch, getMemoryIndexQueueDepth } from './lib/memory-index-jobs.js';
 
@@ -1027,6 +1027,7 @@ async function main() {
   // Log initial pool stats
   logPoolStats();
   startPoolMonitor();
+  startUserCacheMaintenance();
 
   sweepTimer = setInterval(sweepIdleSessions, IDLE_SWEEP_INTERVAL_MS);
   // Analysis is durable and retried outside the MCP request/teardown path.

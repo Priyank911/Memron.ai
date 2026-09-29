@@ -173,18 +173,29 @@ class UserCache {
 // Singleton instance - guaranteed single instance
 export const userCache = new UserCache();
 
-// Run cleanup every 2 minutes
-const cleanupInterval = setInterval(() => userCache.cleanup(), 2 * 60 * 1000);
+let maintenanceStarted = false;
 
-// Log stats every 5 minutes (in production)
-const statsInterval = setInterval(() => userCache.logStats(), 5 * 60 * 1000);
+/**
+ * Start periodic cleanup/stats. Called explicitly from the Node entry point.
+ * Never auto-started at import: Cloudflare Workers forbid timers in global
+ * scope, and short-lived isolates don't need them (entries expire lazily on
+ * read; the map is bounded by normal cache turnover).
+ */
+export function startUserCacheMaintenance(): void {
+  if (maintenanceStarted) return;
+  maintenanceStarted = true;
+  // Run cleanup every 2 minutes
+  const cleanupInterval = setInterval(() => userCache.cleanup(), 2 * 60 * 1000);
+  // Log stats every 5 minutes (in production)
+  const statsInterval = setInterval(() => userCache.logStats(), 5 * 60 * 1000);
 
-// Cleanup intervals on process exit
-if (typeof process !== 'undefined') {
-  process.on('beforeExit', () => {
-    clearInterval(cleanupInterval);
-    clearInterval(statsInterval);
-  });
+  // Cleanup intervals on process exit
+  if (typeof process !== 'undefined' && typeof process.on === 'function') {
+    process.on('beforeExit', () => {
+      clearInterval(cleanupInterval);
+      clearInterval(statsInterval);
+    });
+  }
 }
 
 // Export types for use in queries

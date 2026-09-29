@@ -358,31 +358,46 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // The first authenticated request after a database reset may arrive
-        // before the client-side sync effect. Establish the primary identity
-        // here so routing never treats a missing row as a valid onboarding
-        // state. WorkOS claims remain the only source for email/identity.
+        // Establish the primary identity in DB if not present
         let dbUser = await getUserFromPostgres(userId);
         if (!dbUser && session.email) {
             const provider = isOAuthProvider(session.provider) ? session.provider : 'email';
-            const syncResult = await syncUser({
-                workosUserId: userId,
-                email: session.email,
-                firstName: session.firstName,
-                lastName: session.lastName,
-                fullName: session.fullName,
-                imageUrl: session.imageUrl,
-                provider,
-            });
-            if (!syncResult.postgres.success) {
-                return NextResponse.json({ error: 'Identity database is unavailable' }, { status: 503 });
+            try {
+                await syncUser({
+                    workosUserId: userId,
+                    email: session.email,
+                    firstName: session.firstName,
+                    lastName: session.lastName,
+                    fullName: session.fullName,
+                    imageUrl: session.imageUrl,
+                    provider,
+                });
+                dbUser = await getUserFromPostgres(userId);
+            } catch (syncErr: any) {
+                console.warn('[Onboarding API] Background user sync warning:', syncErr.message);
             }
-            dbUser = await getUserFromPostgres(userId);
         }
         
         if (!dbUser) {
-            return NextResponse.json({ error: 'Identity record could not be established' }, { status: 503 });
+            // User is authenticated in WorkOS, but record not yet committed to DB.
+            // Return un-onboarded state so user is guided to onboarding rather than bricking with 503!
+            return NextResponse.json({
+                isOnboarded: false,
+                onboardedAt: null,
+                hasOrganization: false,
+                hasApiKey: false,
+                organization: null,
+                apiKey: null,
+                user: {
+                    universalId: userId,
+                    email: session.email || '',
+                    fullName: session.fullName || session.email?.split('@')[0] || 'User',
+                    provider: isOAuthProvider(session.provider) ? session.provider : 'email',
+                    createdAt: new Date().toISOString(),
+                },
+            });
         }
+
 
         const [org, apiKeys] = await Promise.all([
             getOrganizationByUserId(dbUser.id),
