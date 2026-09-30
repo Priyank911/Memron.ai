@@ -72,7 +72,7 @@ async function withBridgedClient(
 
   const client = new Client(
     { name: 'worker-bridge', version: '1.0.0' },
-    { capabilities: { tools: {} } },
+    { capabilities: {} },
   );
 
   await mcpServer.connect(serverTransport);

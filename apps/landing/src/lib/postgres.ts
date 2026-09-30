@@ -14,8 +14,30 @@ const sslConfig: any = process.env.PG_SSL === 'false'
         ? { rejectUnauthorized: true, ca: process.env.PG_CA_CERT }
         : { rejectUnauthorized: false };
 
+/**
+ * Strip `sslmode` (and `uselibpqcompat`) query params from a Postgres connection
+ * string so that the explicit `ssl` object passed to `new Pool()` is the sole
+ * authority on TLS settings.
+ *
+ * pg v8.18+ (backed by pg-connection-string v3) treats `?sslmode=require` in
+ * the URL as an alias for `verify-full`, which rejects self-signed certificates
+ * even when `ssl: { rejectUnauthorized: false }` is supplied alongside it.
+ * Removing the param lets the `ssl` object win.
+ */
+function stripSslMode(url: string): string {
+    try {
+        const u = new URL(url);
+        u.searchParams.delete('sslmode');
+        u.searchParams.delete('uselibpqcompat');
+        return u.toString();
+    } catch {
+        // Not a valid URL — return as-is (individual-var path will be used instead)
+        return url;
+    }
+}
+
 // Check connection string from various cloud providers (Vercel, Supabase, Neon, Render, Railway)
-const connectionString =
+const rawConnectionString =
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.POSTGRES_PRISMA_URL ||
@@ -23,6 +45,9 @@ const connectionString =
     process.env.PG_DATABASE_URL ||
     process.env.SUPABASE_DATABASE_URL ||
     '';
+
+// Strip ?sslmode=... so the ssl object below is the sole TLS authority
+const connectionString = rawConnectionString ? stripSslMode(rawConnectionString) : '';
 
 // Check if PostgreSQL is configured (either by connection string or individual vars)
 const isPgConfigured = !!connectionString || !!(process.env.PG_HOST && process.env.PG_DATABASE && process.env.PG_USER && process.env.PG_PASSWORD);

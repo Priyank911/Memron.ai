@@ -59,7 +59,22 @@ export function useUserSync(): { isReady: boolean } {
 
             // Guard: ensure we got JSON back, not an HTML error page
             if (!res.ok) {
-                if (res.status === 401) router.replace('/login');
+                if (res.status === 401) { router.replace('/login'); return; }
+                // 5xx — server error (e.g. DB unavailable). Retry up to 2x with backoff
+                // rather than silently hanging the dashboard forever.
+                if (res.status >= 500 && retryCount.current < MAX_RETRIES) {
+                    retryCount.current++;
+                    const delay = BASE_DELAY_MS * retryCount.current;
+                    setTimeout(() => {
+                        isSyncing.current = false;
+                        checkOnboardingStatus();
+                    }, delay);
+                } else if (res.status >= 500) {
+                    // Max retries exceeded — if the onboarding cookie is set trust it
+                    // as a best-effort fallback so the dashboard isn't blocked forever.
+                    const cookieOnboarded = getCookie('memron_onboarded') === 'true';
+                    if (cookieOnboarded) setIsReady(true);
+                }
                 return;
             }
             const contentType = res.headers.get('content-type') || '';
@@ -80,9 +95,19 @@ export function useUserSync(): { isReady: boolean } {
                 }
             }
         } catch {
-            // Unknown state is not a valid authorization decision. Keep the
-            // dashboard blocked until the server confirms the database state.
-            setIsReady(false);
+            // Network error — retry if attempts remain, otherwise use cookie as fallback
+            if (retryCount.current < MAX_RETRIES) {
+                retryCount.current++;
+                const delay = BASE_DELAY_MS * retryCount.current;
+                setTimeout(() => {
+                    isSyncing.current = false;
+                    checkOnboardingStatus();
+                }, delay);
+            } else {
+                // All retries exhausted — fall back to the cookie to unblock the dashboard
+                const cookieOnboarded = getCookie('memron_onboarded') === 'true';
+                if (cookieOnboarded) setIsReady(true);
+            }
         }
     }, [router]);
 
