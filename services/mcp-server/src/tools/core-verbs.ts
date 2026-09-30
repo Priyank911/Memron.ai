@@ -15,6 +15,7 @@ import { fingerprint } from '../lib/privacy.js';
 import { generatePointerId, estimateTokens, calculateCompression, classifyBucket, VALID_BUCKETS } from '../lib/pointer.js';
 import { ValidationError, NotFoundError, formatToolError } from '../lib/errors.js';
 import { config } from '../config.js';
+import { getEnv } from '../env.js';
 import * as db from '../db/queries.js';
 import { getPinnedFacts, insertPinnedFact, deletePinnedFact } from '../db/queries-graph.js';
 import { memoryEvents } from '../lib/event-bus.js';
@@ -110,7 +111,11 @@ export function registerCoreVerbs(server: McpServer): void {
         // re-generate if the synchronous call failed (e.g. circuit breaker open).
         let embeddingStr: string | undefined;
         const embInput = buildEmbeddingInput(title, args.tags || [], content);
-        for (let attempt = 0; attempt < 3; attempt++) {
+        // In Cloudflare Workers the embedding timeout is already shortened to 4s.
+        // Skip the retry loop — one attempt is enough; the background index job
+        // will generate the embedding if the synchronous call fails.
+        const maxEmbeddingAttempts = getEnv('MEMRON_RUNTIME') === 'worker' ? 1 : 3;
+        for (let attempt = 0; attempt < maxEmbeddingAttempts; attempt++) {
           try {
             const emb = await generateEmbedding(embInput);
             if (emb) {
@@ -119,11 +124,11 @@ export function registerCoreVerbs(server: McpServer): void {
             }
           } catch { /* non-fatal */ }
           // Brief delay before retry to let rate-limit windows or circuit breaker recover
-          if (attempt < 2) await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+          if (attempt < maxEmbeddingAttempts - 1) await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         }
         if (!embeddingStr) {
           const titleFp = fingerprint(title);
-          console.warn(JSON.stringify({ event: 'sync_embedding_failed', pointerId, titleHash: titleFp.hash, titleLen: titleFp.len, attempts: 3 }));
+          console.warn(JSON.stringify({ event: 'sync_embedding_failed', pointerId, titleHash: titleFp.hash, titleLen: titleFp.len, attempts: maxEmbeddingAttempts }));
         }
 
         const memory = await db.insertMemory({

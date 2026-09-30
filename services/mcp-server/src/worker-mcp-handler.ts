@@ -61,6 +61,11 @@ function err(id: JsonRpcId, code: number, message: string, data?: unknown): Json
 /**
  * Create a (server, client) pair connected via in-memory transports.
  * Both transports are closed after the call resolves.
+ *
+ * `authInfo` is passed into the McpServer's SessionContext so the tool proxy
+ * in mcp.ts can inject it into `extra.authInfo` on every tool call. This is
+ * required because the InMemoryTransport carries no HTTP auth headers — without
+ * this, every tool throws 'Authentication required'.
  */
 async function withBridgedClient(
   userId: number | undefined,
@@ -68,7 +73,8 @@ async function withBridgedClient(
   fn: (client: Client) => Promise<unknown>,
 ): Promise<unknown> {
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
-  const mcpServer = createMcpServer({ userId });
+  // Pass authInfo into SessionContext so the tool proxy injects it into extra
+  const mcpServer = createMcpServer({ userId, authInfo });
 
   const client = new Client(
     { name: 'worker-bridge', version: '1.0.0' },

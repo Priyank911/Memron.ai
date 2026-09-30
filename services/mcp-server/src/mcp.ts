@@ -8,6 +8,7 @@
  * record tool calls and results into the conversation collector.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { registerAllTools } from './tools/index.js';
 import { config } from './config.js';
 import * as collector from './lib/conversation-collector.js';
@@ -15,10 +16,15 @@ import * as collector from './lib/conversation-collector.js';
 /**
  * Mutable session context — populated after the transport is initialized.
  * Passed by reference so that the proxy captures the session ID once it's known.
+ *
+ * `authInfo` is set by the Cloudflare Worker's stateless bridge so that tool
+ * handlers receive correct user identity even when called via InMemoryTransport
+ * (which carries no HTTP auth headers).
  */
 export interface SessionContext {
   sessionId?: string;
   userId?: number;
+  authInfo?: AuthInfo;
 }
 
 /**
@@ -27,6 +33,10 @@ export interface SessionContext {
  * When a SessionContext is provided and auto-ingest is enabled, every tool
  * handler is wrapped to record the call and result into the conversation
  * collector for later analysis.
+ *
+ * When a SessionContext carries `authInfo`, every tool handler is also wrapped
+ * to inject that authInfo into `extra` when the transport (e.g. InMemoryTransport)
+ * does not supply it. This is required for the Cloudflare Worker stateless bridge.
  */
 export function createMcpServer(ctx?: SessionContext): McpServer {
   const server = new McpServer(
@@ -53,34 +63,52 @@ export function createMcpServer(ctx?: SessionContext): McpServer {
     },
   );
 
-  // Proxy server.tool() to wrap handlers with auto-capture
-  if (config.autoIngest.enabled && ctx) {
+  // Always proxy server.tool() when we have session context:
+  //   1. Inject authInfo into extra when the transport doesn't supply it
+  //      (Cloudflare Worker InMemoryTransport bridge — no HTTP auth layer)
+  //   2. Wrap for auto-ingest recording when enabled
+  const needsProxy = ctx && (ctx.authInfo !== undefined || (config.autoIngest.enabled && ctx.sessionId));
+
+  if (needsProxy) {
     const originalToolFn = server.tool;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (server as any).tool = function (this: McpServer, ...toolArgs: any[]) {
-      // Detect the overload: the last arg is always the handler callback
       const lastIdx = toolArgs.length - 1;
       const handler = toolArgs[lastIdx];
       const toolName: string = toolArgs[0];
 
-      if (typeof handler !== 'function' || collector.isExcludedTool(toolName)) {
+      if (typeof handler !== 'function') {
         return originalToolFn.apply(this, toolArgs as any);
       }
 
-      // Wrap the handler
       const wrappedHandler = async (...handlerArgs: any[]) => {
+        // ── Auth injection ─────────────────────────────────────────────────
+        // The InMemoryTransport bridge (Cloudflare Worker) does not carry
+        // HTTP auth headers, so extra.authInfo is undefined inside tool
+        // handlers. Inject authInfo from the session context so that
+        // getUserId(extra.authInfo) resolves correctly.
+        if (ctx?.authInfo) {
+          // The SDK normally supplies `extra` as the second callback
+          // argument. In the Cloudflare InMemoryTransport bridge, some SDK
+          // versions omit it for tools registered through overloads. Always
+          // create the context when it is absent so the authenticated edge
+          // request cannot become an anonymous tool call.
+          if (!handlerArgs[1] || typeof handlerArgs[1] !== 'object') {
+            handlerArgs[1] = { authInfo: ctx.authInfo };
+          } else if (!handlerArgs[1].authInfo) {
+            handlerArgs[1].authInfo = ctx.authInfo;
+          }
+        }
+
         const result = await handler(...handlerArgs);
 
-        // Record — never block tool responses
-        if (ctx.sessionId) {
+        // ── Auto-ingest recording ──────────────────────────────────────────
+        if (config.autoIngest.enabled && ctx?.sessionId && !collector.isExcludedTool(toolName)) {
           try {
-            const args = handlerArgs[0]; // first arg is the parsed params
+            const args = handlerArgs[0];
             const userId = (handlerArgs[1] as any)?.authInfo?.extra?.userId ?? ctx.userId ?? null;
             collector.recordToolCall(ctx.sessionId, userId, toolName, args, result);
-            // Graph indexing is handled by the durable memory index queue.
-            // Conversation capture remains asynchronous and is processed by
-            // the existing analysis queue, so no graph work runs here.
           } catch {
             // Never propagate recording errors
           }

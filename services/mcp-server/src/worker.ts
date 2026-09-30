@@ -657,12 +657,49 @@ async function handleMcpRequest(c: any) {
     return c.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Too many requests, please try again later' }, id: null }, 429);
   }
 
+  const baseUrl = getBaseUrl(c.req.raw);
+
+  /**
+   * Build a 401 response with the WWW-Authenticate header required by the
+   * MCP 2025-11-25 spec. Without this header the MCP client (Copilot CLI,
+   * VS Code, Cursor) does NOT know where to redirect for re-auth and simply
+   * shows "Authentication required" with no recovery path.
+   *
+   * Format per RFC 6750 §3 + MCP Authorization spec:
+   *   WWW-Authenticate: Bearer realm="<server>",
+   *     resource_metadata="<well-known-url>",
+   *     error="<code>", error_description="<msg>"
+   */
+  function unauthorizedResponse(errorCode: string, description: string): Response {
+    const wwwAuth = [
+      `Bearer realm="${baseUrl}"`,
+      `resource_metadata="${baseUrl}/.well-known/oauth-protected-resource/mcp"`,
+      `error="${errorCode}"`,
+      `error_description="${description.replace(/"/g, "'")}"`,
+    ].join(', ');
+
+    return new Response(
+      JSON.stringify({ error: errorCode, error_description: description }),
+      {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': wwwAuth,
+          // MCP spec: include CORS headers on 401 so browser-based clients can read the response
+          'Access-Control-Allow-Origin': c.req.header('origin') || '*',
+          'Access-Control-Allow-Credentials': 'true',
+          'Access-Control-Expose-Headers': 'WWW-Authenticate',
+        },
+      }
+    );
+  }
+
   // 2. Authentication
   const authHeader = c.req.header('authorization');
   if (!authHeader) {
-    return c.json(
-      { error: 'unauthorized', error_description: 'Missing Authorization header. Use: Bearer <api_key> or Bearer <oauth_token>' },
-      401
+    return unauthorizedResponse(
+      'missing_token',
+      'Missing Authorization header. Use: Bearer <api_key> or Bearer <oauth_token>'
     );
   }
   const token = authHeader.replace(/^Bearer\s+/i, '');
@@ -671,8 +708,11 @@ async function handleMcpRequest(c: any) {
     authInfo = await tokenVerifier.verifyAccessToken(token);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Authentication failed';
-    const status = /invalid|expired|unauthorized/i.test(msg) ? 401 : 500;
-    return c.json({ error: status === 401 ? 'invalid_token' : 'server_error', error_description: msg }, status as any);
+    const isExpired = /expired/i.test(msg);
+    return unauthorizedResponse(
+      isExpired ? 'invalid_token' : 'invalid_token',
+      msg
+    );
   }
 
   // 3. Delegate to fully stateless JSON-RPC handler (no SSE streams, no hangs)

@@ -22,7 +22,13 @@
 import { getEnv } from '../env.js';
 
 const embeddingDims = () => Number(getEnv('EMBEDDING_DIMENSIONS') || 1024);
-const TIMEOUT_MS = 15_000;
+// In Cloudflare Workers the 30-second wall-clock budget is shared across the
+// auth DB lookup + MCP bridge setup + the tool handler itself. A 15-second
+// embedding timeout leaves no headroom. Use a short timeout so memory_store
+// falls back to the background indexing queue rather than timing out the whole
+// Worker request.
+const isWorkerRuntime = () => getEnv('MEMRON_RUNTIME') === 'worker';
+const TIMEOUT_MS = isWorkerRuntime() ? 4_000 : 15_000;
 // Free hosted embedding endpoints are rate-limited. A small queue is safer
 // than allowing a memory burst to create a provider 429 storm.
 const MAX_CONCURRENT = 2;
