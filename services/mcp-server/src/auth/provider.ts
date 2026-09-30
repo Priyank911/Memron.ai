@@ -498,6 +498,15 @@ export function renderLoginPage(requestId: string, error?: string): string {
     // Auto-focus the input
     apiKeyInput.focus();
 
+    // Parse URL params for both normal (request_id) and DB-less fallback paths
+    const urlParams = new URLSearchParams(window.location.search);
+    const requestId = form.elements.request_id ? form.elements.request_id.value : '';
+    const directClientId = urlParams.get('client_id') || '';
+    const directCodeChallenge = urlParams.get('code_challenge') || '';
+    const directRedirectUri = urlParams.get('redirect_uri') || '';
+    const directState = urlParams.get('state') || '';
+    const directScopes = urlParams.get('scopes') || '';
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
 
@@ -512,14 +521,25 @@ export function renderLoginPage(requestId: string, error?: string): string {
       btnSpinner.style.display = 'block';
 
       try {
+        // Build body — use request_id if available, otherwise pass auth params directly
+        const body = { api_key: form.elements.api_key.value };
+        if (requestId) {
+          body.request_id = requestId;
+        } else if (directClientId && directCodeChallenge && directRedirectUri) {
+          body.client_id = directClientId;
+          body.code_challenge = directCodeChallenge;
+          body.redirect_uri = directRedirectUri;
+          if (directState) body.state = directState;
+          if (directScopes) body.scopes = directScopes;
+        } else {
+          throw new Error('Authorization request is missing. Please try connecting again.');
+        }
+
         // Use current origin so it works on Railway and localhost
         const res = await fetch(window.location.origin + '/auth/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            request_id: form.elements.request_id.value,
-            api_key: form.elements.api_key.value,
-          }),
+          body: JSON.stringify(body),
         });
 
         const data = await res.json();

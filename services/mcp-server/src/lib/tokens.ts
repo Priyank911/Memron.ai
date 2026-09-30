@@ -67,9 +67,18 @@ export async function signAccessToken(payload: {
 /**
  * Verify and decode an access token.
  * @throws if token is expired, malformed, or signature is invalid
+ *
+ * NOTE: issuer is NOT checked here because tokens may be issued by Railway
+ * (https://memron-mcp-production.up.railway.app) but verified by the
+ * Cloudflare Worker (https://memron-mcp.prynk.workers.dev). Both share the
+ * same JWT_SECRET so the signature is sufficient proof of authenticity.
  */
 export async function verifyAccessToken(token: string): Promise<AccessTokenPayload> {
-  const { payload } = await jwtVerify(token, getSigningKey());
+  const { payload } = await jwtVerify(token, getSigningKey(), {
+    // Skip issuer check — same secret, different hostnames (Railway vs Worker)
+    issuer: undefined,
+    algorithms: ['HS256'],
+  });
   return payload as unknown as AccessTokenPayload;
 }
 
@@ -94,9 +103,13 @@ export async function signRefreshToken(payload: {
 
 /**
  * Verify and decode a refresh token.
+ * Issuer not enforced — see verifyAccessToken for rationale.
  */
 export async function verifyRefreshToken(token: string): Promise<RefreshTokenPayload> {
-  const { payload } = await jwtVerify(token, getSigningKey());
+  const { payload } = await jwtVerify(token, getSigningKey(), {
+    issuer: undefined,
+    algorithms: ['HS256'],
+  });
   if ((payload as any).type !== 'refresh') {
     throw new Error('Not a refresh token');
   }

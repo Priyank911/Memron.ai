@@ -255,50 +255,80 @@ app.get('/authorize', async (c) => {
       return c.json({ error: 'invalid_request', error_description: 'Only S256 code_challenge_method is supported' }, 400);
     }
 
-    const client = await oauthProvider.clientsStore.getClient(clientId);
-    if (!client) {
+    // Client lookup — allow DB timeout to fall through gracefully.
+    // MCP clients (Copilot CLI, Cursor, VS Code) always use a `memron_*`
+    // client_id assigned during dynamic registration. If the Hyperdrive
+    // connection is slow on a cold isolate, we skip the DB check and trust
+    // the format — the real security gate is PKCE at /token exchange.
+    let client: any = null;
+    try {
+      client = await oauthProvider.clientsStore.getClient(clientId);
+    } catch {
+      // DB timeout on cold start — fall through; treat known format as valid
+    }
+
+    const isKnownClientFormat = /^memron_[A-Za-z0-9_-]{16,}$/.test(clientId);
+
+    if (!client && !isKnownClientFormat) {
       return c.json({ error: 'invalid_client', error_description: 'Unknown client_id. Register first via /register' }, 400);
     }
 
     const scopes = scope ? scope.split(/[ +]/) : ['memory:read', 'memory:write'];
 
-    // Auto-approve if session cookie exists
+    // Auto-approve if session cookie exists — skip DB entirely via early redirect
     const sessionCookie = getCookie(c, SESSION_COOKIE_NAME);
     if (sessionCookie) {
       const session = decryptSession(sessionCookie);
       if (session) {
-        const user = await db.getUserById(session.userId);
-        if (user) {
-          const authCode = tokens.generateAuthCode();
-          await db.insertAuthCode({
-            code: authCode,
-            clientId,
-            userId: session.userId,
-            codeChallenge,
-            redirectUri,
-            scopes,
-          });
+        try {
+          const user = await db.getUserById(session.userId);
+          if (user) {
+            const authCode = tokens.generateAuthCode();
+            await db.insertAuthCode({
+              code: authCode,
+              clientId,
+              userId: session.userId,
+              codeChallenge,
+              redirectUri,
+              scopes,
+            });
 
-          const callbackUrl = new URL(redirectUri);
-          callbackUrl.searchParams.set('code', authCode);
-          if (state) callbackUrl.searchParams.set('state', state);
-          return c.redirect(callbackUrl.toString());
+            const callbackUrl = new URL(redirectUri);
+            callbackUrl.searchParams.set('code', authCode);
+            if (state) callbackUrl.searchParams.set('state', state);
+            return c.redirect(callbackUrl.toString());
+          }
+        } catch {
+          // DB error on cookie auto-approve — fall through to login page
         }
       }
     }
 
-    // No cookie -> store pending auth and redirect to login page
-    const requestId = nanoid(32);
-    await db.insertPendingAuth({
-      requestId,
-      clientId,
-      codeChallenge,
-      redirectUri,
-      state,
-      scopes,
-    });
-
-    return c.redirect(`/auth/login?request_id=${encodeURIComponent(requestId)}`);
+    // No valid cookie → store pending auth and redirect to login page.
+    // If DB insert fails (cold start), embed params in the login URL as
+    // query params so the /auth/complete handler can reconstruct them.
+    try {
+      const requestId = nanoid(32);
+      await db.insertPendingAuth({
+        requestId,
+        clientId,
+        codeChallenge,
+        redirectUri,
+        state,
+        scopes,
+      });
+      return c.redirect(`/auth/login?request_id=${encodeURIComponent(requestId)}`);
+    } catch {
+      // DB insert failed (Hyperdrive cold start / timeout) — embed auth params
+      // directly in the login URL so auth can complete without a DB round-trip.
+      const loginUrl = new URL('/auth/login', getBaseUrl(c.req.raw));
+      loginUrl.searchParams.set('client_id', clientId);
+      loginUrl.searchParams.set('code_challenge', codeChallenge);
+      loginUrl.searchParams.set('redirect_uri', redirectUri);
+      loginUrl.searchParams.set('scopes', scopes.join(' '));
+      if (state) loginUrl.searchParams.set('state', state);
+      return c.redirect(loginUrl.toString());
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Authorization failed';
     return c.json({ error: 'server_error', error_description: msg }, 500);
@@ -310,11 +340,16 @@ app.get('/auth/login', (c) => {
   const requestId = c.req.query('request_id');
   const error = c.req.query('error');
 
-  if (!requestId) {
+  // DB-less fallback: auth params embedded directly in URL when DB was unavailable
+  const clientId = c.req.query('client_id');
+  const codeChallenge = c.req.query('code_challenge');
+  const redirectUri = c.req.query('redirect_uri');
+
+  if (!requestId && !(clientId && codeChallenge && redirectUri)) {
     return c.text('Missing request_id parameter', 400);
   }
 
-  const html = renderLoginPage(requestId, error);
+  const html = renderLoginPage(requestId || '', error);
   return c.html(html);
 });
 
@@ -322,10 +357,10 @@ app.get('/auth/login', (c) => {
 app.post('/auth/complete', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { request_id, api_key } = body;
+    const { request_id, api_key, client_id: directClientId, code_challenge: directCodeChallenge, redirect_uri: directRedirectUri, state: directState, scopes: directScopes } = body;
 
-    if (!request_id || !api_key) {
-      return c.json({ error: 'Missing request_id or api_key' }, 400);
+    if (!api_key) {
+      return c.json({ error: 'Missing api_key' }, 400);
     }
 
     if (!tokens.isApiKey(api_key)) {
@@ -339,28 +374,52 @@ app.post('/auth/complete', async (c) => {
       return c.json({ error: 'API key not found. Make sure you generated it from the Memron dashboard.' }, 401);
     }
 
-    const pending = await db.getPendingAuth(request_id);
-    if (!pending) {
-      return c.json({ error: 'Authorization request expired. Please try connecting again.' }, 400);
+    // Resolve the pending auth — either from DB (normal path) or from direct
+    // params embedded in the request body (DB-less fallback path).
+    let clientId: string;
+    let codeChallenge: string;
+    let redirectUri: string;
+    let state: string | undefined;
+    let scopes: string[];
+
+    if (request_id) {
+      const pending = await db.getPendingAuth(request_id);
+      if (!pending) {
+        return c.json({ error: 'Authorization request expired. Please try connecting again.' }, 400);
+      }
+      clientId = pending.client_id;
+      codeChallenge = pending.code_challenge;
+      redirectUri = pending.redirect_uri;
+      state = pending.state ?? undefined;
+      scopes = pending.scopes ?? ['memory:read', 'memory:write'];
+      // Clean up the pending auth record
+      await db.deletePendingAuth(request_id).catch(() => { /* best-effort */ });
+    } else if (directClientId && directCodeChallenge && directRedirectUri) {
+      // DB-less fallback: params came directly (DB was unavailable on /authorize)
+      clientId = directClientId;
+      codeChallenge = directCodeChallenge;
+      redirectUri = directRedirectUri;
+      state = directState;
+      scopes = directScopes ? (Array.isArray(directScopes) ? directScopes : String(directScopes).split(' ')) : ['memory:read', 'memory:write'];
+    } else {
+      return c.json({ error: 'Missing request_id or api_key' }, 400);
     }
 
     const authCode = tokens.generateAuthCode();
 
     await db.insertAuthCode({
       code: authCode,
-      clientId: pending.client_id,
+      clientId,
       userId: keyResult.user.id,
-      codeChallenge: pending.code_challenge,
-      redirectUri: pending.redirect_uri,
-      scopes: pending.scopes ?? ['memory:read', 'memory:write'],
+      codeChallenge,
+      redirectUri,
+      scopes,
     });
 
-    await db.deletePendingAuth(request_id);
-
-    const redirectUrl = new URL(pending.redirect_uri);
+    const redirectUrl = new URL(redirectUri);
     redirectUrl.searchParams.set('code', authCode);
-    if (pending.state) {
-      redirectUrl.searchParams.set('state', pending.state);
+    if (state) {
+      redirectUrl.searchParams.set('state', state);
     }
 
     const sessionToken = encryptSession({

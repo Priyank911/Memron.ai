@@ -30,6 +30,8 @@ id = "2fb315fd385d4be19b5bd30f185d9820"
 # ─── Non-secret tunables (safe to keep in the file) ───────────
 [vars]
 MEMRON_RUNTIME = "worker"
+MCP_SERVER_URL = "https://memron-mcp.prynk.workers.dev"
+LANDING_URL = "https://memron-ai.vercel.app"
 PG_MAX_CONNECTIONS = "2"
 PG_POOL_HARD_LIMIT = "3"
 PG_IDLE_TIMEOUT = "10000"
