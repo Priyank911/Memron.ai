@@ -228,14 +228,90 @@ app.get('/.well-known/oauth-protected-resource/mcp', (c) => {
 // ─── Dynamic Client Registration (RFC 7591) ───────────────────
 app.post('/register', async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
-    const client = await oauthProvider.clientsStore.registerClient(body);
+    const body = await readClientRegistrationBody(c.req.raw);
+
+    // RFC 7591 uses JSON, but a few CLI OAuth implementations send the same
+    // metadata as application/x-www-form-urlencoded. Normalize both forms so
+    // the client is persisted with its redirect URI instead of silently
+    // registering an empty client record.
+    const redirectUris = normalizeStringArray(body.redirect_uris ?? body.redirect_uri);
+    if (redirectUris.length === 0) {
+      return c.json({
+        error: 'invalid_client_metadata',
+        error_description: 'redirect_uris must contain at least one callback URI',
+      }, 400);
+    }
+    if (redirectUris.some(uri => !isHttpCallbackUri(uri))) {
+      return c.json({
+        error: 'invalid_client_metadata',
+        error_description: 'redirect_uris must contain absolute HTTP(S) callback URIs',
+      }, 400);
+    }
+
+    const client = await oauthProvider.clientsStore.registerClient({
+      ...body,
+      redirect_uris: redirectUris,
+      ...(body.grant_types !== undefined ? { grant_types: normalizeStringArray(body.grant_types) } : {}),
+      ...(body.response_types !== undefined ? { response_types: normalizeStringArray(body.response_types) } : {}),
+    });
     return c.json(client, 201);
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Registration failed';
-    return c.json({ error: 'invalid_client_metadata', error_description: msg }, 400);
+    const transient = isTransientDatabaseError(msg);
+    if (transient) c.header('Retry-After', '3');
+    return c.json({
+      error: transient ? 'temporarily_unavailable' : 'invalid_client_metadata',
+      error_description: transient
+        ? 'OAuth client registration is temporarily unavailable. Retry the registration request.'
+        : msg,
+    }, transient ? 503 : 400);
   }
 });
+
+async function readClientRegistrationBody(req: Request): Promise<Record<string, any>> {
+  const contentType = req.headers.get('content-type') || '';
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    const params = new URLSearchParams(await req.text());
+    const body: Record<string, any> = {};
+    for (const [key, value] of params.entries()) {
+      if (key === 'redirect_uris' || key === 'redirect_uri' || key === 'grant_types' || key === 'response_types') {
+        const values = body[key] ?? [];
+        body[key] = Array.isArray(values) ? [...values, value] : [values, value];
+      } else {
+        body[key] = value;
+      }
+    }
+    return body;
+  }
+  return await req.json().catch(() => ({}));
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(item => normalizeStringArray(item)).filter(Boolean);
+  }
+  if (typeof value !== 'string') return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  // Some form clients send a JSON array in one field; accept that shape too.
+  if (trimmed.startsWith('[')) {
+    try { return normalizeStringArray(JSON.parse(trimmed)); } catch { /* use scalar below */ }
+  }
+  return [trimmed];
+}
+
+function isTransientDatabaseError(message: string): boolean {
+  return /database|connection|timeout|network|socket|max clients|emaxconn|pool|hyperdrive/i.test(message);
+}
+
+function isHttpCallbackUri(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 // ─── OAuth /authorize Endpoint ────────────────────────────────
 app.get('/authorize', async (c) => {
@@ -255,6 +331,16 @@ app.get('/authorize', async (c) => {
       return c.json({ error: 'invalid_request', error_description: 'Only S256 code_challenge_method is supported' }, 400);
     }
 
+    // Validate before any database work. A malformed callback URI must be a
+    // protocol error, never an uncaught URL constructor exception (which
+    // Cloudflare renders as Error 1101 HTML and OAuth clients cannot parse).
+    try {
+      const callback = new URL(redirectUri);
+      if (!['http:', 'https:'].includes(callback.protocol)) throw new Error('unsupported scheme');
+    } catch {
+      return c.json({ error: 'invalid_request', error_description: 'redirect_uri must be an absolute HTTP(S) URL' }, 400);
+    }
+
     // Client lookup — allow DB timeout to fall through gracefully.
     // MCP clients (Copilot CLI, Cursor, VS Code) always use a `memron_*`
     // client_id assigned during dynamic registration. If the Hyperdrive
@@ -271,6 +357,9 @@ app.get('/authorize', async (c) => {
 
     if (!client && !isKnownClientFormat) {
       return c.json({ error: 'invalid_client', error_description: 'Unknown client_id. Register first via /register' }, 400);
+    }
+    if (client && !client.redirect_uris?.includes(redirectUri)) {
+      return c.json({ error: 'invalid_request', error_description: 'redirect_uri is not registered for this client' }, 400);
     }
 
     const scopes = scope ? scope.split(/[ +]/) : ['memory:read', 'memory:write'];
@@ -406,6 +495,10 @@ app.post('/auth/complete', async (c) => {
     }
 
     const authCode = tokens.generateAuthCode();
+
+    if (!isHttpCallbackUri(redirectUri)) {
+      return c.json({ error: 'invalid_request', error_description: 'redirect_uri must be an absolute HTTP(S) URL' }, 400);
+    }
 
     await db.insertAuthCode({
       code: authCode,

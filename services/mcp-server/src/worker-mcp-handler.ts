@@ -25,7 +25,11 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { createMcpServer } from './mcp.js';
 
 /** Timeout (ms) for each tool call routed through the in-process bridge. */
-const TOOL_CALL_TIMEOUT_MS = 25_000;
+// Leave enough room for the edge auth lookup and JSON serialization, while
+// still returning before Cloudflare's ~30s request window. The retrieval
+// pipeline itself has bounded provider and database work; this prevents a
+// hung query from becoming a client-visible protocol parse error.
+const TOOL_CALL_TIMEOUT_MS = 22_000;
 
 /** MCP protocol version advertised in every response. */
 const MCP_PROTOCOL_VERSION = '2025-11-25';

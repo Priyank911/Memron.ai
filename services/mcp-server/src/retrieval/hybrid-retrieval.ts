@@ -90,16 +90,20 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const signalResults: RRFSignal[] = [];
   const signalsUsed: string[] = [];
   const allIds = new Set<string>();
+  const vectorEnabled = Boolean(options.embedding) && (weights.vector || 0) > 0;
+  const bm25Enabled = (weights.bm25 || 0) > 0 || (weights.bm25Atomic || 0) > 0;
+  const graphEnabled = (weights.graph || 0) > 0;
+  const recencyEnabled = (weights.recency || 0) > 0;
 
   // 1. Vector Signal — each table queried independently so a failure
   // in one (e.g. vector dimension mismatch on a legacy table) cannot wipe
   // out the other table's results.
   let vectorPromise = Promise.resolve<{ id: string; score: number }[]>([]);
-  if (options.embedding) {
+  if (vectorEnabled) {
     signalsUsed.push('vector');
     const atomicVector = searchAtomicMemoriesByVector({
         userId: options.userId,
-        embedding: options.embedding,
+        embedding: options.embedding!,
         limit: topK * 2,
         minSimilarity: minVectorSimilarity,
       }).then(rows => rows.map(r => ({ id: r.memory_id, score: r.similarity })))
@@ -109,7 +113,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         });
     const storedVector = searchMemoriesByVector({
         userId: options.userId,
-        embedding: options.embedding,
+        embedding: options.embedding!,
         limit: topK * 2,
         minSimilarity: minVectorSimilarity,
       }).then(rows => rows.map(r => ({ id: r.pointer_id, score: r.similarity })))
@@ -126,8 +130,9 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   // weight so ingested chatter echoes (which match queries verbatim because
   // they contain past queries) can never outrank — or even reach — results
   // on keyword overlap alone. They still surface when vector/graph agree.
-  signalsUsed.push('bm25');
+  if (bm25Enabled) signalsUsed.push('bm25');
   const bm25Promise = (async () => {
+    if (!bm25Enabled) return { mem: [] as { id: string; score: number }[], atomic: [] as { id: string; score: number }[] };
     try {
       const [memResults, atomicResults] = await Promise.all([
         searchMemoriesBM25({ userId: options.userId, query: options.query, limit: topK }),
@@ -144,8 +149,9 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   })();
 
   // 3. Graph Signal
-  signalsUsed.push('graph');
+  if (graphEnabled) signalsUsed.push('graph');
   const graphPromise = (async () => {
+    if (!graphEnabled) return [] as { id: string; score: number }[];
     try {
       const entities = extractEntities(options.query);
       const graphHits: { id: string; score: number }[] = [];
@@ -226,8 +232,9 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   });
 
   // 4. Recency Decay Signal
-  signalsUsed.push('recency');
+  if (recencyEnabled) signalsUsed.push('recency');
   const recencyPromise = (async () => {
+    if (!recencyEnabled) return [] as { id: string; score: number }[];
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const [recentAtomic, recentStored] = await Promise.all([

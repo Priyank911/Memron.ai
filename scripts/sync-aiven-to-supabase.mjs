@@ -12,24 +12,30 @@ const require = createRequire(import.meta.url);
 const pg = require('d:/Memron.ai/apps/landing/node_modules/pg');
 const { Pool } = pg;
 
+const required = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing ${name}. Set it in an untracked environment file.`);
+  return value;
+};
+
 // ─── Aiven (primary — landing app writes here) ──────────────
 const aiven = new Pool({
-  host: 'memron-1db-memron-1db.c.aivencloud.com',
-  port: 27847,
-  database: 'defaultdb',
-  user: 'avnadmin',
-  password: 'AVNS_2VDAVtGy3rBwXbswJaq',
+  host: required('AIVEN_PG_HOST'),
+  port: Number(process.env.AIVEN_PG_PORT || 5432),
+  database: process.env.AIVEN_PG_DATABASE || 'defaultdb',
+  user: required('AIVEN_PG_USER'),
+  password: required('AIVEN_PG_PASSWORD'),
   ssl: { rejectUnauthorized: false },
   connectionTimeoutMillis: 10000,
 });
 
 // ─── Supabase (mirror — MCP server reads here) ──────────────
 const supa = new Pool({
-  host: 'aws-1-ap-south-1.pooler.supabase.com',
-  port: 5432,
-  database: 'postgres',
-  user: 'postgres.clfkehjbbvsbllonxrlz',
-  password: 'P@&&word0911&supabase',
+  host: required('SUPABASE_PG_HOST'),
+  port: Number(process.env.SUPABASE_PG_PORT || 5432),
+  database: process.env.SUPABASE_PG_DATABASE || 'postgres',
+  user: required('SUPABASE_PG_USER'),
+  password: required('SUPABASE_PG_PASSWORD'),
   ssl: { rejectUnauthorized: false },
   connectionTimeoutMillis: 10000,
 });

@@ -157,8 +157,14 @@ export async function query<T extends pg.QueryResultRow = any>(
   params?: unknown[],
   options?: { maxRetries?: number; retryDelay?: number }
 ): Promise<pg.QueryResult<T>> {
-  const maxRetries = options?.maxRetries ?? 2;
-  const baseDelay = options?.retryDelay ?? 100;
+  // A Worker request has a bounded wall-clock lifetime. Retrying a saturated
+  // Hyperdrive/session-pool connection three times can consume that entire
+  // lifetime and Cloudflare then replaces the useful JSON error with Error
+  // 1101 HTML. Keep one short retry at the edge; Node keeps the more tolerant
+  // behavior for long-lived services.
+  const workerRuntime = getEnv('MEMRON_RUNTIME') === 'worker';
+  const maxRetries = options?.maxRetries ?? (workerRuntime ? 1 : 2);
+  const baseDelay = options?.retryDelay ?? (workerRuntime ? 50 : 100);
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {

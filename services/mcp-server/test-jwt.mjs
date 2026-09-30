@@ -1,13 +1,22 @@
 import pg from './node_modules/pg/lib/index.js';
 const { Pool } = pg;
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-const pool = new Pool({
-  host: 'aws-1-ap-south-1.pooler.supabase.com',
-  port: 5432,
-  database: 'postgres',
-  user: 'postgres.clfkehjbbvsbllonxrlz',
-  password: 'aQnAOW4VSfIfIb91',
+const required = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing ${name}. Load it from a local, untracked .env file.`);
+  return value;
+};
+
+const pool = new Pool(process.env.DATABASE_URL ? {
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 8000,
+} : {
+  host: required('PG_HOST'),
+  port: Number(process.env.PG_PORT || 5432),
+  database: process.env.PG_DATABASE || 'postgres',
+  user: required('PG_USER'),
+  password: required('PG_PASSWORD'),
   ssl: { rejectUnauthorized: false },
   connectionTimeoutMillis: 8000,
 });
@@ -15,7 +24,8 @@ const pool = new Pool({
 const r = await pool.query(
   `SELECT u.email, ak.key_prefix FROM api_keys ak 
    JOIN users u ON ak.user_id = u.id 
-   WHERE u.email = 'panchalpriyankfullstack@gmail.com'`
+   WHERE u.email = $1`,
+  [required('MEMRON_EXPECTED_EMAIL')]
 );
 console.log('API keys:', JSON.stringify(r.rows));
 

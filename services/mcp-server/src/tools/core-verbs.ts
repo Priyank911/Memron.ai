@@ -293,12 +293,17 @@ export function registerCoreVerbs(server: McpServer): void {
         if (args.mode === 'hybrid' || args.mode === 'vector' || args.mode === 'graph') {
           let queryEmbedding: number[] | undefined;
           let vectorSkipped: string | null = null;
-          try {
-            const emb = await generateEmbedding(buildEmbeddingInput(args.query, [], ''));
-            if (emb) queryEmbedding = emb;
-            else vectorSkipped = 'query embedding provider returned null (rate limit, circuit open, or timeout)';
-          } catch (e) {
-            vectorSkipped = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
+          // Graph-only recall is database/entity based and must not pay the
+          // embedding latency or consume a provider slot. Vector and hybrid
+          // modes still use the configured semantic embedding.
+          if (args.mode !== 'graph') {
+            try {
+              const emb = await generateEmbedding(buildEmbeddingInput(args.query, [], ''));
+              if (emb) queryEmbedding = emb;
+              else vectorSkipped = 'query embedding provider returned null (rate limit, circuit open, or timeout)';
+            } catch (e) {
+              vectorSkipped = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
+            }
           }
           if (vectorSkipped) {
             const queryFp = fingerprint(args.query);

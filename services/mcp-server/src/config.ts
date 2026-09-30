@@ -95,7 +95,7 @@ function buildConfig() {
       parseInt(getEnv('PG_POOL_HARD_LIMIT') || (isRailway ? '5' : '6'), 10),
     ),
     idleTimeout: parseInt(getEnv('PG_IDLE_TIMEOUT') || '10000', 10),
-    connectionTimeout: parseInt(getEnv('PG_CONNECTION_TIMEOUT') || '10000', 10),
+    connectionTimeout: parseInt(getEnv('PG_CONNECTION_TIMEOUT') || (envIsWorker() ? '4000' : '10000'), 10),
   },
 
   /** AES-256-GCM encryption for memory content */
