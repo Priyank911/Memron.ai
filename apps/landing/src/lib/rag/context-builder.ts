@@ -140,6 +140,7 @@ function fuseRRF(vectorRows: any[], keywordRows: any[]): any[] {
       } else {
         scoreMap.set(key, { row, score: rrfContrib });
       }
+
     });
   };
 
@@ -149,6 +150,26 @@ function fuseRRF(vectorRows: any[], keywordRows: any[]): any[] {
   return Array.from(scoreMap.values())
     .sort((a, b) => b.score - a.score)
     .map(v => ({ ...v.row, _rrfScore: v.score }));
+}
+
+function dedupeRows(rows: any[]): any[] {
+  const seen = new Set<string>();
+  return rows.filter(row => {
+    const title = normalizeMemoryText(row.title);
+    const bucket = normalizeMemoryText(row.bucket || 'unknown');
+    const key = `${bucket}|${title}`;
+    if (!title || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeMemoryText(value: unknown): string {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 // ─── Context builder ─────────────────────────────────────────
@@ -198,7 +219,8 @@ export async function buildRAGContext(
   if (fusedRows.length === 0) return empty;
 
   // 4. Map to RetrievedMemory
-  const memories: RetrievedMemory[] = fusedRows.slice(0, limit).map((r: any) => {
+  const uniqueRows = dedupeRows(fusedRows);
+  const memories: RetrievedMemory[] = uniqueRows.slice(0, limit).map((r: any) => {
     const tags = Array.isArray(r.tags) ? r.tags : [];
     return {
       id: r.pointer_id || String(r.id),
@@ -237,7 +259,7 @@ export async function buildRAGContext(
     memories,
     query,
     bucket,
-    totalFound: fusedRows.length,
+    totalFound: uniqueRows.length,
     contextText,
     hasRelevantData: memories.length > 0,
     pastQA,

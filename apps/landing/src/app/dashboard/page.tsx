@@ -2292,7 +2292,6 @@ export default function DashboardPage() {
         onNav={setActive}
         onSignOut={doSignOut}
         onShareBucket={() => setShareOpen(true)}
-        onCreateBucket={() => setCreateBucketOpen(true)}
         user={user as any}
         theme={theme}
         onThemeChange={setTheme}

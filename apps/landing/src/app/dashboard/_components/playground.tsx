@@ -4,7 +4,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, Search, MessageSquare,
   Plus, Loader2, X, FolderClosed, FolderOpen, ChevronRight,
-  Trash2, History, MoreVertical, Pin, Pencil,
+  Trash2, History, MoreVertical, Pin, Pencil, ChevronDown,
+  Copy, Share2, FolderPlus, Check, Send,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -106,6 +107,7 @@ interface MemoryPreview {
   tags: string[];
   tokenCount: number;
   createdAt: string;
+  isCopied: boolean;
 }
 
 interface ChatMessage {
@@ -115,6 +117,18 @@ interface ChatMessage {
   timestamp: number;
   bucket?: string | null;
   memoryCount?: number;
+  retrievedMemories?: RetrievedMemory[];
+}
+
+interface RetrievedMemory {
+  id: string;
+  title: string;
+  bucket: string;
+  tags: string[];
+  tokenCount: number;
+  score: number;
+  content?: string;
+  createdAt: string;
 }
 
 interface ChatSession {
@@ -142,6 +156,13 @@ interface HistorySearchResult {
   createdAt: string;
 }
 
+interface PlaygroundModel {
+  id: string;
+  provider: 'openai' | 'groq';
+  label: string;
+  available: boolean;
+}
+
 function formatTime(ts: number): string {
   const diff = Date.now() - ts;
   if (diff < 60_000) return 'just now';
@@ -151,6 +172,7 @@ function formatTime(ts: number): string {
 }
 
 export function Playground({ buckets, totalMemories, totalTokens, userName, onBack }: PlaygroundProps) {
+  const [availableBuckets, setAvailableBuckets] = useState(buckets);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [input, setInput] = useState('');
@@ -160,6 +182,20 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [folderMemories, setFolderMemories] = useState<Record<string, MemoryPreview[]>>({});
   const [folderLoading, setFolderLoading] = useState<Set<string>>(new Set());
+  const [memoryMenuId, setMemoryMenuId] = useState<string | null>(null);
+  const [copyingMemoryId, setCopyingMemoryId] = useState<string | null>(null);
+  const [copiedMemoryId, setCopiedMemoryId] = useState<string | null>(null);
+  const [createBucketOpen, setCreateBucketOpen] = useState(false);
+  const [newBucketName, setNewBucketName] = useState('');
+  const [bucketError, setBucketError] = useState('');
+  const [creatingBucket, setCreatingBucket] = useState(false);
+  const [shareBucketSlug, setShareBucketSlug] = useState<string | null>(null);
+  const [shareEmail, setShareEmail] = useState('');
+  const [shareStatus, setShareStatus] = useState('');
+  const [deletingMemoryId, setDeletingMemoryId] = useState<string | null>(null);
+  const [models, setModels] = useState<PlaygroundModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [modelsLoading, setModelsLoading] = useState(true);
 
   // History persistence & search
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -184,7 +220,91 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
   const menuRef = useRef<HTMLDivElement>(null);
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? null;
-  const activeBucketName = buckets.find(b => b.slug === selectedBucket)?.name ?? selectedBucket;
+  const activeBucketName = availableBuckets.find(b => b.slug === selectedBucket)?.name ?? selectedBucket;
+
+  useEffect(() => setAvailableBuckets(buckets), [buckets]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/dashboard/playground/models', { credentials: 'include' })
+      .then(async response => response.ok ? response.json() : { models: [] })
+      .then(data => {
+        if (cancelled) return;
+        const nextModels: PlaygroundModel[] = Array.isArray(data.models) ? data.models : [];
+        setModels(nextModels);
+        setSelectedModel(current => current || nextModels[0]?.id || '');
+      })
+      .catch(() => { if (!cancelled) setModels([]); })
+      .finally(() => { if (!cancelled) setModelsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const createBucket = useCallback(async () => {
+    const name = newBucketName.trim();
+    if (!name || creatingBucket) return;
+    setCreatingBucket(true);
+    setBucketError('');
+    try {
+      const res = await fetch('/api/dashboard/buckets', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not create bucket');
+      setAvailableBuckets(prev => [...prev, data.bucket]);
+      setNewBucketName('');
+      setCreateBucketOpen(false);
+    } catch (error) {
+      setBucketError(error instanceof Error ? error.message : 'Could not create bucket');
+    } finally {
+      setCreatingBucket(false);
+    }
+  }, [creatingBucket, newBucketName]);
+
+  const copyMemoryToBucket = useCallback(async (memoryId: string, bucketSlug: string) => {
+    setCopyingMemoryId(memoryId);
+    try {
+      const res = await fetch('/api/dashboard/buckets/memories', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memoryId, bucketSlug }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not copy memory');
+      setCopiedMemoryId(memoryId);
+      setMemoryMenuId(null);
+      setAvailableBuckets(prev => prev.map(b => b.slug === bucketSlug ? { ...b, memoryCount: b.memoryCount + (data.duplicate ? 0 : 1) } : b));
+      setTimeout(() => setCopiedMemoryId(null), 1800);
+    } catch (error) {
+      setBucketError(error instanceof Error ? error.message : 'Could not copy memory');
+    } finally {
+      setCopyingMemoryId(null);
+    }
+  }, []);
+
+  const shareBucket = useCallback(async () => {
+    if (!shareBucketSlug || !shareEmail.trim()) return;
+    setShareStatus('Sharing…');
+    try {
+      const bucket = availableBuckets.find(b => b.slug === shareBucketSlug);
+      const res = await fetch('/api/dashboard/buckets/share', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bucketId: bucket?.id, bucketSlug: shareBucketSlug, email: shareEmail.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not share bucket');
+      setShareEmail('');
+      setShareStatus('Shared');
+      setTimeout(() => { setShareStatus(''); setShareBucketSlug(null); }, 1800);
+    } catch (error) {
+      setShareStatus(error instanceof Error ? error.message : 'Could not share bucket');
+    }
+  }, [availableBuckets, shareBucketSlug, shareEmail]);
 
   /* ── Fetch memories for a bucket folder ── */
   const fetchFolderMemories = useCallback(async (bucketSlug: string) => {
@@ -203,12 +323,39 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
             tags: m.tags || [],
             tokenCount: m.tokenCount || 0,
             createdAt: m.createdAt,
+            isCopied: Boolean(m.metadata?.copied_from),
           }));
         setFolderMemories(prev => ({ ...prev, [bucketSlug]: all }));
       }
     } catch { /* silent */ }
     setFolderLoading(prev => { const n = new Set(prev); n.delete(bucketSlug); return n; });
   }, [folderMemories, folderLoading]);
+
+  const deleteCopiedMemory = useCallback(async (bucketSlug: string, memory: MemoryPreview) => {
+    if (!memory.isCopied || deletingMemoryId) return;
+    setDeletingMemoryId(memory.id);
+    try {
+      const res = await fetch('/api/dashboard/memories', {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memoryId: memory.id, bucket: bucketSlug }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not remove memory');
+      setFolderMemories(prev => ({
+        ...prev,
+        [bucketSlug]: (prev[bucketSlug] || []).filter(item => item.id !== memory.id),
+      }));
+      setAvailableBuckets(prev => prev.map(bucket => bucket.slug === bucketSlug
+        ? { ...bucket, memoryCount: Math.max(0, bucket.memoryCount - 1) }
+        : bucket));
+    } catch (error) {
+      setBucketError(error instanceof Error ? error.message : 'Could not remove memory');
+    } finally {
+      setDeletingMemoryId(null);
+    }
+  }, [deletingMemoryId]);
 
   /* ── Toggle folder expand/collapse ── */
   const toggleFolder = useCallback((slug: string) => {
@@ -366,7 +513,7 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
       const res = await fetch('/api/dashboard/playground', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: text, bucket: selectedBucket, chatHistory, sessionId: activeSessionId }),
+        body: JSON.stringify({ query: text, bucket: selectedBucket, chatHistory, sessionId: activeSessionId, model: selectedModel || undefined }),
       });
 
       let assistantMsg: ChatMessage;
@@ -385,10 +532,25 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
           ));
         }
 
+        const retrievedMemories = Array.isArray(data.memories)
+          ? data.memories.filter((memory: RetrievedMemory, index: number, all: RetrievedMemory[]) => {
+              const normalize = (value: unknown) => String(value || '')
+                .normalize('NFKC')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase();
+              const key = `${normalize(memory.bucket)}|${normalize(memory.title)}`;
+              return Boolean(memory.title) && all.findIndex(candidate =>
+                `${normalize(candidate.bucket)}|${normalize(candidate.title)}` === key
+              ) === index;
+            })
+          : [];
+
         assistantMsg = {
           id: `m_${Date.now()}`, role: 'assistant',
           content: llmAnswer || 'No response generated. Please try again.',
           timestamp: Date.now(),
+          retrievedMemories,
         };
       } else if (res.status === 400) {
         const data = await res.json().catch(() => null);
@@ -426,7 +588,7 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [input, loading, activeSessionId, selectedBucket, sessions]);
+  }, [input, loading, activeSessionId, selectedBucket, selectedModel, sessions]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); return; }
@@ -709,6 +871,14 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
             {activeSession.messages.length > 0 && (
               <div className="pg-chat-header">
                 <span className="pg-chat-header-title">{activeSession.title}</span>
+                <label className="pg-model-picker">
+                  <span>Model</span>
+                  <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} disabled={modelsLoading || models.length === 0}>
+                    {models.length === 0 && <option value="">No model configured</option>}
+                    {models.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                  </select>
+                  <ChevronDown size={12} />
+                </label>
                 <button className="pg-chat-clear" onClick={clearChat} title="Clear conversation">
                   <Trash2 size={13} />
                 </button>
@@ -728,7 +898,7 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
                           {msg.bucket && (
                             <span className="pg-ctx-pill">
                               <FolderOpen size={10} />
-                              {buckets.find(b => b.slug === msg.bucket)?.name || msg.bucket}
+                              {availableBuckets.find(b => b.slug === msg.bucket)?.name || msg.bucket}
                             </span>
                           )}
                           {msg.memoryCount != null && msg.memoryCount > 0 && (
@@ -745,6 +915,39 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
                       <div className="pg-llm-answer">
                         <ReactMarkdown>{msg.content}</ReactMarkdown>
                       </div>
+                      {msg.retrievedMemories && msg.retrievedMemories.length > 0 && (
+                        <div className="pg-retrieved-stack">
+                          <div className="pg-retrieved-heading">Retrieved context <span>{msg.retrievedMemories.length}</span></div>
+                          {msg.retrievedMemories.map(memory => (
+                            <div className="pg-memory-result" key={memory.id}>
+                              <div className="pg-memory-result-main">
+                                <div className="pg-memory-result-title"><IconMemory size={12} />{memory.title || '(untitled)'}</div>
+                                <div className="pg-memory-result-meta">
+                                  <span>{memory.bucket}</span><span>{Math.round(memory.score * 100)}% match</span><span>{memory.tokenCount.toLocaleString()} tokens</span>
+                                </div>
+                              </div>
+                              <button
+                                className={`pg-memory-action${copiedMemoryId === memory.id ? ' is-done' : ''}`}
+                                onClick={() => setMemoryMenuId(memoryMenuId === memory.id ? null : memory.id)}
+                                title="Store a copy in a bucket"
+                              >
+                                {copiedMemoryId === memory.id ? <Check size={13} /> : <MoreVertical size={14} />}
+                              </button>
+                              {memoryMenuId === memory.id && (
+                                <div className="pg-memory-menu">
+                                  <span>Store copy to bucket</span>
+                                  {availableBuckets.map(bucket => (
+                                    <button key={bucket.id} onClick={() => copyMemoryToBucket(memory.id, bucket.slug)} disabled={copyingMemoryId === memory.id}>
+                                      <FolderClosed size={11} /> {bucket.name}<small>{bucket.memoryCount}</small>
+                                    </button>
+                                  ))}
+                                  {availableBuckets.length === 0 && <em>Create a bucket first</em>}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -761,6 +964,19 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
             </div>
 
             <div className="pg-input-area">
+              {activeSession.messages.length === 0 && (
+                <div className="pg-model-picker-row">
+                  <label className="pg-model-picker">
+                    <span>Model</span>
+                    <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} disabled={modelsLoading || models.length === 0}>
+                      {models.length === 0 && <option value="">No model configured</option>}
+                      {models.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                    </select>
+                    <ChevronDown size={12} />
+                  </label>
+                  {models.length === 0 && <span className="pg-model-warning">Add GROQ_API_KEY or OPENAI_API_KEY to enable answers.</span>}
+                </div>
+              )}
               {selectedBucket && (
                 <div className="pg-bucket-tag">
                   <FolderOpen size={11} />
@@ -800,10 +1016,22 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
         <div className="pg-bucket-panel-head">
           <FolderClosed size={13} />
           <span>Buckets</span>
-          <span className="pg-bucket-panel-count">{buckets.length}</span>
+          <span className="pg-bucket-panel-count">{availableBuckets.length}</span>
         </div>
         <div className="pg-folder-list">
-          {buckets.map(b => {
+          <div className="pg-bucket-create">
+            {createBucketOpen ? (
+              <div className="pg-bucket-create-form">
+                <input value={newBucketName} onChange={e => setNewBucketName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createBucket()} placeholder="Bucket name" autoFocus />
+                <button onClick={createBucket} disabled={creatingBucket || !newBucketName.trim()}>{creatingBucket ? <Loader2 size={12} className="pg-spin" /> : <Check size={12} />}</button>
+                <button onClick={() => setCreateBucketOpen(false)}><X size={12} /></button>
+              </div>
+            ) : (
+              <button className="pg-create-bucket-btn" onClick={() => { setBucketError(''); setCreateBucketOpen(true); }}><FolderPlus size={13} /> New bucket</button>
+            )}
+            {bucketError && <span className="pg-bucket-error">{bucketError}</span>}
+          </div>
+          {availableBuckets.map(b => {
             const isExpanded = expandedFolders.has(b.slug);
             const isSelected = selectedBucket === b.slug;
             const memories = folderMemories[b.slug] || [];
@@ -831,6 +1059,13 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
                       <span className="pg-folder-count">{b.memoryCount} {b.memoryCount === 1 ? 'memory' : 'memories'}</span>
                     </div>
                   </button>
+                  <button
+                    className="pg-folder-share"
+                    onClick={() => { setShareBucketSlug(shareBucketSlug === b.slug ? null : b.slug); setShareStatus(''); }}
+                    title={`Share ${b.name}`}
+                  >
+                    <Share2 size={12} />
+                  </button>
                 </div>
 
                 {/* Expanded folder contents */}
@@ -848,6 +1083,16 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
                       <div key={m.id} className="pg-file-item">
                         <IconFile size={11} />
                         <span className="pg-file-name" title={m.title}>{m.title}</span>
+                        {m.isCopied && (
+                          <button
+                            className="pg-file-delete"
+                            onClick={() => deleteCopiedMemory(b.slug, m)}
+                            disabled={deletingMemoryId === m.id}
+                            title="Remove copied memory from bucket"
+                          >
+                            {deletingMemoryId === m.id ? <Loader2 size={10} className="pg-spin" /> : <Trash2 size={10} />}
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -855,7 +1100,7 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
               </div>
             );
           })}
-          {buckets.length === 0 && (
+          {availableBuckets.length === 0 && (
             <div className="pg-empty-hint">
               No buckets yet.<br />
               <span style={{ fontSize: '0.64rem', opacity: 0.6 }}>Create one from the dashboard.</span>
@@ -864,6 +1109,13 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
         </div>
         <div className="pg-bucket-panel-foot">
           <span className="pg-foot-stat"><IconMemory size={11} /> {totalTokens.toLocaleString()} tokens</span>
+          {shareBucketSlug && (
+            <div className="pg-share-form">
+              <input value={shareEmail} onChange={e => setShareEmail(e.target.value)} placeholder="recipient@email.com" />
+              <button onClick={shareBucket} disabled={!shareEmail.trim()}>{shareStatus || <Send size={12} />}</button>
+              <button onClick={() => setShareBucketSlug(null)}><X size={12} /></button>
+            </div>
+          )}
         </div>
       </aside>
     </div>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/api-guard';
 import { supaQuery, resolveSupabaseUser, buildUserWhereClause } from '@/lib/supabase-read';
-import { cachedQuery, checkRateLimit, CACHE_PROFILES } from '@/lib/api-cache';
+import { cachedQuery, checkRateLimit, invalidateEndpoint, CACHE_PROFILES } from '@/lib/api-cache';
 
 /**
  * GET /api/dashboard/memories — List the user's memories
@@ -30,6 +30,42 @@ export async function GET(request: NextRequest) {
     const msg = error instanceof Error ? error.message : 'Unknown';
     console.error('[Dashboard Memories] Fatal:', msg);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const authUser = await auth(request);
+    if (!authUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const body = await request.json().catch(() => ({}));
+    const memoryId = typeof body.memoryId === 'string' ? body.memoryId.trim() : '';
+    const bucket = typeof body.bucket === 'string' ? body.bucket.trim() : '';
+    if (!memoryId || !bucket) {
+      return NextResponse.json({ error: 'memoryId and bucket are required' }, { status: 400 });
+    }
+
+    const user = await resolveSupabaseUser(authUser.uid);
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+    const result = await supaQuery(
+      `UPDATE memories
+       SET is_active = false, updated_at = NOW()
+       WHERE user_id = $1 AND bucket = $2 AND is_active = true
+         AND (pointer_id = $3 OR id::text = $3)
+         AND metadata ? 'copied_from'
+       RETURNING pointer_id`,
+      [user.id, bucket, memoryId],
+    );
+    if (!result.rows[0]) {
+      return NextResponse.json({ error: 'Only copied memories can be removed from a bucket' }, { status: 400 });
+    }
+    invalidateEndpoint(authUser.uid, 'memories');
+    invalidateEndpoint(authUser.uid, 'stats');
+    return NextResponse.json({ success: true, memoryId: result.rows[0].pointer_id });
+  } catch (error: unknown) {
+    console.error('[Dashboard Memories] Delete error:', error instanceof Error ? error.message : 'Unknown');
+    return NextResponse.json({ error: 'Failed to delete copied memory' }, { status: 500 });
   }
 }
 

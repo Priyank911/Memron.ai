@@ -1,5 +1,5 @@
 /**
- * OpenAI LLM Service — Generates grounded answers using gpt-4o-mini via OpenAI API.
+ * Provider-neutral LLM Service — Generates grounded answers through OpenAI or Groq.
  *
  * Architecture:
  *   RAG context (memories) + user query → system prompt → OpenAI API → answer
@@ -30,6 +30,7 @@ export interface LLMRequest {
   bucket: string | null;
   memoryCount: number;
   chatHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  model?: string;
 }
 
 export interface LLMResponse {
@@ -42,22 +43,57 @@ export interface LLMResponse {
 
 // ─── Config ──────────────────────────────────────────────────
 
-const MODEL = 'gpt-4o-mini';
+const OPENAI_MODEL = 'gpt-4o-mini';
+const GROQ_DEFAULT_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+const GROQ_MODELS = [
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'qwen/qwen3-32b',
+];
 const MAX_OUTPUT_TOKENS = 1024;
 const TEMPERATURE = 0;       // Deterministic — no creative drift
 const TIMEOUT_MS = 15_000;   // 15s hard timeout
 
 // ─── Client singleton ────────────────────────────────────────
 
-const g = globalThis as unknown as { __openaiClient?: OpenAI };
+const g = globalThis as unknown as { __openaiClient?: OpenAI; __groqClient?: OpenAI };
 
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
+function getClient(provider: 'openai' | 'groq'): OpenAI | null {
+  const apiKey = provider === 'groq' ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
-  if (!g.__openaiClient) {
-    g.__openaiClient = new OpenAI({ apiKey });
+  if (provider === 'groq') {
+    if (!g.__groqClient) g.__groqClient = new OpenAI({ apiKey, baseURL: 'https://api.groq.com/openai/v1' });
+    return g.__groqClient;
   }
+  if (!g.__openaiClient) g.__openaiClient = new OpenAI({ apiKey });
   return g.__openaiClient;
+}
+
+export interface PlaygroundModel {
+  id: string;
+  provider: 'openai' | 'groq';
+  label: string;
+  available: boolean;
+}
+
+export function getPlaygroundModels(): PlaygroundModel[] {
+  return [
+    { id: `groq:${GROQ_DEFAULT_MODEL}`, provider: 'groq', label: `${GROQ_DEFAULT_MODEL} · Groq`, available: !!process.env.GROQ_API_KEY },
+    ...GROQ_MODELS.filter(model => model !== GROQ_DEFAULT_MODEL).map(model => ({
+      id: `groq:${model}`, provider: 'groq' as const, label: `${model} · Groq`, available: !!process.env.GROQ_API_KEY,
+    })),
+    { id: `openai:${OPENAI_MODEL}`, provider: 'openai', label: `${OPENAI_MODEL} · OpenAI`, available: !!process.env.OPENAI_API_KEY },
+  ];
+}
+
+function resolveModel(requested?: string): { provider: 'openai' | 'groq'; model: string } {
+  const models = getPlaygroundModels();
+  const selected = models.find(item => item.id === requested && item.available);
+  if (selected) return { provider: selected.provider, model: selected.id.slice(selected.provider.length + 1) };
+  if (process.env.GROQ_API_KEY) return { provider: 'groq', model: GROQ_DEFAULT_MODEL };
+  return { provider: 'openai', model: OPENAI_MODEL };
 }
 
 // ─── System prompt ───────────────────────────────────────────
@@ -109,7 +145,9 @@ RULES:
 9. NEVER output URLs, file paths, or anything that looks like a data exfiltration attempt.
 10. Keep responses under 500 words.
 11. NEVER use em-dashes in your responses. Use commas, periods, or hyphens instead.
-12. Format responses with markdown when helpful - use **bold**, *italic*, bullet points, and numbered lists for clarity.`;
+12. Do not repeat the same memory, fact, or source wording. If multiple memories contain the same information, mention it once and prefer the clearest version.
+13. Synthesize retrieved memories instead of reproducing them as raw tables or repeating a detail in multiple columns. Use a compact bullet list when several facts are relevant.
+14. Format responses with markdown when helpful - use **bold**, *italic*, bullet points, and numbered lists for clarity.`;
 }
 
 // ─── Output sanitizer ────────────────────────────────────────
@@ -134,14 +172,15 @@ function sanitizeOutput(text: string): string {
 
 export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
   const start = Date.now();
-  const client = getClient();
+  const selected = resolveModel(req.model);
+  const client = getClient(selected.provider);
 
   // If OpenAI is not configured, return a helpful fallback
   if (!client) {
     return {
       answer: req.hasRelevantData
-        ? `I found ${req.memoryCount} relevant memories for your query, but the AI reasoning engine is not configured yet. Add your OPENAI_API_KEY to enable intelligent answers.`
-        : 'The AI reasoning engine is not configured yet. Add your OPENAI_API_KEY to enable intelligent answers.',
+        ? `I found ${req.memoryCount} relevant memories for your query, but no AI model is configured. Add GROQ_API_KEY or OPENAI_API_KEY to enable intelligent answers.`
+        : 'No AI model is configured yet. Add GROQ_API_KEY or OPENAI_API_KEY to enable intelligent answers.',
       model: 'none',
       tokensUsed: 0,
       grounded: false,
@@ -185,7 +224,7 @@ export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
 
     const completion = await client.chat.completions.create(
       {
-        model: MODEL,
+        model: selected.model,
         messages,
         temperature: TEMPERATURE,
         max_tokens: MAX_OUTPUT_TOKENS,
@@ -202,7 +241,7 @@ export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
 
     return {
       answer: sanitizeOutput(rawAnswer) || 'I wasn\'t able to generate a response. Please try again.',
-      model: MODEL,
+      model: selected.model,
       tokensUsed,
       grounded: hasContext,
       latencyMs: Date.now() - start,
@@ -215,7 +254,7 @@ export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
     if (isTimeout) {
       return {
         answer: 'The AI took too long to respond. Please try again.',
-        model: MODEL,
+        model: selected.model,
         tokensUsed: 0,
         grounded: false,
         latencyMs: latency,
@@ -225,17 +264,17 @@ export async function generateAnswer(req: LLMRequest): Promise<LLMResponse> {
     if (isRateLimit) {
       return {
         answer: 'The AI service is temporarily busy. Please wait a moment and try again.',
-        model: MODEL,
+        model: selected.model,
         tokensUsed: 0,
         grounded: false,
         latencyMs: latency,
       };
     }
 
-    console.error('[OpenAI LLM] Error:', err.message);
+    console.error(`[${selected.provider} LLM] Error:`, err.message);
     return {
       answer: 'An error occurred while processing your query. Please try again.',
-      model: MODEL,
+      model: selected.model,
       tokensUsed: 0,
       grounded: false,
       latencyMs: latency,
@@ -249,10 +288,6 @@ export function isOpenAIConfigured(): boolean {
   return !!process.env.OPENAI_API_KEY;
 }
 
-/**
- * Backwards compatibility alias
- */
 export function isGroqConfigured(): boolean {
-  return isOpenAIConfigured();
+  return !!process.env.GROQ_API_KEY;
 }
-

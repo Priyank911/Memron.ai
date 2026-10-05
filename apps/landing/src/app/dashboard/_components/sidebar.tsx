@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard, MessageSquare, Key, Settings, Database,
-  ChevronDown, ChevronRight, FolderPlus, Share2,
+  ChevronDown, ChevronRight, Share2,
   GitBranch, Bell, Webhook, CreditCard, HelpCircle, BookOpen,
   LogOut, Sun, Moon, Monitor, Laptop, Sparkles,
   Terminal, Activity,
@@ -82,7 +82,6 @@ interface SidebarProps {
   onNav: (id: string) => void;
   onSignOut: () => void;
   onShareBucket?: () => void;
-  onCreateBucket?: () => void;
   theme: ThemeMode;
   onThemeChange: (t: ThemeMode) => void;
   user: {
@@ -92,7 +91,7 @@ interface SidebarProps {
   } | null;
 }
 
-export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreateBucket, user, theme, onThemeChange }: SidebarProps) {
+export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, user, theme, onThemeChange }: SidebarProps) {
   const router = useRouter();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
     const map: Record<string, boolean> = {};
@@ -178,10 +177,6 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
 
         {/* Quick actions */}
         <div className="mm-sb-actions">
-          <button className="mm-sb-action-btn" onClick={onCreateBucket}>
-            <FolderPlus size={14} strokeWidth={1.7} />
-            <span>Create Bucket</span>
-          </button>
           <button className="mm-sb-action-btn" onClick={onShareBucket}>
             <Share2 size={14} strokeWidth={1.7} />
             <span>Share Bucket</span>

@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     const rawQuery = typeof body.query === 'string' ? body.query : '';
     const bucket = typeof body.bucket === 'string' ? body.bucket.trim() || null : null;
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : `s_${Date.now()}`;
+    const model = typeof body.model === 'string' ? body.model.trim() : undefined;
     const chatHistory = Array.isArray(body.chatHistory)
       ? body.chatHistory
           .filter((m: any) => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'))
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 });
     }
 
-    const result = await runRAGPipeline({ clerkId: authUser.uid, rawQuery, bucket, chatHistory });
+    const result = await runRAGPipeline({ clerkId: authUser.uid, rawQuery, bucket, chatHistory, model });
 
     if (!result.ok) {
       return NextResponse.json({

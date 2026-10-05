@@ -14,6 +14,7 @@ export {
   generateAnswer,
   isOpenAIConfigured,
   isGroqConfigured,
+  getPlaygroundModels,
   type LLMRequest,
   type LLMResponse,
 } from './llm-service';
@@ -37,6 +38,7 @@ export interface PipelineInput {
   rawQuery: string;
   bucket: string | null;
   chatHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  model?: string;
 }
 
 export interface PipelineResult {
@@ -108,6 +110,7 @@ export async function runRAGPipeline(
       bucket: input.bucket,
       memoryCount: ctx.memories.length,
       chatHistory: input.chatHistory,
+      model: input.model,
     });
   } catch (err: any) {
     console.error('[RAG Pipeline] LLM error:', err.message);
