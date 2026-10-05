@@ -126,7 +126,11 @@ export async function isSupabaseHealthy(): Promise<boolean> {
  * 
  * Lookup order: firebase_uid → email fallback (for migrated users).
  */
-export async function resolveSupabaseUser(firebaseUid: string, targetOrgUuid?: string | null): Promise<{
+export async function resolveSupabaseUser(
+  firebaseUid: string,
+  targetOrgUuid?: string | null,
+  email?: string | null,
+): Promise<{
   id: number;
   email: string;
   orgId: number | null;
@@ -145,6 +149,16 @@ export async function resolveSupabaseUser(firebaseUid: string, targetOrgUuid?: s
       userRes = await pool.query(
         'SELECT id, email FROM users WHERE clerk_id = $1 AND is_active = true LIMIT 1',
         [firebaseUid],
+      );
+    }
+
+    // WorkOS migrations can change the external subject while preserving the
+    // user's email. Use email as a safe migration fallback so historical
+    // memories remain visible after an auth-provider/user-id change.
+    if (!userRes.rows[0] && email) {
+      userRes = await pool.query(
+        'SELECT id, email FROM users WHERE lower(email) = lower($1) AND is_active = true LIMIT 1',
+        [email],
       );
     }
 

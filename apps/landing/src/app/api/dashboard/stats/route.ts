@@ -45,6 +45,7 @@ const EMPTY_STATS = {
   activeSessions: 0, buckets: [], sparkMemories: [], dailyChart: [],
   hourlyChart: [], heatmapData: [], peakHour: '-',
   memoryDelta: 0, previousMemories: 0, range: '30d', mcpFetchChart: [],
+  generatedAt: new Date().toISOString(),
 };
 
 async function fetchStats(firebaseUid: string, range: string, targetOrgId: string | null = null) {
@@ -105,7 +106,7 @@ async function fetchStats(firebaseUid: string, range: string, targetOrgId: strin
     const match = dailyMemories.find(
       (r: any) => r.day?.toISOString?.().split('T')[0] === dayStr || String(r.day).startsWith(dayStr),
     );
-    dailyChart.push({ label, value: match ? parseInt(match.count, 10) : 0 });
+    dailyChart.push({ label, date: dayStr, value: match ? parseInt(match.count, 10) : 0 });
   }
 
   // Hourly chart
@@ -140,17 +141,21 @@ async function fetchStats(firebaseUid: string, range: string, targetOrgId: strin
     }
     const now = new Date();
     for (let m = 4; m >= 0; m--) {
-      const monthStart = new Date(now.getFullYear(), now.getMonth() - m, 1);
-      const monthLabel = monthStart.toLocaleDateString('en-US', { month: 'short' });
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - m, 1));
+      const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+      const leadingDays = monthStart.getUTCDay();
+      const daysInMonth = monthEnd.getUTCDate();
+      const weekCount = Math.ceil((leadingDays + daysInMonth) / 7);
+      const monthLabel = monthStart.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
       const weeks: number[][] = [];
-      for (let w = 0; w < 5; w++) {
+      for (let w = 0; w < weekCount; w++) {
         const week: number[] = [];
         for (let d = 0; d < 7; d++) {
-          const date = new Date(monthStart);
-          date.setDate(monthStart.getDate() + w * 7 + d);
-          if (date.getMonth() !== monthStart.getMonth() && w > 0) {
+          const dayIndex = w * 7 + d - leadingDays + 1;
+          if (dayIndex < 1 || dayIndex > daysInMonth) {
             week.push(-1);
           } else {
+            const date = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), dayIndex));
             week.push(dayMap.get(date.toISOString().split('T')[0]) || 0);
           }
         }
@@ -179,12 +184,13 @@ async function fetchStats(firebaseUid: string, range: string, targetOrgId: strin
     const match = tokenDailyRows.find(
       (r: any) => r.day?.toISOString?.().split('T')[0] === dayStr || String(r.day).startsWith(dayStr),
     );
-    mcpFetchChart.push({ label, value: match ? parseInt(match.count, 10) : 0 });
+    mcpFetchChart.push({ label, date: dayStr, value: match ? parseInt(match.count, 10) : 0 });
   }
 
   return {
     totalMemories, totalTokens, originalTokens, activeSessions,
     buckets, sparkMemories, dailyChart, hourlyChart, heatmapData,
     peakHour, memoryDelta, previousMemories, range, mcpFetchChart,
+    generatedAt: new Date().toISOString(),
   };
 }

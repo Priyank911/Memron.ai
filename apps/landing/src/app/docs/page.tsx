@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Documentation — Memron.ai',
-  description: 'Complete documentation for Memron.ai context intelligence, 7-layer memory architecture, and 41 MCP tools.',
+  description: 'Complete documentation for Memron.ai context intelligence, 7-layer memory architecture, and 8 live MCP tools.',
 };
 
 export default function DocsRootPage() {

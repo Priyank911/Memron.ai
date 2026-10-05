@@ -12,6 +12,7 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { registerAllTools } from './tools/index.js';
 import { config } from './config.js';
 import * as collector from './lib/conversation-collector.js';
+import type { MemoryIndexQueue } from './lib/memory-index-queue.js';
 
 /**
  * Mutable session context — populated after the transport is initialized.
@@ -25,6 +26,7 @@ export interface SessionContext {
   sessionId?: string;
   userId?: number;
   authInfo?: AuthInfo;
+  memoryIndexQueue?: MemoryIndexQueue;
 }
 
 /**
@@ -122,7 +124,7 @@ export function createMcpServer(ctx?: SessionContext): McpServer {
     };
   }
 
-  registerAllTools(server);
+  registerAllTools(server, { queue: ctx?.memoryIndexQueue });
 
   return server;
 }

@@ -107,9 +107,10 @@ export class MemronOAuthProvider {
     _codeVerifier?: string,
     redirectUri?: string,
     _resource?: URL,
+    preloadedAuthCode?: db.AuthCodeRow | null,
   ): Promise<OAuthTokens> {
     // Find the auth code
-    const authCode = await db.getAuthCode(authorizationCode, client.client_id);
+    const authCode = preloadedAuthCode ?? await db.getAuthCode(authorizationCode, client.client_id);
     if (!authCode) {
       throw new Error('Invalid or expired authorization code');
     }

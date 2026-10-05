@@ -34,6 +34,8 @@ export interface HybridRetrievalOptions {
                                 // A vector match at/above this stands alone;
                                 // below it a candidate needs corroboration.
   traceId?: string;       // pipeline-eye: correlates every log line of one recall
+  /** Optional v2 namespace filter, stored in memories.metadata.space. */
+  space?: string;
   signals?: {             // override default signal weights
     vector?: number;
     bm25?: number;
@@ -339,13 +341,13 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const fusedIds = gatedResults.map(r => r.id);
   const [atomicRows, graphRows, memoryRows] = await Promise.all([
     fusedIds.length
-      ? query<any>(`SELECT * FROM atomic_memories WHERE memory_id = ANY($1::text[])`, [fusedIds]).then(r => r.rows).catch(() => [])
+      ? query<any>(`SELECT * FROM atomic_memories WHERE user_id = $1 AND memory_id = ANY($2::text[])`, [options.userId, fusedIds]).then(r => r.rows).catch(() => [])
       : Promise.resolve([]),
     fusedIds.length
-      ? query<any>(`SELECT * FROM graph_nodes WHERE node_id = ANY($1::text[])`, [fusedIds]).then(r => r.rows).catch(() => [])
+      ? query<any>(`SELECT * FROM graph_nodes WHERE user_id = $1 AND node_id = ANY($2::text[])`, [options.userId, fusedIds]).then(r => r.rows).catch(() => [])
       : Promise.resolve([]),
     fusedIds.length
-      ? query<any>(`SELECT * FROM memories WHERE pointer_id = ANY($1::text[])`, [fusedIds]).then(r => r.rows).catch(() => [])
+      ? query<any>(`SELECT * FROM memories WHERE user_id = $1 AND is_active = true AND pointer_id = ANY($2::text[])`, [options.userId, fusedIds]).then(r => r.rows).catch(() => [])
       : Promise.resolve([]),
   ]);
   const atomicById = new Map<string, any>(atomicRows.map((r: any) => [r.memory_id, r]));
@@ -412,6 +414,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     const memRow = memoryById.get(result.id);
     if (memRow) {
       const r = memRow;
+      if (options.space && r.metadata?.space !== options.space) continue;
       let content = r.content || '';
       if (!content && r.content_encrypted && r.content_iv && r.content_tag) {
         try {

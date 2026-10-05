@@ -268,16 +268,16 @@ export function ArchitectureLayers() {
         /* 2-Column Broad Layout */
         .arch-layout {
           display: grid;
-          grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.95fr);
+          grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
           align-items: center;
-          gap: 2.5rem;
+          gap: 1.5rem;
         }
 
         /* Left Diagram Stage */
         .engine-stage {
           position: relative;
           min-width: 0;
-          max-height: 500px;
+          max-height: 440px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -287,7 +287,7 @@ export function ArchitectureLayers() {
           position: relative;
           display: block;
           width: 100%;
-          max-width: 580px;
+          max-width: 520px;
           height: auto;
           overflow: visible;
         }
@@ -359,12 +359,12 @@ export function ArchitectureLayers() {
         /* Right Broad Telemetry Box (Curved, Clean, Minimalist) */
         .arch-readout-card {
           position: relative;
-          min-height: 420px;
-          padding: 2.25rem 2.5rem;
-          border-radius: 20px;
+          min-height: 360px;
+          padding: 1.75rem 2rem;
+          border-radius: 16px;
           background: var(--arch-bg-panel);
           border: 1px solid var(--arch-border);
-          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(255, 255, 255, 0.05);
+          box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(255, 255, 255, 0.05);
           display: flex;
           flex-direction: column;
           justify-content: space-between;
@@ -379,9 +379,9 @@ export function ArchitectureLayers() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding-bottom: 1.25rem;
+          padding-bottom: 0.9rem;
           border-bottom: 1px solid var(--arch-border);
-          margin-bottom: 1.5rem;
+          margin-bottom: 1.15rem;
         }
 
         .readout-sys-id {
@@ -438,20 +438,20 @@ export function ArchitectureLayers() {
         }
 
         .readout-content-main {
-          margin-bottom: 1.5rem;
+          margin-bottom: 1rem;
         }
 
         .readout-name {
           margin: 0;
           color: var(--arch-text);
-          font-size: clamp(2rem, 3.2vw, 2.5rem);
+          font-size: clamp(1.8rem, 2.8vw, 2.2rem);
           font-weight: 700;
           letter-spacing: -0.035em;
           line-height: 1.05;
         }
 
         .readout-subtitle {
-          margin: 4px 0 1rem;
+          margin: 4px 0 0.75rem;
           color: var(--arch-muted);
           font-size: 13px;
           font-weight: 650;
@@ -463,7 +463,7 @@ export function ArchitectureLayers() {
           margin: 0;
           color: var(--arch-muted);
           font-size: 14px;
-          line-height: 1.65;
+          line-height: 1.5;
         }
 
         /* Technical Specifications Rows */
@@ -485,7 +485,7 @@ export function ArchitectureLayers() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 10px 14px;
+          padding: 8px 12px;
           border-bottom: 1px solid var(--arch-border);
           font-size: 12.5px;
           transition: background 0.2s ease;

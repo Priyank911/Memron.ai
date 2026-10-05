@@ -2,7 +2,8 @@
 import { query } from '../db/client.js';
 import { buildEmbeddingInput, generateEmbeddings, isEmbeddingConfigured, toPgVector } from './embeddings.js';
 import { indexStoredMemoryInGraph } from './memory-graph.js';
-import { updateMemoryEmbeddingByPointer } from '../db/queries.js';
+import { getMemoryByPointer, updateMemoryEmbeddingByPointer, updateMemoryIndexStatus } from '../db/queries.js';
+import { decrypt } from './encryption.js';
 
 const MAX_ATTEMPTS = 5;
 const BATCH_SIZE = 10;
@@ -14,6 +15,42 @@ type ClaimedJob = {
   payload: { title?: string; content?: string; type?: string; bucket?: string };
   attempts: number;
 };
+
+export interface CloudflareMemoryIndexMessage {
+  pointerId: string;
+  userId: number;
+  orgId?: number;
+  title: string;
+  content?: string;
+  type: string;
+  bucket: string;
+}
+
+/**
+ * Queue consumer path. Cloudflare delivery is at-least-once; graph writes
+ * must therefore be upserts keyed by pointer/entity identity. The synchronous
+ * v2 store already writes the embedding, so this consumer focuses on graph
+ * enrichment and is safe to retry.
+ */
+export async function processCloudflareMemoryIndexMessage(message: CloudflareMemoryIndexMessage): Promise<void> {
+  const row = await getMemoryByPointer(message.pointerId, message.userId);
+  if (!row) return;
+  const content = decrypt({ encrypted: row.content_encrypted, iv: row.content_iv, tag: row.content_tag });
+  const result = await indexStoredMemoryInGraph({
+    userId: message.userId,
+    pointerId: message.pointerId,
+    title: message.title,
+    content,
+    createMemoryNode: true,
+  });
+  await updateMemoryIndexStatus(message.pointerId, message.userId, 'indexed');
+  console.info(JSON.stringify({
+    event: 'memory_index_queue_complete',
+    pointerId: message.pointerId,
+    entities: result.entities,
+    relationships: result.relationships,
+  }));
+}
 
 async function claimBatch(limit = BATCH_SIZE): Promise<ClaimedJob[]> {
   const result = await query<ClaimedJob>(
@@ -60,7 +97,22 @@ export async function processMemoryIndexBatch(): Promise<number> {
   const jobs = await claimBatch();
   if (jobs.length === 0) return 0;
   const started = Date.now();
-  const inputs = jobs.map(job => buildEmbeddingInput(job.payload.title || '', [], job.payload.content || ''));
+  let hydrated: Array<{ job: ClaimedJob; content: string }>;
+  try {
+    hydrated = await Promise.all(jobs.map(async job => {
+      if (job.payload.content) return { job, content: job.payload.content };
+      const row = await getMemoryByPointer(job.pointer_id, job.user_id);
+      if (!row) throw new Error(`Memory ${job.pointer_id} no longer exists`);
+      return {
+        job,
+        content: decrypt({ encrypted: row.content_encrypted, iv: row.content_iv, tag: row.content_tag }),
+      };
+    }));
+  } catch (error) {
+    await Promise.all(jobs.map(job => retryOrDeadLetter(job, error)));
+    return 0;
+  }
+  const inputs = hydrated.map(({ job, content }) => buildEmbeddingInput(job.payload.title || '', [], content));
   let embeddings: Array<number[] | null>;
   try {
     embeddings = await generateEmbeddings(inputs);
@@ -75,10 +127,10 @@ export async function processMemoryIndexBatch(): Promise<number> {
   let processed = 0;
 
   for (let i = 0; i < jobs.length; i++) {
-    const job = jobs[i];
+    const job = hydrated[i].job;
     try {
       const title = job.payload.title || 'Untitled memory';
-      const content = job.payload.content || '';
+      const content = hydrated[i].content;
       const result = await indexStoredMemoryInGraph({
         userId: job.user_id,
         pointerId: job.pointer_id,
@@ -94,6 +146,7 @@ export async function processMemoryIndexBatch(): Promise<number> {
           toPgVector(embeddings[i]!),
         );
       }
+      await updateMemoryIndexStatus(job.pointer_id, job.user_id, 'indexed');
       await query(
         `UPDATE memory_index_jobs
          SET status = 'completed', indexed_at = NOW(), updated_at = NOW(), last_error = NULL
@@ -103,6 +156,7 @@ export async function processMemoryIndexBatch(): Promise<number> {
       processed++;
       console.info(JSON.stringify({ event: 'memory_index_complete', jobId: job.id, pointerId: job.pointer_id, entities: result.entities, relationships: result.relationships }));
     } catch (error) {
+      await updateMemoryIndexStatus(job.pointer_id, job.user_id, job.attempts >= MAX_ATTEMPTS ? 'failed' : 'pending').catch(() => undefined);
       await retryOrDeadLetter(job, error);
     }
   }

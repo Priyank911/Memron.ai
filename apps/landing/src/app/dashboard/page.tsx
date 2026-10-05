@@ -44,6 +44,64 @@ const TIME_FILTERS = [
   { label: 'Year', range: 'year' },
 ];
 
+const RANGE_LABELS: Record<string, string> = {
+  today: 'Today',
+  '7d': 'Last 7 days',
+  '30d': 'Last 30 days',
+  quarter: 'Last quarter',
+  year: 'Last year',
+};
+
+type DashboardChartPoint = { label: string; value: number; date?: string };
+
+function formatChartDate(date?: string, label?: string) {
+  if (!date) return label || 'No date';
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(`${date}T12:00:00`));
+}
+
+function formatAxisDate(date?: string, range?: string, fallback?: string) {
+  if (!date) return fallback || '';
+  const value = new Date(`${date}T12:00:00`);
+  if (range === '7d') {
+    return new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric' }).format(value);
+  }
+  if (range === '30d' || range === 'quarter') {
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(value);
+  }
+  return new Intl.DateTimeFormat(undefined, { month: 'short' }).format(value);
+}
+
+function getAxisTickIndices(range: string, count: number) {
+  if (count <= 1) return count === 1 ? [0] : [];
+  if (range === 'today') {
+    // A clock face reads best at two-hour intervals; keep the last label at 22:00.
+    return Array.from({ length: Math.ceil(count / 2) }, (_, index) => index * 2)
+      .filter(index => index < count);
+  }
+  if (range === '7d') return Array.from({ length: count }, (_, index) => index);
+  if (range === '30d') {
+    // Calendar cadence: every third day, plus the final day when needed.
+    const indices = Array.from({ length: Math.ceil(count / 3) }, (_, index) => index * 3)
+      .filter(index => index < count);
+    if (indices[indices.length - 1] !== count - 1) indices.push(count - 1);
+    return indices;
+  }
+  if (range === 'quarter') {
+    // Weekly buckets remain readable while preserving the endpoints.
+    const indices = Array.from({ length: Math.ceil(count / 2) }, (_, index) => index * 2)
+      .filter(index => index < count);
+    if (indices[indices.length - 1] !== count - 1) indices.push(count - 1);
+    return indices;
+  }
+  // Year data is already monthly; never omit a month from the axis.
+  return Array.from({ length: count }, (_, index) => index);
+}
+
 export default function DashboardPage() {
   const { user, isLoaded, signOut } = useAuth();
   const router = useRouter();
@@ -259,7 +317,7 @@ export default function DashboardPage() {
    * Quarter → 90 daily points aggregated into ~13 weekly buckets.
    * Year → 365 daily points aggregated into 12 monthly buckets.
    */
-  const areaChartData = useMemo(() => {
+  const areaChartData = useMemo<DashboardChartPoint[]>(() => {
     if (timeRange === 'today') {
       if (stats.hourlyChart && stats.hourlyChart.length === 24) return stats.hourlyChart;
       return Array.from({ length: 24 }, (_, h) => ({
@@ -278,26 +336,26 @@ export default function DashboardPage() {
 
     if (timeRange === 'quarter') {
       // Aggregate 90 daily points into weekly buckets (13 weeks)
-      const weeks: { label: string; value: number }[] = [];
+      const weeks: DashboardChartPoint[] = [];
       for (let i = 0; i < daily.length; i += 7) {
         const slice = daily.slice(i, i + 7);
         const total = slice.reduce((s, d) => s + d.value, 0);
-        weeks.push({ label: slice[0]?.label ?? `W${weeks.length + 1}`, value: total });
+        const date = slice[0]?.date;
+        weeks.push({ date, label: formatAxisDate(date, timeRange, `W${weeks.length + 1}`), value: total });
       }
       return weeks;
     }
 
     if (timeRange === 'year') {
-      // Aggregate 365 daily points into monthly buckets using label prefix (e.g. "Mar")
-      const monthMap = new Map<string, number>();
-      const monthOrder: string[] = [];
+      // Aggregate by the real YYYY-MM key, not the localized label.
+      const monthMap = new Map<string, DashboardChartPoint>();
       for (const d of daily) {
-        // Labels for year range look like "Mar 15" → extract "Mar"
-        const month = d.label.split(' ')[0];
-        if (!monthMap.has(month)) { monthMap.set(month, 0); monthOrder.push(month); }
-        monthMap.set(month, (monthMap.get(month) ?? 0) + d.value);
+        const month = d.date?.slice(0, 7) || d.label;
+        const existing = monthMap.get(month);
+        if (existing) existing.value += d.value;
+        else monthMap.set(month, { date: d.date, label: formatAxisDate(d.date, timeRange, month), value: d.value });
       }
-      return monthOrder.map(m => ({ label: m, value: monthMap.get(m) ?? 0 }));
+      return [...monthMap.values()];
     }
 
     return daily;
@@ -320,24 +378,25 @@ export default function DashboardPage() {
     if (timeRange === '7d' || timeRange === '30d') return daily;
 
     if (timeRange === 'quarter') {
-      const weeks: { label: string; value: number }[] = [];
+      const weeks: DashboardChartPoint[] = [];
       for (let i = 0; i < daily.length; i += 7) {
         const slice = daily.slice(i, i + 7);
         const total = slice.reduce((s, d) => s + d.value, 0);
-        weeks.push({ label: slice[0]?.label ?? `W${weeks.length + 1}`, value: total });
+        const date = slice[0]?.date;
+        weeks.push({ date, label: formatAxisDate(date, timeRange, `W${weeks.length + 1}`), value: total });
       }
       return weeks;
     }
 
     if (timeRange === 'year') {
-      const monthMap = new Map<string, number>();
-      const monthOrder: string[] = [];
+      const monthMap = new Map<string, DashboardChartPoint>();
       for (const d of daily) {
-        const month = d.label.split(' ')[0];
-        if (!monthMap.has(month)) { monthMap.set(month, 0); monthOrder.push(month); }
-        monthMap.set(month, (monthMap.get(month) ?? 0) + d.value);
+        const month = d.date?.slice(0, 7) || d.label;
+        const existing = monthMap.get(month);
+        if (existing) existing.value += d.value;
+        else monthMap.set(month, { date: d.date, label: formatAxisDate(d.date, timeRange, month), value: d.value });
       }
-      return monthOrder.map(m => ({ label: m, value: monthMap.get(m) ?? 0 }));
+      return [...monthMap.values()];
     }
 
     return daily;
@@ -568,9 +627,11 @@ export default function DashboardPage() {
       <div className="mm-page-header">
         <div className="mm-page-header-left">
           <h1 className="mm-page-title">Dashboard</h1>
-          <p className="mm-page-subtitle">Your memory performance at a glance.</p>
+          <p className="mm-page-subtitle">A dated record of what your agents remember, when they remember it, and where it accumulates.</p>
         </div>
-        <div className="mm-time-filters">
+        <div className="mm-page-header-controls">
+          <span className="mm-period-stamp">Showing {RANGE_LABELS[timeRange]}</span>
+          <div className="mm-time-filters" aria-label="Activity time range">
           {TIME_FILTERS.map(t => (
             <button
               key={t.range}
@@ -580,6 +641,7 @@ export default function DashboardPage() {
               {t.label}
             </button>
           ))}
+          </div>
         </div>
       </div>
 
@@ -606,7 +668,14 @@ export default function DashboardPage() {
         <div className="mm-chart-panel">
           <div className="mm-chart-main">
             <div className="mm-chart-header">
-              <h2 className="mm-chart-title">Memory Activity</h2>
+              <div>
+                <p className="mm-section-kicker">Activity ledger</p>
+                <h2 className="mm-chart-title">Memory activity</h2>
+              </div>
+              <div className="mm-chart-header-meta">
+                <span className="mm-chart-legend"><i /> Memories created</span>
+                <span className="mm-chart-range">{RANGE_LABELS[timeRange]}</span>
+              </div>
             </div>
             <div
               ref={chartRef}
@@ -667,24 +736,17 @@ export default function DashboardPage() {
                   if (n === 1) return (
                     <text key={0} x={400} y="190" textAnchor="middle" className="mm-chart-label">{areaChartData[0].label}</text>
                   );
-                  // Use exactly evenly-spaced step from first to last index
-                  const maxLabels = Math.min(12, n);
-                  const step = (n - 1) / (maxLabels - 1);
-                  const indices: number[] = [];
-                  for (let i = 0; i < maxLabels; i++) {
-                    indices.push(Math.round(i * step));
-                  }
-                  // Deduplicate in case rounding produces repeats
-                  const unique = [...new Set(indices)];
-                  return unique.map((idx, displayIdx) => {
+                  const indices = getAxisTickIndices(timeRange, n);
+                  return indices.map((idx, displayIdx) => {
                     const xPos = (idx / (n - 1)) * 800;
                     // First label left-aligned, last right-aligned, middle centered
                     const anchor = idx === 0 ? 'start' : idx === n - 1 ? 'end' : 'middle';
+                    const point = areaChartData[idx];
                     return (
                       <text key={displayIdx}
                         x={xPos}
                         y="190" textAnchor={anchor} className="mm-chart-label">
-                        {areaChartData[idx].label}
+                        {formatAxisDate(point.date, timeRange, point.label)}
                       </text>
                     );
                   });
@@ -706,7 +768,7 @@ export default function DashboardPage() {
                     }}
                   >
                     <div className="mm-tooltip-header">
-                      <span className="mm-tooltip-time">{d.label}</span>
+                      <span className="mm-tooltip-time">{formatChartDate(d.date, d.label)}</span>
                     </div>
                     <div className="mm-tooltip-body">
                       <div className="mm-tooltip-row">
@@ -718,7 +780,7 @@ export default function DashboardPage() {
                         <span className="mm-tooltip-val">{tokVal.toLocaleString()}</span>
                       </div>
                       <div className="mm-tooltip-row">
-                        <span className="mm-tooltip-label">Conversation rate</span>
+                        <span className="mm-tooltip-label">Share of period</span>
                         <span className="mm-tooltip-val">{rate}%</span>
                       </div>
                     </div>
@@ -1012,6 +1074,7 @@ export default function DashboardPage() {
               while (rawTokens.length < n) rawTokens.push(0);
 
               const storeMax = Math.max(...storeValues, 1);
+              const hasActivity = storeValues.some(v => v > 0) || rawTokens.some(v => v > 0);
 
               // Token density per period (tokens/write), scaled to storeMax for overlay
               const densityRaw = storeValues.map((s, i) => s > 0 ? rawTokens[i] / s : 0);
@@ -1026,10 +1089,10 @@ export default function DashboardPage() {
 
               const vbW = 940;
               const chartW = 860;
-              const chartH = 220;
-              const padTop = 20;
-              const padBottom = 34;
-              const padLeft = 52;
+              const chartH = 244;
+              const padTop = 18;
+              const padBottom = 42;
+              const padLeft = 58;
               const plotH = chartH - padTop - padBottom;
 
               const buildCurve = (vals: number[], max: number) => {
@@ -1053,8 +1116,9 @@ export default function DashboardPage() {
 
               const tickCount = 5;
               const yTicks = Array.from({ length: tickCount }, (_, i) => {
-                const val = Math.round(storeMax * (1 - i / (tickCount - 1)));
-                return storeMax <= 5 ? val.toFixed(1) : val.toLocaleString();
+                const ratio = 1 - i / (tickCount - 1);
+                const val = Math.round(storeMax * ratio);
+                return storeMax <= 5 ? String(val) : val.toLocaleString();
               });
 
               const hlx = trendHover && storePts[trendHover.idx] ? storePts[trendHover.idx].x : null;
@@ -1089,22 +1153,30 @@ export default function DashboardPage() {
                   <line x1={padLeft - 4} y1={padTop + plotH} x2={vbW - 12} y2={padTop + plotH} stroke="var(--mm-border)" strokeWidth="0.7" opacity="0.35" vectorEffect="non-scaling-stroke" />
 
                   <g transform={`translate(${padLeft + 3}, ${padTop})`}>
+                    {!hasActivity && (
+                      <>
+                        <line x1="0" y1={plotH / 2} x2={chartW} y2={plotH / 2} className="mm-trend-empty-line" />
+                        <text x={chartW / 2} y={plotH / 2 - 10} textAnchor="middle" className="mm-trend-empty-label">
+                          No activity in this period
+                        </text>
+                      </>
+                    )}
                     {/* ① Growth Trend — cyan dashed */}
-                    {cumPath && cumPts.length >= 2 && (
+                    {hasActivity && cumPath && cumPts.length >= 2 && (
                       <>
                         <path d={`${cumPath} L ${cumPts[cumPts.length - 1].x},${plotH} L ${cumPts[0].x},${plotH} Z`} fill="url(#mcpCumGrad)" />
                         <path d={cumPath} fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="5 4" opacity="0.8" />
                       </>
                     )}
                     {/* ② Token Density — purple */}
-                    {densityPath && densityPts.length >= 2 && (
+                    {hasActivity && densityPath && densityPts.length >= 2 && (
                       <>
                         <path d={`${densityPath} L ${densityPts[densityPts.length - 1].x},${plotH} L ${densityPts[0].x},${plotH} Z`} fill="url(#mcpDensGrad)" />
                         <path d={densityPath} fill="none" stroke="#a78bfa" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                       </>
                     )}
                     {/* ③ Write Ops — orange solid */}
-                    {storePath && storePts.length >= 2 && (
+                    {hasActivity && storePath && storePts.length >= 2 && (
                       <>
                         <path d={`${storePath} L ${storePts[storePts.length - 1].x},${plotH} L ${storePts[0].x},${plotH} Z`} fill="url(#mcpStoreGrad)" />
                         <path d={storePath} fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1129,11 +1201,10 @@ export default function DashboardPage() {
                   </g>
 
                   {/* X-axis labels — up to 10 */}
-                  {areaChartData.map((d, i) => {
-                    const step = Math.max(1, Math.ceil(n / 10));
-                    if (i % step !== 0 && i !== n - 1) return null;
+                  {getAxisTickIndices(timeRange, n).map((i) => {
+                    const d = areaChartData[i];
                     const x = padLeft + 3 + (n > 1 ? (i / (n - 1)) * chartW : chartW / 2);
-                    return <text key={i} x={x} y={chartH - 10} className="mm-chart-label" textAnchor="middle" style={{ fontSize: 9.5 }}>{d.label}</text>;
+                    return <text key={i} x={x} y={chartH - 10} className="mm-chart-label" textAnchor="middle" style={{ fontSize: 9.5 }}>{formatAxisDate(d.date, timeRange, d.label)}</text>;
                   })}
                 </svg>
               );

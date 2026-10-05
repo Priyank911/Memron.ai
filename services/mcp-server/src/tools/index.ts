@@ -12,10 +12,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerCoreVerbs } from './core-verbs.js';
 import { registerProfileTools } from './profile.js';
 import { registerDiagnosticTools } from './diagnostics.js';
+import type { MemoryIndexQueue } from '../lib/memory-index-queue.js';
 
-export function registerAllTools(server: McpServer): void {
+export function registerAllTools(server: McpServer, options?: { queue?: MemoryIndexQueue }): void {
   // Register the 4 consolidated core verbs (stays well below agent confusion threshold)
-  registerCoreVerbs(server);
+  registerCoreVerbs(server, options);
   // Profile inspection is intentionally read-only and lets authenticated
   // clients verify which Memron account their bearer key belongs to.
   registerProfileTools(server);

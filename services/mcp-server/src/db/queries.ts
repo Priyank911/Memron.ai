@@ -42,6 +42,7 @@ export interface MemoryRow {
   access_count: number;
   last_accessed_at: Date | null;
   embedding: string | null;
+  index_status: string;
   created_at: Date;
   updated_at: Date;
 }
@@ -67,6 +68,7 @@ export async function insertMemory(params: {
   subPath?: string;
   importance?: number;
   embedding?: string;  // pgvector string '[0.1,0.2,...]' or null
+  indexStatus?: string;
 }): Promise<MemoryRow> {
   const hasEmbedding = !!params.embedding;
   const columns = [
@@ -75,6 +77,7 @@ export async function insertMemory(params: {
     'tags', 'token_count', 'original_tokens', 'metadata', 'status', 'source', 'decay_exempt',
     'api_key_id', 'sub_path', 'importance',
     ...(hasEmbedding ? ['embedding'] : []),
+    'index_status',
   ];
   const paramCount = columns.length;
   const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
@@ -100,6 +103,7 @@ export async function insertMemory(params: {
     params.subPath ?? '',
     params.importance ?? 0.5,
     ...(hasEmbedding ? [params.embedding] : []),
+    params.indexStatus ?? 'pending',
   ];
 
   const result = await query<MemoryRow>(
@@ -117,6 +121,18 @@ export async function insertMemory(params: {
   ).catch(() => { /* bucket table may not exist yet */ });
 
   return result.rows[0];
+}
+
+export async function updateMemoryIndexStatus(
+  pointerId: string,
+  userId: number,
+  status: 'pending' | 'queued' | 'indexed' | 'failed',
+): Promise<void> {
+  await query(
+    `UPDATE memories SET index_status = $1, updated_at = NOW()
+     WHERE pointer_id = $2 AND user_id = $3`,
+    [status, pointerId, userId],
+  );
 }
 
 export async function updateMemoryEmbedding(memoryId: number, embedding: string): Promise<void> {
@@ -665,7 +681,7 @@ export async function insertAuthCode(params: {
   );
 }
 
-export async function getAuthCode(code: string, clientId?: string): Promise<{
+export interface AuthCodeRow {
   code: string;
   client_id: string;
   user_id: number;
@@ -674,7 +690,9 @@ export async function getAuthCode(code: string, clientId?: string): Promise<{
   scopes: string[];
   used: boolean;
   expires_at: Date;
-} | null> {
+}
+
+export async function getAuthCode(code: string, clientId?: string): Promise<AuthCodeRow | null> {
   if (clientId) {
     const result = await query(
       `SELECT * FROM mcp_auth_codes

@@ -301,8 +301,16 @@ export function HeroFloatingArt() {
       <div
         className="hero-art-character"
         onClick={handleCharacterClick}
-        title="Click to toggle Day / Night pixel transition"
-        style={{ cursor: 'pointer' }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleCharacterClick();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} scene`}
+        aria-pressed={theme === 'light'}
       >
         <canvas
           ref={canvasRef}

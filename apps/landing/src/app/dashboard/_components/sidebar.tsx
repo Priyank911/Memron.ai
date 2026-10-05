@@ -138,7 +138,8 @@ export function Sidebar({ org, active, onNav, onSignOut, onShareBucket, onCreate
       <div className="mm-sb-header">
         <div className="mm-sb-brand">
           <div className="mm-sb-logo-box">
-            <Image src="/logo_w.png" alt="Memron" width={20} height={20} style={{ objectFit: 'contain' }} />
+            <Image className="mm-sb-logo mm-sb-logo-dark" src="/logo_w.png" alt="Memron" width={20} height={20} style={{ objectFit: 'contain' }} />
+            <Image className="mm-sb-logo mm-sb-logo-light" src="/logo_b.png" alt="" width={20} height={20} style={{ objectFit: 'contain' }} />
           </div>
           <span className="mm-sb-brand-text">{org?.name || 'Memron'}</span>
         </div>

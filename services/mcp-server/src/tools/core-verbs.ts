@@ -22,6 +22,8 @@ import { memoryEvents } from '../lib/event-bus.js';
 import { recordRun } from '../versioning/run-recorder.js';
 import { enqueueMemoryIndexJob } from '../lib/memory-index-queue.js';
 import { hybridRetrieve } from '../retrieval/hybrid-retrieval.js';
+import { recallMemory, storeMemory } from '../engine/unified-memory-engine.js';
+import type { MemoryIndexQueue } from '../lib/memory-index-queue.js';
 
 function getUserId(authInfo?: AuthInfo): number {
   const uid = authInfo?.extra?.userId;
@@ -41,7 +43,7 @@ function getApiKeyId(authInfo?: AuthInfo): number | undefined {
   return typeof akId === 'number' ? akId : undefined;
 }
 
-export function registerCoreVerbs(server: McpServer): void {
+export function registerCoreVerbs(server: McpServer, options?: { queue?: MemoryIndexQueue }): void {
 
   // ═══════════════════════════════════════════════════════════
   // 1. memory_store — The Unified Write Verb
@@ -50,20 +52,27 @@ export function registerCoreVerbs(server: McpServer): void {
     'memory_store',
     'Store content into Memron. Use type=context for short-lived conversation context (bucket conversation), type=knowledge for durable knowledge (bucket knowledge), type=preference for user preferences, and type=recipe for reusable procedures. Graph indexing is queued after the memory is stored.',
     {
-      content: z.string().min(1).max(config.memory.maxContentLength).describe('The content or payload to store'),
-      title: z.string().max(500).optional().describe('Summary title (auto-generated from first 100 chars if omitted)'),
-      type: z.enum(['context', 'knowledge', 'fact', 'preference', 'entity', 'relationship', 'recipe', 'run_event', 'clip']).optional().default('context').describe('The semantic type of the memory'),
-      source: z.enum(['agent', 'membrow', 'cli', 'user', 'browser', 'import']).optional().default('agent').describe('The source origin of the memory (e.g. agent mid-session or membrow browser clip)'),
-      bucket: z.string().max(100).optional().describe('Bucket slug. Context maps to conversation; knowledge, fact, entity, relationship, recipe, and clip map to knowledge unless explicitly overridden.'),
-      tags: z.array(z.string().max(50)).max(20).optional().describe('Descriptive tags for search, organization, and filtering'),
-      metadata: z.record(z.unknown()).optional().describe('Arbitrary structured metadata (e.g. { platform, author, category, url, takeaways } for research clips)'),
-      status: z.enum(['untriaged', 'context', 'knowledge']).optional().describe('Lifecycle status. Omit to infer context/knowledge from type, or use untriaged to send the item to Inbox.'),
+      content: z.string().min(1).max(50_000).describe('The content to store. Type, namespace, title, and lifecycle are inferred.'),
+      tags: z.array(z.string().max(50)).max(20).optional().describe('Optional search tags'),
+      importance: z.number().min(0).max(1).optional().describe('Optional importance override from 0 to 1'),
+      space: z.string().max(255).optional().describe('Optional namespace such as project:helios or personal:health'),
     },
-    async (args, extra) => {
+    async (args: any, extra) => {
       try {
         const userId = getUserId(extra.authInfo);
         const orgId = getOrgId(extra.authInfo);
         const apiKeyId = getApiKeyId(extra.authInfo);
+
+        const v2 = await storeMemory(userId, {
+          content: args.content,
+          tags: args.tags,
+          importance: args.importance,
+          space: args.space,
+        }, { orgId, apiKeyId, queue: options?.queue });
+        return { content: [{ type: 'text', text: JSON.stringify(v2) }] };
+
+        // Legacy implementation retained below only as a migration reference;
+        // v2 returns above and is the sole public write path.
         const content = args.content;
 
         const durableType = ['knowledge', 'fact', 'entity', 'relationship', 'recipe', 'clip'].includes(args.type || 'context');
@@ -119,7 +128,7 @@ export function registerCoreVerbs(server: McpServer): void {
           try {
             const emb = await generateEmbedding(embInput);
             if (emb) {
-              embeddingStr = toPgVector(emb);
+              embeddingStr = toPgVector(emb!);
               break;
             }
           } catch { /* non-fatal */ }
@@ -205,7 +214,7 @@ export function registerCoreVerbs(server: McpServer): void {
           } catch (runError) {
             // Memory storage remains durable even if analytics tables are not
             // migrated yet; return the reason so deployment can surface it.
-            runRecordId = `analytics_error:${runError instanceof Error ? runError.message : 'record_failed'}`;
+            runRecordId = `analytics_error:${String(runError)}`;
           }
         }
 
@@ -270,19 +279,22 @@ export function registerCoreVerbs(server: McpServer): void {
     'memory_recall',
     'Search and recall relevant memories from Memron using hybrid retrieval (vector similarity + BM25 keyword matching + knowledge graph expansion + pinned rules). Returns compact, token-budgeted context.',
     {
-      query: z.string().min(1).max(2000).describe('Search query or question in natural language'),
-      mode: z.enum(['hybrid', 'vector', 'graph', 'recipe', 'pinned', 'history']).optional().default('hybrid').describe('Retrieval mode: hybrid (recommended), vector, graph, recipe, pinned, or history'),
-      category: z.enum(['all', 'context', 'knowledge', 'recipes', 'preferences']).optional().default('all').describe('Filter by memory category'),
-      bucket: z.string().max(100).optional().describe('Filter to a specific bucket slug'),
-      tags: z.array(z.string().max(50)).optional().describe('Filter by tags'),
-      limit: z.number().int().min(1).max(50).optional().default(8).describe('Maximum items to return'),
-      tokenBudget: z.number().int().min(200).max(10000).optional().default(2000).describe('Token budget for context assembly'),
-      format: z.enum(['json', 'xml', 'text']).optional().default('json').describe('Output format'),
-      traceId: z.string().max(64).optional().describe('Optional caller trace ID for pipeline debugging (auto-generated if omitted)'),
+      query: z.string().min(1).max(2000).describe('Natural-language memory query'),
+      budget: z.number().int().min(1).max(10_000).optional().describe('Optional token ceiling override; otherwise inferred from query complexity'),
+      space: z.string().max(255).optional().describe('Optional namespace filter'),
     },
-    async (args, extra) => {
+    async (args: any, extra) => {
       try {
         const userId = getUserId(extra.authInfo);
+
+        const v2 = await recallMemory(userId, {
+          query: args.query,
+          budget: args.budget,
+          space: args.space,
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(v2) }] };
+
+        // Legacy mode/category/format routing is intentionally unreachable.
 
         // The hybrid mode is the production default. It combines BM25,
         // recency, vector (when configured), and graph signals. Bucket/tag
@@ -299,10 +311,10 @@ export function registerCoreVerbs(server: McpServer): void {
           if (args.mode !== 'graph') {
             try {
               const emb = await generateEmbedding(buildEmbeddingInput(args.query, [], ''));
-              if (emb) queryEmbedding = emb;
+              if (emb) queryEmbedding = emb!;
               else vectorSkipped = 'query embedding provider returned null (rate limit, circuit open, or timeout)';
-            } catch (e) {
-              vectorSkipped = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
+            } catch (e: unknown) {
+              vectorSkipped = String(e).slice(0, 200);
             }
           }
           if (vectorSkipped) {
@@ -340,7 +352,7 @@ export function registerCoreVerbs(server: McpServer): void {
               return true;
             })
             .filter(item => !args.bucket || item.bucket === args.bucket)
-            .filter(item => !args.tags?.length || (item.tags && args.tags.some(t => item.tags!.includes(t))))
+            .filter(item => !args.tags?.length || (item.tags && args.tags.some((t: string) => item.tags!.includes(t))))
             .map(item => ({
               pointerId: item.id,
               title: item.title || item.memoryType || 'Memory',

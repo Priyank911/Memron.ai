@@ -11,7 +11,7 @@ export interface DashboardStats {
   activeSessions: number;
   buckets: { name: string; count: number }[];
   sparkMemories: number[];
-  dailyChart: { label: string; value: number }[];
+  dailyChart: { label: string; value: number; date?: string }[];
   hourlyChart: { label: string; value: number }[];
   heatmapData: { month: string; weeks: number[][] }[];
   peakHour: string;
@@ -19,7 +19,8 @@ export interface DashboardStats {
   previousMemories: number;
   range: string;
   /** Daily token sums — proxy for MCP fetch/read query volume */
-  mcpFetchChart: { label: string; value: number }[];
+  mcpFetchChart: { label: string; value: number; date?: string }[];
+  generatedAt?: string;
 }
 
 export interface DashboardMemory {
@@ -58,6 +59,7 @@ const EMPTY_STATS: DashboardStats = {
   previousMemories: 0,
   range: '30d',
   mcpFetchChart: [],
+  generatedAt: undefined,
 };
 
 export function useDashboardData(

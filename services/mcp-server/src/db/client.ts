@@ -163,14 +163,32 @@ export async function query<T extends pg.QueryResultRow = any>(
   // 1101 HTML. Keep one short retry at the edge; Node keeps the more tolerant
   // behavior for long-lived services.
   const workerRuntime = getEnv('MEMRON_RUNTIME') === 'worker';
-  const maxRetries = options?.maxRetries ?? (workerRuntime ? 1 : 2);
+  const maxRetries = options?.maxRetries ?? (workerRuntime ? 0 : 2);
   const baseDelay = options?.retryDelay ?? (workerRuntime ? 50 : 100);
+  const workerQueryTimeoutMs = 3_500;
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const start = Date.now();
     try {
-      const result = await getPool().query<T>(text, params);
+      const queryPromise = getPool().query<T>({
+        text,
+        values: params,
+        ...(workerRuntime ? { query_timeout: workerQueryTimeoutMs } : {}),
+      });
+      // `query_timeout` bounds execution after a client is acquired. The
+      // race also bounds time spent waiting for a saturated pg-pool queue.
+      // The underlying pg promise is intentionally allowed to settle and
+      // release its client after the timeout.
+      const result = workerRuntime
+        ? await Promise.race([
+            queryPromise,
+            new Promise<never>((_, reject) => setTimeout(
+              () => reject(new Error(`Database query timeout after ${workerQueryTimeoutMs}ms`)),
+              workerQueryTimeoutMs,
+            )),
+          ])
+        : await queryPromise;
       const duration = Date.now() - start;
 
       // Update stats

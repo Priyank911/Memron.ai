@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
     const orgId = request.nextUrl.searchParams.get('orgId') || null;
     const cacheKey = `memories:${authUser.uid}:${orgId || 'default'}`;
-    const data = await cachedQuery(cacheKey, () => fetchMemories(authUser.uid, orgId), CACHE_PROFILES.memories);
+    const data = await cachedQuery(cacheKey, () => fetchMemories(authUser.uid, orgId, authUser.email), CACHE_PROFILES.memories);
     return NextResponse.json(data);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
@@ -33,8 +33,8 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function fetchMemories(userIdOrFirebaseUid: string, targetOrgId: string | null = null) {
-  const supaUser = await resolveSupabaseUser(userIdOrFirebaseUid, targetOrgId);
+async function fetchMemories(userIdOrFirebaseUid: string, targetOrgId: string | null = null, email?: string) {
+  const supaUser = await resolveSupabaseUser(userIdOrFirebaseUid, targetOrgId, email);
   if (!supaUser) return { memories: [] };
 
   const { id: uid, orgId } = supaUser;

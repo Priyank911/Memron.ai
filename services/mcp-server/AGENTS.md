@@ -1,5 +1,10 @@
 # Memron MCP — Agent Configuration Guide
 
+The current engine contract is v2. `memory_store` requires only `content`,
+and `memory_recall` requires only `query`; the server infers classification,
+namespace, retrieval signals, and token budget. The same JSON contract is
+available over HTTPS at `POST /v1/store` and `POST /v1/recall`.
+
 > Connect Memron's 9 MCP tools to **any** AI agent. Three auth modes:
 > 1. **Direct API key** — `Bearer mm_live_xxx` (works everywhere, simplest)
 > 2. **OAuth 2.1** — Browser-based login (VS Code, Cursor, Windsurf)
@@ -359,7 +364,7 @@ Auth Header:  Authorization: Bearer YOUR_API_KEY
 | Tool | Description |
 |------|-------------|
 | `memory_store` | Store encrypted content, get a pointer |
-| `memory_search` | Search memories by query/tags/bucket |
+| `memory_recall` | Adaptive hybrid recall up to 10,000 tokens |
 | `memory_update` | Update memory (creates forensic snapshot) |
 | `memory_delete` | Soft-delete a memory |
 | `profile_get` | Get user profile & stats |

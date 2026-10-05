@@ -28,9 +28,12 @@ import { MemronTokenVerifier } from './auth/verify.js';
 import { LOGO_BLACK_RAW_BASE64, LOGO_WHITE_RAW_BASE64 } from './auth/assets.js';
 import * as db from './db/queries.js';
 import * as tokens from './lib/tokens.js';
+import { recallMemory, storeMemory, EngineError } from './engine/unified-memory-engine.js';
+import { processCloudflareMemoryIndexMessage, type CloudflareMemoryIndexMessage } from './lib/memory-index-jobs.js';
 
 interface WorkerBindings {
   HYPERDRIVE?: { connectionString: string };
+  MEMORY_INDEX_QUEUE?: { send(message: unknown): Promise<unknown> };
   MEMRON_RUNTIME?: string;
   ALLOWED_ORIGINS?: string;
   RATE_LIMIT_MCP?: string;
@@ -531,7 +534,14 @@ app.post('/auth/complete', async (c) => {
     return c.json({ redirect: redirectUrl.toString() });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Authorization failed';
-    return c.json({ error: 'Authorization failed. Please try again.', details: msg }, 500);
+    const transient = isTransientDatabaseError(msg);
+    if (transient) c.header('Retry-After', '3');
+    return c.json({
+      error: transient ? 'temporarily_unavailable' : 'server_error',
+      error_description: transient
+        ? 'Authorization storage is temporarily unavailable. Please retry.'
+        : 'Authorization failed. Please try again.',
+    }, transient ? 503 : 500);
   }
 });
 
@@ -614,7 +624,14 @@ app.post('/token', async (c) => {
       clientId = 'mcp_client';
     }
 
-    let client = await oauthProvider.clientsStore.getClient(clientId);
+    // A dynamically registered public client is already bound to the
+    // authorization code and PKCE verifier. Avoid an extra database lookup
+    // for its metadata during token exchange; this is important on the edge
+    // because every sequential Hyperdrive round trip consumes the request
+    // budget. Confidential clients still use the durable store.
+    let client = /^memron_[A-Za-z0-9_-]{16,}$/.test(clientId) && !params.client_secret
+      ? { client_id: clientId, redirect_uris: params.redirect_uri ? [params.redirect_uri] : [] }
+      : await oauthProvider.clientsStore.getClient(clientId);
     if (!client) {
       client = {
         client_id: clientId,
@@ -633,13 +650,22 @@ app.post('/token', async (c) => {
         return c.json({ error: 'invalid_request', error_description: 'Missing code or code_verifier' }, 400);
       }
 
-      // Verify PKCE S256
-      const storedChallenge = await oauthProvider.challengeForAuthorizationCode(client, code);
-      if (!verifyCodeChallenge(codeVerifier, storedChallenge, 'S256')) {
+      // Load the authorization code once, verify PKCE locally, and pass the
+      // row through to the provider. The previous implementation queried the
+      // same code twice before issuing tokens, which made intermittent
+      // Hyperdrive latency look like an OAuth parse failure in Copilot.
+      const authCode = await db.getAuthCode(code, client.client_id);
+      if (!authCode) {
+        return c.json({ error: 'invalid_grant', error_description: 'Invalid or expired authorization code' }, 400);
+      }
+      if (redirectUri && authCode.redirect_uri !== redirectUri) {
+        return c.json({ error: 'invalid_grant', error_description: 'Redirect URI mismatch' }, 400);
+      }
+      if (!verifyCodeChallenge(codeVerifier, authCode.code_challenge, 'S256')) {
         return c.json({ error: 'invalid_grant', error_description: 'PKCE code_verifier verification failed' }, 400);
       }
 
-      const tokenResponse = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri);
+      const tokenResponse = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri, undefined, authCode);
       return c.json(tokenResponse, 200);
     } else if (grantType === 'refresh_token') {
       const refreshToken = params.refresh_token;
@@ -656,7 +682,14 @@ app.post('/token', async (c) => {
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Token exchange failed';
-    return c.json({ error: 'invalid_grant', error_description: msg }, 400);
+    const transient = isTransientDatabaseError(msg);
+    if (transient) c.header('Retry-After', '3');
+    return c.json({
+      error: transient ? 'temporarily_unavailable' : 'invalid_grant',
+      error_description: transient
+        ? 'Token storage is temporarily unavailable. Retry the token exchange.'
+        : msg,
+    }, transient ? 503 : 400);
   }
 });
 
@@ -742,6 +775,62 @@ app.get('/auth/success', (c) => {
   return c.html(renderAuthSuccessPage());
 });
 
+// ─── v2 Connector-neutral JSON API ──────────────────────────
+// These routes and MCP memory_store/memory_recall share the same engine. The
+// transport envelope is the only difference, so scripts and hosted agents do
+// not need to understand MCP to use the vault.
+async function authenticateV2(c: any): Promise<any | Response> {
+  const header = c.req.header('authorization');
+  if (!header) return c.json({ ok: false, error: 'missing_token' }, 401);
+  const token = header.replace(/^Bearer\s+/i, '');
+  try {
+    return await tokenVerifier.verifyAccessToken(token);
+  } catch {
+    return c.json({ ok: false, error: 'invalid_token' }, 401);
+  }
+}
+
+function v2UserId(authInfo: any): number {
+  const id = authInfo?.extra?.userId;
+  if (!Number.isInteger(id) || id <= 0) throw new EngineError('authentication_required');
+  return id;
+}
+
+app.post('/v1/store', async (c) => {
+  const auth = await authenticateV2(c);
+  if (auth instanceof Response) return auth;
+  if (!auth.scopes?.includes('memory:write')) return c.json({ ok: false, error: 'insufficient_scope' }, 403);
+  try {
+    const body = await c.req.json();
+    const result = await storeMemory(v2UserId(auth), body, {
+      orgId: auth.extra?.orgId,
+      apiKeyId: auth.extra?.apiKeyId,
+      queue: c.env.MEMORY_INDEX_QUEUE,
+    });
+    return c.json(result, 201);
+  } catch (error) {
+    const status = error instanceof EngineError && error.code.endsWith('required') ? 400 : 422;
+    return c.json(error instanceof EngineError
+      ? { ok: false, error: error.code, ...(error.details || {}) }
+      : { ok: false, error: 'internal_error' }, status);
+  }
+});
+
+app.post('/v1/recall', async (c) => {
+  const auth = await authenticateV2(c);
+  if (auth instanceof Response) return auth;
+  if (!auth.scopes?.includes('memory:read')) return c.json({ ok: false, error: 'insufficient_scope' }, 403);
+  try {
+    const body = await c.req.json();
+    return c.json(await recallMemory(v2UserId(auth), body));
+  } catch (error) {
+    const status = error instanceof EngineError && error.code.endsWith('required') ? 400 : 422;
+    return c.json(error instanceof EngineError
+      ? { ok: false, error: error.code, ...(error.details || {}) }
+      : { ok: false, error: 'internal_error' }, status);
+  }
+});
+
 // ─── MCP Stateless Handler ────────────────────────────────────
 async function handleMcpRequest(c: any) {
   // 1. Rate limiting
@@ -810,7 +899,7 @@ async function handleMcpRequest(c: any) {
 
   // 3. Delegate to fully stateless JSON-RPC handler (no SSE streams, no hangs)
   try {
-    return await handleStatelessMcpRequest(c.req.raw, authInfo);
+    return await handleStatelessMcpRequest(c.req.raw, authInfo, c.env.MEMORY_INDEX_QUEUE);
   } catch (err) {
     console.error('[Worker] MCP request failed:', err instanceof Error ? err.message : err);
     return c.json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal MCP error' }, id: null }, 500);
@@ -836,5 +925,21 @@ app.onError((err, c) => {
 export default {
   async fetch(request: Request, env: WorkerBindings): Promise<Response> {
     return app.fetch(request, env);
+  },
+  async queue(batch: any, env: WorkerBindings): Promise<void> {
+    injectEnv(env);
+    for (const message of batch.messages || []) {
+      try {
+        await processCloudflareMemoryIndexMessage(message.body as CloudflareMemoryIndexMessage);
+        message.ack();
+      } catch (error) {
+        console.error(JSON.stringify({
+          event: 'memory_index_queue_retry',
+          messageId: message.id,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        message.retry();
+      }
+    }
   },
 };

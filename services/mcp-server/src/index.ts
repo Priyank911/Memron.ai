@@ -50,6 +50,7 @@ import { recoverUningestedConversations } from './lib/auto-ingest.js';
 import { userCache, startUserCacheMaintenance } from './lib/user-cache.js';
 import { processAnalysisJobs } from './lib/analysis-jobs.js';
 import { processMemoryIndexBatch, getMemoryIndexQueueDepth } from './lib/memory-index-jobs.js';
+import { recallMemory, storeMemory, EngineError } from './engine/unified-memory-engine.js';
 
 // ─────────────────────────────────────────────────────────────
 // Initialization
@@ -509,6 +510,7 @@ async function universalAuth(
           userId: result.user.id,
           email: result.user.email,
           orgId: result.orgId ?? undefined,
+          apiKeyId: result.apiKeyId,
         },
       };
 
@@ -525,6 +527,43 @@ async function universalAuth(
   const bearerAuth = createBearerAuth(req);
   bearerAuth(req, res, next);
 }
+
+// ─── v2 Connector-neutral JSON API ──────────────────────────
+app.post('/v1/store', universalAuth, async (req, res) => {
+  const auth = (req as any).auth;
+  if (!auth?.scopes?.includes('memory:write')) {
+    res.status(403).json({ ok: false, error: 'insufficient_scope' });
+    return;
+  }
+  try {
+    const result = await storeMemory(auth.extra.userId, req.body, {
+      orgId: auth.extra.orgId,
+      apiKeyId: auth.extra.apiKeyId,
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    const status = error instanceof EngineError && error.code.endsWith('required') ? 400 : 422;
+    res.status(status).json(error instanceof EngineError
+      ? { ok: false, error: error.code, ...(error.details || {}) }
+      : { ok: false, error: 'internal_error' });
+  }
+});
+
+app.post('/v1/recall', universalAuth, async (req, res) => {
+  const auth = (req as any).auth;
+  if (!auth?.scopes?.includes('memory:read')) {
+    res.status(403).json({ ok: false, error: 'insufficient_scope' });
+    return;
+  }
+  try {
+    res.json(await recallMemory(auth.extra.userId, req.body));
+  } catch (error) {
+    const status = error instanceof EngineError && error.code.endsWith('required') ? 400 : 422;
+    res.status(status).json(error instanceof EngineError
+      ? { ok: false, error: error.code, ...(error.details || {}) }
+      : { ok: false, error: 'internal_error' });
+  }
+});
 
 // ─────────────────────────────────────────────────────────────
 // MCP Endpoint — Streamable HTTP Transport

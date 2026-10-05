@@ -999,9 +999,8 @@ const MIGRATIONS = [
    ON analysis_jobs(session_id, job_type)
    WHERE status IN ('queued', 'running')`,
 
-  // Durable post-write graph indexing queue. The payload contains the
-  // plaintext needed by the indexing worker, matching the existing analysis
-  // queue pattern; memory storage itself remains encrypted at rest.
+  // Durable post-write graph indexing queue. Payloads carry pointers and
+  // metadata only; consumers decrypt the canonical memory row by pointer.
   `CREATE TABLE IF NOT EXISTS memory_index_jobs (
     id              BIGSERIAL PRIMARY KEY,
     pointer_id      VARCHAR(64) UNIQUE NOT NULL,
@@ -1021,6 +1020,11 @@ const MIGRATIONS = [
    ON memory_index_jobs(status, available_at, id) WHERE status = 'queued'`,
   `CREATE INDEX IF NOT EXISTS idx_memory_index_jobs_status_count
    ON memory_index_jobs(status) WHERE status = 'queued'`,
+  `DO $$ BEGIN
+     ALTER TABLE memories ADD COLUMN IF NOT EXISTS index_status VARCHAR(20) NOT NULL DEFAULT 'pending';
+   EXCEPTION WHEN undefined_table THEN NULL;
+   END $$`,
+  `CREATE INDEX IF NOT EXISTS idx_memories_index_status ON memories(user_id, index_status)`,
 
   // Existing installations were created with narrower legacy columns. Keep
   // entity types and memory pointers wide enough for extracted taxonomy names

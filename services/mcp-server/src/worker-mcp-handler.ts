@@ -23,6 +23,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { createMcpServer } from './mcp.js';
+import type { MemoryIndexQueue } from './lib/memory-index-queue.js';
 
 /** Timeout (ms) for each tool call routed through the in-process bridge. */
 // Leave enough room for the edge auth lookup and JSON serialization, while
@@ -74,11 +75,12 @@ function err(id: JsonRpcId, code: number, message: string, data?: unknown): Json
 async function withBridgedClient(
   userId: number | undefined,
   authInfo: AuthInfo | undefined,
+  memoryIndexQueue: MemoryIndexQueue | undefined,
   fn: (client: Client) => Promise<unknown>,
 ): Promise<unknown> {
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   // Pass authInfo into SessionContext so the tool proxy injects it into extra
-  const mcpServer = createMcpServer({ userId, authInfo });
+  const mcpServer = createMcpServer({ userId, authInfo, memoryIndexQueue });
 
   const client = new Client(
     { name: 'worker-bridge', version: '1.0.0' },
@@ -105,6 +107,7 @@ async function withBridgedClient(
 async function dispatch(
   msg: JsonRpcRequest,
   authInfo: AuthInfo | undefined,
+  memoryIndexQueue: MemoryIndexQueue | undefined,
 ): Promise<JsonRpcResponse> {
   const id = msg.id ?? null;
   const userId = (authInfo?.extra as Record<string, unknown> | undefined)?.userId as number | undefined;
@@ -152,7 +155,7 @@ async function dispatch(
       // ── tools/list ──────────────────────────────────────────────────────────
       case 'tools/list': {
         const result = await withTimeout(
-          withBridgedClient(userId, authInfo, (client) => client.listTools()),
+          withBridgedClient(userId, authInfo, memoryIndexQueue, (client) => client.listTools()),
           TOOL_CALL_TIMEOUT_MS,
           'tools/list timed out',
         );
@@ -166,7 +169,7 @@ async function dispatch(
           return err(id, -32602, 'Invalid params: missing tool name');
         }
         const result = await withTimeout(
-          withBridgedClient(userId, authInfo, (client) =>
+          withBridgedClient(userId, authInfo, memoryIndexQueue, (client) =>
             client.callTool({ name: params.name, arguments: params.arguments ?? {} }),
           ),
           TOOL_CALL_TIMEOUT_MS,
@@ -222,6 +225,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 export async function handleStatelessMcpRequest(
   req: Request,
   authInfo: AuthInfo,
+  memoryIndexQueue?: MemoryIndexQueue,
 ): Promise<Response> {
   const method = req.method.toUpperCase();
 
@@ -270,7 +274,7 @@ export async function handleStatelessMcpRequest(
       return jsonRpcError(null, -32600, 'Invalid Request: empty batch');
     }
     const responses = await Promise.all(
-      body.map((msg) => dispatch(msg as JsonRpcRequest, authInfo)),
+      body.map((msg) => dispatch(msg as JsonRpcRequest, authInfo, memoryIndexQueue)),
     );
     // Filter out notification sentinels (no id, result === '__notification__')
     const filtered = responses.filter((r) => r.result !== '__notification__');
@@ -285,11 +289,11 @@ export async function handleStatelessMcpRequest(
 
   // Notifications (no id) — process but return 202 with empty body
   if (msg.id === undefined && msg.method.startsWith('notifications/')) {
-    await dispatch(msg, authInfo).catch(() => undefined);
+    await dispatch(msg, authInfo, memoryIndexQueue).catch(() => undefined);
     return new Response(null, { status: 202 });
   }
 
-  const response = await dispatch(msg, authInfo);
+  const response = await dispatch(msg, authInfo, memoryIndexQueue);
 
   // Filter out pure notifications from single dispatch
   if (response.result === '__notification__') {

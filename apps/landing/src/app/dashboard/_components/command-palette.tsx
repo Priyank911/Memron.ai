@@ -112,6 +112,10 @@ export function CommandPalette({
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (filtered.length === 0) {
+      if (e.key === 'Escape') onClose();
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActiveIdx(i => (i + 1) % filtered.length);

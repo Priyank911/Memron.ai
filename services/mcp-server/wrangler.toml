@@ -16,7 +16,7 @@
 
 name = "memron-mcp"
 main = "src/worker.ts"
-compatibility_date = "2025-09-01"
+compatibility_date = "2026-10-05"
 compatibility_flags = ["nodejs_compat"]
 
 # Free workers.dev URL, e.g. https://memron-mcp.<account>.workers.dev
@@ -39,6 +39,31 @@ RATE_LIMIT_MCP = "100"
 EMBEDDING_PROVIDER = "gemini"
 GEMINI_EMBEDDING_MODEL = "gemini-embedding-2"
 AUTO_INGEST_ENABLED = "false"
+
+# v2 async graph enrichment. The store path remains durable in Postgres;
+# this queue only carries idempotent post-write work.
+[[queues.producers]]
+binding = "MEMORY_INDEX_QUEUE"
+queue = "memron-index-v2"
+
+[[queues.consumers]]
+queue = "memron-index-v2"
+dead_letter_queue = "memron-index-v2-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+max_concurrency = 5
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.05
 
 # Free plan: default limits apply (no custom CPU/memory limits allowed).
 # If you upgrade to paid later, you may add a [limits] section.
