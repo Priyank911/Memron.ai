@@ -22,7 +22,7 @@
  */
 import { query } from './client.js';
 
-export const EXPECTED_SCHEMA_VERSION = 10;
+export const EXPECTED_SCHEMA_VERSION = 11;
 
 const MIGRATIONS = [
   // A single explicit gate makes schema drift visible instead of allowing a
@@ -161,6 +161,20 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`,
   `DO $$ BEGIN
      CREATE INDEX IF NOT EXISTS idx_memories_title_search ON memories USING GIN(to_tsvector('english', title));
+   EXCEPTION WHEN others THEN NULL;
+   END $$`,
+  // Recall normalizes punctuation and searches title/tags/bucket together so
+  // queries such as "dashboard Playground" match stored titles written as
+  // "dashboard/Playground".
+  `DO $$ BEGIN
+     CREATE INDEX IF NOT EXISTS idx_memories_keyword_search ON memories USING GIN(
+       to_tsvector('english', regexp_replace(
+         coalesce(title, '') || ' ' ||
+         array_to_string(coalesce(tags, ARRAY[]::text[]), ' ') || ' ' ||
+         coalesce(bucket, ''),
+         '[^[:alnum:]]+', ' ', 'g'
+       ))
+     );
    EXCEPTION WHEN others THEN NULL;
    END $$`,
 

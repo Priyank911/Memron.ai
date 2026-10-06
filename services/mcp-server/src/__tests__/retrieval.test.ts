@@ -96,6 +96,18 @@ import {
 } from '../retrieval/anti-hallucination.js';
 
 import { buildMemoryPacket, formatPacketForPrompt } from '../retrieval/packet-builder.js';
+import { buildKeywordTsQuery, extractKeywordTerms } from '../retrieval/bm25-search.js';
+
+describe('Recall keyword normalization', () => {
+  it('builds bounded OR-prefix terms and ignores question filler', () => {
+    expect(extractKeywordTerms('What changes are made in Memron dashboard/Playground?')).toEqual([
+      'changes', 'made', 'memron', 'dashboard', 'playground',
+    ]);
+    expect(buildKeywordTsQuery('What changes are made in Memron dashboard/Playground?')).toBe(
+      'changes:* | made:* | memron:* | dashboard:* | playground:*',
+    );
+  });
+});
 
 describe('Anti-Hallucination System', () => {
   const mockMemories = [

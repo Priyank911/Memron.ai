@@ -966,15 +966,22 @@ export default function DashboardPage() {
                     {month.weeks.map((week, wi) => (
                       <div key={wi} className="mm-heatmap-week">
                         {week.map((cell, di) => {
-                          if (cell.value === -1 || !cell.date) return <div key={di} className="mm-hm-cell lv-empty" aria-hidden="true" />;
-                          const v = cell.value;
+                          // Accept legacy numeric cells while older cached/API
+                          // responses drain. New responses carry an exact date.
+                          const normalizedCell = typeof cell === 'number'
+                            ? { date: null, value: cell }
+                            : cell;
+                          if (normalizedCell.value === -1) return <div key={di} className="mm-hm-cell lv-empty" aria-hidden="true" />;
+                          const v = Number(normalizedCell.value) || 0;
                           const lv = v === 0 ? 0 : v <= 1 ? 1 : v <= 2 ? 2 : v <= 4 ? 3 : 4;
-                          const stamp = new Intl.DateTimeFormat(undefined, {
+                          const stamp = normalizedCell.date
+                            ? new Intl.DateTimeFormat(undefined, {
                             weekday: 'short',
                             month: 'short',
                             day: 'numeric',
                             year: 'numeric',
-                          }).format(new Date(`${cell.date}T12:00:00`));
+                          }).format(new Date(`${normalizedCell.date}T12:00:00`))
+                            : 'Date unavailable';
                           return (
                             <div
                               key={di}

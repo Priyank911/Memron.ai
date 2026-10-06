@@ -32,6 +32,13 @@ export interface RecallRequest {
   space?: string;
 }
 
+export interface RecallAnswer {
+  query: string;
+  answer_ready: boolean;
+  budget_used: number;
+  results: RecallResult[];
+}
+
 export interface StoreResponse {
   ok: true;
   ref: string;
@@ -45,6 +52,7 @@ export interface RecallResult {
   type: string;
   confidence: number;
   age: string;
+  matched_by?: string[];
 }
 
 export interface RecallResponse {
@@ -52,6 +60,8 @@ export interface RecallResponse {
   answer_ready: boolean;
   budget_used: number;
   results: RecallResult[];
+  /** Present when one request contains multiple explicit questions. */
+  answers?: RecallAnswer[];
 }
 
 export class EngineError extends Error {
@@ -158,6 +168,22 @@ function resultConfidence(fusedScore: number, vectorSimilarity?: number): number
   return Math.round(Math.max(0.01, Math.min(0.99, 0.35 + semantic * 0.45 + fused * 0.2)) * 100) / 100;
 }
 
+/** Split only explicit question boundaries; never split ordinary "and" text. */
+export function splitRecallQuestions(input: string): string[] {
+  const normalized = input.replace(/\r/g, '').trim();
+  if (!normalized) return [];
+  const clean = (part: string) => part.trim().replace(/[?]+$/g, '').trim();
+  const byQuestionMark = normalized.split(/\?+/).map(clean).filter(Boolean);
+  if (byQuestionMark.length > 1) return byQuestionMark;
+  const byLine = normalized.split(/\n+/).map(clean).filter(Boolean);
+  if (byLine.length > 1) return byLine;
+  // Handles "What is A and what is B?" without breaking normal prose.
+  const byInterrogative = normalized.split(/\s+(?=(?:what|which|who|where|when|why|how)\b)/i)
+    .map((part) => clean(part).replace(/\s+(?:and|also|plus)\s*$/i, ''))
+    .filter(Boolean);
+  return byInterrogative.length > 1 ? byInterrogative : [normalized];
+}
+
 export async function storeMemory(
   userId: number,
   request: StoreRequest,
@@ -234,7 +260,7 @@ export async function storeMemory(
   return { ok: true, ref: pointerId, filed_as: type, space };
 }
 
-export async function recallMemory(userId: number, request: RecallRequest): Promise<RecallResponse> {
+async function recallSingleMemory(userId: number, request: RecallRequest): Promise<RecallAnswer> {
   const query = request.query?.trim();
   if (!query) throw new EngineError('query_required');
   if (query.length > 2_000) throw new EngineError('query_too_long', { limit: 2_000 });
@@ -270,6 +296,7 @@ export async function recallMemory(userId: number, request: RecallRequest): Prom
         type: String(item.metadata?.type || item.memoryType || 'fact'),
         confidence: resultConfidence(item.fusedScore, item.vectorSimilarity),
         age: relativeAge(item.createdAt),
+        matched_by: Object.keys(item.signals),
       },
     }));
 
@@ -286,9 +313,50 @@ export async function recallMemory(userId: number, request: RecallRequest): Prom
   );
 
   return {
-    ok: true,
+    query,
     answer_ready: answerReady,
     budget_used: budgetUsed,
     results: answerReady ? results : [],
+  };
+}
+
+export async function recallMemory(userId: number, request: RecallRequest): Promise<RecallResponse> {
+  const query = request.query?.trim();
+  if (!query) throw new EngineError('query_required');
+  if (query.length > 2_000) throw new EngineError('query_too_long', { limit: 2_000 });
+
+  const questions = splitRecallQuestions(query);
+  if (questions.length <= 1) {
+    const answer = await recallSingleMemory(userId, { ...request, query });
+    return { ok: true, ...answer };
+  }
+
+  const requestedBudget = request.budget;
+  const perQuestionBudget = requestedBudget === undefined
+    ? undefined
+    : Math.max(1, Math.floor(requestedBudget / questions.length));
+  const answers = await Promise.all(questions.map((question) => recallSingleMemory(userId, {
+    ...request,
+    query: question,
+    budget: perQuestionBudget,
+  })));
+  const merged: RecallResult[] = [];
+  const seen = new Set<string>();
+  for (const answer of answers) {
+    for (const result of answer.results) {
+      if (seen.has(result.ref)) continue;
+      seen.add(result.ref);
+      merged.push(result);
+    }
+  }
+  return {
+    ok: true,
+    // `answers` is the authoritative per-question result. `results` remains
+    // flattened for older MCP clients that only understand the original wire
+    // shape.
+    answer_ready: answers.some((answer) => answer.answer_ready),
+    budget_used: answers.reduce((sum, answer) => sum + answer.budget_used, 0),
+    results: merged,
+    answers,
   };
 }

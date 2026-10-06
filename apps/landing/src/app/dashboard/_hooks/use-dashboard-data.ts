@@ -13,7 +13,7 @@ export interface DashboardStats {
   sparkMemories: number[];
   dailyChart: { label: string; value: number; date?: string }[];
   hourlyChart: { label: string; value: number }[];
-  heatmapData: { month: string; weeks: { date: string | null; value: number }[][] }[];
+  heatmapData: { month: string; weeks: (number | { date: string | null; value: number })[][] }[];
   peakHour: string;
   memoryDelta: number;
   previousMemories: number;

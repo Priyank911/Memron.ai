@@ -333,10 +333,15 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const HIGH = options.highConfidenceSimilarity ?? 0.7;
   const bm25Allowed = (weights.bm25 || 0) > 0;
   const graphAllowed = (weights.graph || 0) > 0;
+  // Atomic memories are the episodic/derived layer. They are intentionally
+  // down-weighted, but when no curated memory has a lexical hit they must be
+  // allowed to answer the query instead of being discarded at the final gate.
+  const allowAtomicKeywordFallback = bm25Allowed && bm25Split.mem.length === 0;
   const gatedResults = fusedResults.filter((r) => {
     const sim = vectorSimilarityById.get(r.id);
     if (sim != null && sim >= HIGH) return true;
     if (bm25Allowed && r.signals['bm25'] !== undefined) return true;
+    if (allowAtomicKeywordFallback && r.signals['bm25_atomic'] !== undefined) return true;
     if (graphAllowed && sim != null && r.signals['graph'] !== undefined) return true;
     return false;
   });
@@ -481,7 +486,9 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
 }
 
 function extractEntities(queryStr: string): string[] {
-  const stopWords = new Set(['what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'does', 'have', 'about', 'into', 'show', 'find', 'the', 'and', 'for']);
-  const matches = queryStr.match(/[A-Za-z][A-Za-z0-9._/-]{2,}/g) || [];
+  const stopWords = new Set(['what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'does', 'have', 'about', 'into', 'show', 'find', 'the', 'and', 'for', 'can', 'tell', 'me', 'made', 'changes']);
+  // Slash is a separator, not part of an entity. This lets graph anchors
+  // recognize both halves of stored labels such as dashboard/Playground.
+  const matches = queryStr.match(/[A-Za-z][A-Za-z0-9._-]{2,}/g) || [];
   return Array.from(new Set(matches.filter(word => !stopWords.has(word.toLowerCase()))));
 }

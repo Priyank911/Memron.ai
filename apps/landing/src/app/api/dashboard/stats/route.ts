@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     const timezone = isValidTimezone(requestedTimezone) ? requestedTimezone : 'UTC';
 
     // Cache key scoped to user + time range + workspace
-    const cacheKey = `stats:${firebaseUid}:${range}:${timezone}:${orgId || 'default'}`;
+    const cacheKey = `stats:v3:${firebaseUid}:${range}:${timezone}:${orgId || 'default'}`;
 
     const cacheProfile = range === 'today'
       ? { ...CACHE_PROFILES.stats, ttl: 5_000, swr: 5_000 }

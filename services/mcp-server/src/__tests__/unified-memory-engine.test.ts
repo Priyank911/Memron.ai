@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { classifyRecallQuery } from '../engine/unified-memory-engine.js';
+import { classifyRecallQuery, splitRecallQuestions } from '../engine/unified-memory-engine.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { createMcpServer } from '../mcp.js';
 
 describe('memory engine v2 query policy', () => {
+  it('keeps multiple explicit questions separate for independent retrieval', () => {
+    expect(splitRecallQuestions('What changed in the dashboard? Which database does Memron use?')).toEqual([
+      'What changed in the dashboard',
+      'Which database does Memron use',
+    ]);
+    expect(splitRecallQuestions('What changed in the dashboard and which database does Memron use?')).toEqual([
+      'What changed in the dashboard',
+      'which database does Memron use',
+    ]);
+  });
   it('uses a compact budget for a single-fact query', () => {
     const profile = classifyRecallQuery('what database does Helios use now');
     expect(profile.kind).toBe('fact');
