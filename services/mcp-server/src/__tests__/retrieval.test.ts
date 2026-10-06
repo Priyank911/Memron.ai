@@ -362,3 +362,49 @@ describe('Token Accounting', () => {
     }
   });
 });
+
+describe('RRF Score-Aware Fusion & Relevance Gating', () => {
+  it('applies quadratic boosting to high-similarity vector matches', async () => {
+    const { fuseWithRRF } = await import('../lib/rrf.js');
+    const signals = [
+      {
+        name: 'vector',
+        weight: 3.0,
+        results: [
+          { id: 'high_sim', score: 0.95 },
+          { id: 'low_sim', score: 0.52 },
+        ],
+      },
+    ];
+
+    const results = fuseWithRRF(signals, { topK: 10 });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0].id).toBe('high_sim');
+    // High similarity (0.95^2 = ~0.90) gets significantly higher score than low similarity (0.52^2 = ~0.27)
+    if (results.length > 1) {
+      expect(results[0].fusedScore).toBeGreaterThan(results[1].fusedScore * 2);
+    }
+  });
+
+  it('filters noise results below the tightened minScore threshold', async () => {
+    const { fuseWithRRF } = await import('../lib/rrf.js');
+    const signals = [
+      {
+        name: 'vector',
+        weight: 3.0,
+        results: [{ id: 'primary', score: 0.9 }],
+      },
+      {
+        name: 'recency',
+        weight: 0.3,
+        results: [{ id: 'unrelated_recent_item', score: 0.1 }],
+      },
+    ];
+
+    const results = fuseWithRRF(signals, { topK: 10 });
+    // The unrelated item only has a tiny recency score (0.3 / 61 = 0.0049),
+    // which falls below 20% of max single signal (3.0 * 0.81 / 61 * 0.20 = ~0.008)
+    const recentOnly = results.find(r => r.id === 'unrelated_recent_item');
+    expect(recentOnly).toBeUndefined();
+  });
+});

@@ -22,13 +22,12 @@ export interface RRFResult {
 
 export const DEFAULT_SIGNAL_WEIGHTS = {
   vector: 3.0,   // Semantic similarity is the primary signal — it understands meaning, not just keywords
-  bm25: 0.8,     // Keyword overlap on curated memories (title/tags/bucket)
-  bm25Atomic: 0.3, // Keyword overlap on pipeline-distilled atomic rows. Deliberately
-                   // below the RRF noise floor on its own (0.3/61 < minScore), so
-                   // ingested chatter can only surface with vector/graph support —
-                   // never on a keyword echo alone. This is the abstention guard.
-  graph: 1.0,    // Moderate — graph adds useful context when entities are recognized
-  recency: 0.4,  // Low — time decay is supplementary, not primary
+  bm25: 1.0,     // Keyword overlap on curated memories (title/tags/bucket)
+  bm25Atomic: 0.15, // Keyword overlap on pipeline-distilled atomic rows. Deliberately
+                   // tiny so ingested chatter echoes can never outrank curated memories
+                   // on keyword overlap alone. They still surface when vector/graph agree.
+  graph: 1.2,    // Graph edges carry curated entity semantics — slightly above BM25
+  recency: 0.3,  // Low — time decay is supplementary, not primary
 };
 
 /**
@@ -63,7 +62,17 @@ export function fuseWithRRF(
       let doc = documentScores.get(result.id);
       if (doc && doc.signals[signal.name] !== undefined) return;
       const rank = index + 1; // 1-based rank
-      const rrfScore = signal.weight / (k + rank);
+      let rrfScore = signal.weight / (k + rank);
+
+      // Score-aware boosting for vector signal: a cosine similarity of 0.9
+      // should contribute much more than 0.52 (barely above floor). Without
+      // this, rank-only RRF treats a junk neighbor identically to a true
+      // semantic match.
+      if (signal.name === 'vector' && typeof result.score === 'number') {
+        // Quadratic scaling: emphasizes high-similarity matches, suppresses
+        // marginal ones. sim=0.9 -> 0.81 multiplier, sim=0.5 -> 0.25 multiplier.
+        rrfScore *= result.score * result.score;
+      }
 
       if (!doc) {
         doc = {
@@ -80,11 +89,11 @@ export function fuseWithRRF(
   }
 
   // Convert map to array, filter noise, and sort by fused score descending.
-  // Minimum threshold: a result must earn at least 1% of the max possible
+  // Minimum threshold: a result must earn at least 20% of the max possible
   // single-signal score to be included. This eliminates padding results that
   // add noise without relevance.
   const maxSingleSignal = Math.max(...signals.map(s => s.weight / (k + 1)), 0.01);
-  const minScore = maxSingleSignal * 0.15;
+  const minScore = maxSingleSignal * 0.20;
 
   const fusedResults = Array.from(documentScores.values())
     .filter(r => r.fusedScore >= minScore)

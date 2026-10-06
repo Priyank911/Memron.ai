@@ -87,11 +87,15 @@ export async function searchMemoriesBM25(params: {
   `;
 
   const result = await query<{ id: string; rank: number }>(sql, [params.userId, tsQuery, limit]);
+  // Filter out very low BM25 scores — a rank below 0.005 means the match is
+  // on a single generic prefix with almost no term-frequency signal. Keeping
+  // these injects noise into RRF and drowns real matches.
+  const filtered = result.rows.filter(r => r.rank >= 0.005);
   // The indexed path handles normal cases. The bounded fallback covers older
   // PostgreSQL indexes, unusual punctuation, and inflections that stemming
   // cannot reconcile. It searches only non-sensitive metadata, never the
   // encrypted memory body.
-  return result.rows.length ? result.rows : fallbackMemoryKeywordSearch(params.userId, terms, limit);
+  return filtered.length ? filtered : fallbackMemoryKeywordSearch(params.userId, terms, limit);
 }
 
 export async function searchAtomicMemoriesBM25(params: {
@@ -116,7 +120,7 @@ export async function searchAtomicMemoriesBM25(params: {
       LIMIT $3
     `;
     const result = await query<{ id: string; rank: number }>(sqlWithTsv, [params.userId, tsQuery, limit]);
-    return result.rows;
+    return result.rows.filter(r => r.rank >= 0.005);
   } catch (e) {
     // Fallback to to_tsvector if content_tsv doesn't exist
     const sqlFallback = `
@@ -131,7 +135,7 @@ export async function searchAtomicMemoriesBM25(params: {
       LIMIT $3
     `;
     const result = await query<{ id: string; rank: number }>(sqlFallback, [params.userId, tsQuery, limit]);
-    return result.rows;
+    return result.rows.filter(r => r.rank >= 0.005);
   }
 }
 

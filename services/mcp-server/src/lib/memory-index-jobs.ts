@@ -36,12 +36,34 @@ export async function processCloudflareMemoryIndexMessage(message: CloudflareMem
   const row = await getMemoryByPointer(message.pointerId, message.userId);
   if (!row) return;
   const content = decrypt({ encrypted: row.content_encrypted, iv: row.content_iv, tag: row.content_tag });
+
+  // If the memory doesn't have an embedding yet (e.g. foreground timeout on edge),
+  // generate and backfill it here in the background consumer.
+  let memoryEmbedding: number[] | null = null;
+  if (!row.embedding && isEmbeddingConfigured()) {
+    try {
+      const input = buildEmbeddingInput(message.title, row.tags || [], content);
+      const [embedding] = await generateEmbeddings([input]);
+      if (embedding) {
+        memoryEmbedding = embedding;
+        await updateMemoryEmbeddingByPointer(message.pointerId, message.userId, toPgVector(embedding));
+      }
+    } catch (e) {
+      console.warn(JSON.stringify({
+        event: 'queue_embedding_generation_failed',
+        pointerId: message.pointerId,
+        error: e instanceof Error ? e.message : String(e),
+      }));
+    }
+  }
+
   const result = await indexStoredMemoryInGraph({
     userId: message.userId,
     pointerId: message.pointerId,
     title: message.title,
     content,
     createMemoryNode: true,
+    memoryEmbedding,
   });
   await updateMemoryIndexStatus(message.pointerId, message.userId, 'indexed');
   console.info(JSON.stringify({
@@ -49,6 +71,7 @@ export async function processCloudflareMemoryIndexMessage(message: CloudflareMem
     pointerId: message.pointerId,
     entities: result.entities,
     relationships: result.relationships,
+    hasEmbedding: Boolean(row.embedding || memoryEmbedding),
   }));
 }
 

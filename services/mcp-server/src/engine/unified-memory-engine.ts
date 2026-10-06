@@ -102,20 +102,20 @@ export function classifyRecallQuery(query: string): QueryProfile {
     return {
       kind: 'broad',
       budget: 10_000,
-      weights: { vector: 3.0, bm25: exact ? 1.2 : 0.8, bm25Atomic: 0.3, graph: relationship ? 1.6 : 1.0, recency: temporal ? 0.9 : 0.4 },
+      weights: { vector: 3.0, bm25: exact ? 1.4 : 1.0, bm25Atomic: 0.15, graph: relationship ? 1.6 : 1.0, recency: temporal ? 0.9 : 0.4 },
     };
   }
   if (relationship) {
     return {
       kind: 'relationship',
       budget: 4_000,
-      weights: { vector: 3.0, bm25: exact ? 1.2 : 0.8, bm25Atomic: 0.3, graph: 1.6, recency: temporal ? 0.9 : 0.4 },
+      weights: { vector: 3.0, bm25: exact ? 1.4 : 1.0, bm25Atomic: 0.15, graph: 1.6, recency: temporal ? 0.9 : 0.4 },
     };
   }
   return {
     kind: 'fact',
     budget: 800,
-    weights: { vector: 3.0, bm25: exact ? 1.2 : 0.8, bm25Atomic: 0.3, graph: 1.0, recency: temporal ? 0.9 : 0.4 },
+    weights: { vector: 3.0, bm25: exact ? 1.4 : 1.0, bm25Atomic: 0.15, graph: 1.0, recency: temporal ? 0.9 : 0.4 },
   };
 }
 
@@ -162,10 +162,28 @@ function relativeAge(date: Date): string {
   return `${Math.floor(months / 12)}y`;
 }
 
-function resultConfidence(fusedScore: number, vectorSimilarity?: number): number {
-  const semantic = vectorSimilarity == null ? 0 : Math.max(0, Math.min(1, vectorSimilarity));
-  const fused = Math.max(0, Math.min(1, fusedScore * 20));
-  return Math.round(Math.max(0.01, Math.min(0.99, 0.35 + semantic * 0.45 + fused * 0.2)) * 100) / 100;
+function resultConfidence(fusedScore: number, vectorSimilarity?: number, signalCount?: number): number {
+  // Base from fused score — normalized to [0,1] range.
+  // fusedScore typically ranges 0.01–0.12, so *10 maps to 0.1–1.2 before clamping.
+  const fused = Math.max(0, Math.min(1, fusedScore * 10));
+
+  // Semantic contribution — only meaningful when similarity is genuinely high.
+  // Below 0.65, vector matches in high-dim spaces are essentially noise.
+  const semantic = vectorSimilarity == null ? 0
+    : vectorSimilarity >= 0.75 ? vectorSimilarity  // strong match
+    : vectorSimilarity >= 0.65 ? vectorSimilarity * 0.6  // moderate — discount
+    : 0;  // weak — no contribution
+
+  // Multi-signal corroboration bonus: a result confirmed by 3+ independent
+  // signals is more trustworthy than one found by a single noisy channel.
+  const corroboration = (signalCount ?? 1) >= 3 ? 0.08
+    : (signalCount ?? 1) >= 2 ? 0.04
+    : 0;
+
+  // Weighted combination: fused rank dominates, semantic adds precision,
+  // corroboration rewards multi-signal agreement.
+  const raw = 0.20 + fused * 0.40 + semantic * 0.30 + corroboration;
+  return Math.round(Math.max(0.01, Math.min(0.99, raw)) * 100) / 100;
 }
 
 /** Split only explicit question boundaries; never split ordinary "and" text. */
@@ -294,7 +312,7 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
         ref: item.id,
         text: item.content,
         type: String(item.metadata?.type || item.memoryType || 'fact'),
-        confidence: resultConfidence(item.fusedScore, item.vectorSimilarity),
+        confidence: resultConfidence(item.fusedScore, item.vectorSimilarity, Object.keys(item.signals).length),
         age: relativeAge(item.createdAt),
         matched_by: Object.keys(item.signals),
       },

@@ -223,13 +223,13 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
       const isBillingFailure = isRateLimitFailure && /insufficient|credits|billing/i.test(errBody);
       if (isBillingFailure) {
         // Do not hammer the provider once it has explicitly rejected the
-        // account for billing. Memories remain durable and keyword search
-        // continues while semantic indexing is paused.
+        // account for billing or quota. Memories remain durable and keyword
+        // search continues while semantic indexing is paused.
         _failures = CIRCUIT_THRESHOLD;
         _lastFail = Date.now();
         if (!_loggedDisabled) {
           _loggedDisabled = true;
-          console.error('[Embeddings] OpenAI rejected the request because the account has no API credits. Semantic indexing paused for 5 minutes; keyword and graph extraction remain available.');
+          console.error(`[Embeddings] ${provider.name} rejected the request (quota/billing limit). Semantic indexing paused for 60 seconds; keyword and graph extraction remain available.`);
         }
       } else if (isRateLimitFailure) {
         // Rate limit: brief cooldown instead of full circuit breaker.
@@ -238,7 +238,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
         _lastFail = Date.now();
         if (!_loggedDisabled) {
           _loggedDisabled = true;
-          console.warn('[Embeddings] Rate limit hit — brief cooldown before retry');
+          console.warn(`[Embeddings] ${provider.name} rate limit hit — brief cooldown before retry`);
         }
       } else {
         console.warn(`[Embeddings] ${provider.name} error ${res.status}: ${errBody.slice(0, 200)}`);

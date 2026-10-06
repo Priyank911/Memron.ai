@@ -82,7 +82,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const topK = options.topK ?? 20;
   const graphDepth = options.graphDepth ?? 2;
   const activeOnly = options.activeOnly ?? true;
-  const minVectorSimilarity = options.minVectorSimilarity ?? 0.5;
+  const minVectorSimilarity = options.minVectorSimilarity ?? 0.55;
   
   const weights = {
     ...DEFAULT_SIGNAL_WEIGHTS,
@@ -298,8 +298,17 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   if (vectorHits.length) signalResults.push({ name: 'vector', weight: weights.vector, results: vectorHits });
   if (bm25Split.mem.length) signalResults.push({ name: 'bm25', weight: weights.bm25, results: bm25Split.mem });
   if (bm25Split.atomic.length) signalResults.push({ name: 'bm25_atomic', weight: weights.bm25Atomic, results: bm25Split.atomic });
-  if (graphHits.length) signalResults.push({ name: 'graph', weight: weights.graph, results: graphHits });
-  if (recencyHits.length) signalResults.push({ name: 'recency', weight: weights.recency, results: recencyHits });
+  // Recency is a tie-breaker, not an independent discovery channel. Blindly scoring
+  // arbitrary recent memories pollutes RRF ranking with unrelated recent documents.
+  // Only apply recency scoring to candidates already matched by a content signal.
+  const contentCandidateIds = new Set<string>();
+  vectorHits.forEach(h => contentCandidateIds.add(h.id));
+  bm25Split.mem.forEach(h => contentCandidateIds.add(h.id));
+  bm25Split.atomic.forEach(h => contentCandidateIds.add(h.id));
+  graphHits.forEach(h => contentCandidateIds.add(h.id));
+
+  const relevantRecencyHits = recencyHits.filter(h => contentCandidateIds.has(h.id));
+  if (relevantRecencyHits.length) signalResults.push({ name: 'recency', weight: weights.recency, results: relevantRecencyHits });
 
   const totalCandidatesSet = new Set<string>();
   vectorHits.forEach(h => totalCandidatesSet.add(h.id));
@@ -339,9 +348,15 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const allowAtomicKeywordFallback = bm25Allowed && bm25Split.mem.length === 0;
   const gatedResults = fusedResults.filter((r) => {
     const sim = vectorSimilarityById.get(r.id);
+    // 1. High-confidence semantic match stands alone.
     if (sim != null && sim >= HIGH) return true;
-    if (bm25Allowed && r.signals['bm25'] !== undefined) return true;
-    if (allowAtomicKeywordFallback && r.signals['bm25_atomic'] !== undefined) return true;
+    // 2. Strong curated keyword match (ranked in top 5 of BM25 signal).
+    if (bm25Allowed && r.signals['bm25'] !== undefined && r.signals['bm25'] <= 5) return true;
+    // 3. Weaker curated keyword match, but with vector or graph corroboration.
+    if (bm25Allowed && r.signals['bm25'] !== undefined && (sim != null || (graphAllowed && r.signals['graph'] !== undefined))) return true;
+    // 4. Atomic keyword fallback only when no curated memories matched AND rank is top 5.
+    if (allowAtomicKeywordFallback && r.signals['bm25_atomic'] !== undefined && r.signals['bm25_atomic'] <= 5) return true;
+    // 5. Corroborated weak semantics (vector + graph agree).
     if (graphAllowed && sim != null && r.signals['graph'] !== undefined) return true;
     return false;
   });
@@ -457,6 +472,60 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     }
   }
 
+  // ── Content-level lexical re-ranking ──────────────────────────────────────
+  // After hydration, do a lightweight lexical relevance check on the actual
+  // content. This catches false-positive vector matches where the embedding
+  // space says "close" but the content is about a completely different topic.
+  // We demote results with low query-term overlap in their actual text.
+  if (retrievedMemories.length > 1) {
+    const queryTerms = new Set(
+      (options.query.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) || []).filter(
+        t => !new Set(['the', 'and', 'for', 'are', 'was', 'what', 'when', 'where', 'how', 'who', 'why', 'which', 'with', 'from', 'that', 'this', 'does', 'have', 'about', 'can', 'tell', 'show', 'find', 'into', 'its', 'been', 'being', 'also', 'all', 'any']).has(t)
+      )
+    );
+    if (queryTerms.size > 0) {
+      for (const mem of retrievedMemories) {
+        const contentLower = mem.content.toLowerCase();
+        const contentTerms = new Set(contentLower.match(/[a-z][a-z0-9]{2,}/g) || []);
+        let matchCount = 0;
+        for (const qt of queryTerms) {
+          if (contentTerms.has(qt)) matchCount++;
+        }
+        const overlap = matchCount / queryTerms.size;
+        // If fewer than 15% of query terms appear in content, this is likely
+        // a false positive. Heavily discount the fused score so genuinely
+        // relevant results can overtake it.
+        if (overlap < 0.15) {
+          mem.fusedScore *= 0.35;
+        } else if (overlap < 0.30) {
+          mem.fusedScore *= 0.65;
+        } else if (overlap >= 0.50) {
+          // Strong overlap bonus
+          mem.fusedScore *= 1.25;
+        }
+      }
+      // Re-sort after demotion/promotion
+      retrievedMemories.sort((a, b) => b.fusedScore - a.fusedScore);
+    }
+  }
+
+  // ── Deduplication by content ──────────────────────────────────────────────
+  // A memory stored in both `memories` and `atomic_memories` can appear twice
+  // with different IDs but identical text. Deduplicate on content prefix.
+  {
+    const seenContent = new Set<string>();
+    const deduped: RetrievedMemory[] = [];
+    for (const mem of retrievedMemories) {
+      // Use first 200 chars normalized as fingerprint
+      const fp = mem.content.slice(0, 200).toLowerCase().replace(/\s+/g, ' ').trim();
+      if (seenContent.has(fp)) continue;
+      seenContent.add(fp);
+      deduped.push(mem);
+    }
+    retrievedMemories.length = 0;
+    retrievedMemories.push(...deduped);
+  }
+
   const endTime = performance.now();
 
   // Pipeline-eye: one structured line per recall. Grep `recall_trace` in
@@ -486,9 +555,30 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
 }
 
 function extractEntities(queryStr: string): string[] {
-  const stopWords = new Set(['what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'does', 'have', 'about', 'into', 'show', 'find', 'the', 'and', 'for', 'can', 'tell', 'me', 'made', 'changes']);
+  const stopWords = new Set([
+    'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'does',
+    'have', 'about', 'into', 'show', 'find', 'the', 'and', 'for', 'can',
+    'tell', 'me', 'made', 'changes', 'how', 'why', 'who', 'its', 'are',
+    'been', 'being', 'also', 'very', 'much', 'all', 'any', 'not', 'but',
+  ]);
+
+  // Phase 1: Multi-word entities — capitalized bigrams/trigrams like "Jev AI",
+  // "TypeSafe AI", "Cloudflare Workers". These are the highest-quality graph anchors.
+  const multiWord: string[] = [];
+  const multiWordPattern = /\b([A-Z][A-Za-z0-9._-]+(?:\s+[A-Z][A-Za-z0-9._-]+){1,3})\b/g;
+  let mwMatch;
+  while ((mwMatch = multiWordPattern.exec(queryStr)) !== null) {
+    const candidate = mwMatch[1].trim();
+    if (candidate.split(/\s+/).some(w => !stopWords.has(w.toLowerCase()))) {
+      multiWord.push(candidate);
+    }
+  }
+
+  // Phase 2: Single-word entities — significant tokens (3+ chars, not stop words).
   // Slash is a separator, not part of an entity. This lets graph anchors
   // recognize both halves of stored labels such as dashboard/Playground.
   const matches = queryStr.match(/[A-Za-z][A-Za-z0-9._-]{2,}/g) || [];
-  return Array.from(new Set(matches.filter(word => !stopWords.has(word.toLowerCase()))));
+  const singleWord = matches.filter(word => !stopWords.has(word.toLowerCase()));
+
+  return Array.from(new Set([...multiWord, ...singleWord]));
 }
