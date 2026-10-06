@@ -22,7 +22,7 @@
  */
 import { query } from './client.js';
 
-export const EXPECTED_SCHEMA_VERSION = 9;
+export const EXPECTED_SCHEMA_VERSION = 10;
 
 const MIGRATIONS = [
   // A single explicit gate makes schema drift visible instead of allowing a
@@ -1063,8 +1063,20 @@ const MIGRATIONS = [
   `DO $$ BEGIN
      UPDATE memory_packets SET query_embedding = NULL WHERE query_embedding IS NOT NULL;
      ALTER TABLE memory_packets ALTER COLUMN query_embedding TYPE vector(1024);
-   EXCEPTION WHEN undefined_table THEN NULL;
-   END $$`
+    EXCEPTION WHEN undefined_table THEN NULL;
+    END $$`,
+
+  // Retrieval indexes: keep the hot user/active/time path selective and let
+  // graph entity lookups use the same user+canonical key as the Worker query.
+  `CREATE INDEX IF NOT EXISTS idx_memories_user_active_created
+   ON memories(user_id, created_at DESC) WHERE is_active = true`,
+  `CREATE INDEX IF NOT EXISTS idx_entities_user_canonical
+   ON entities(user_id, canonical_name)`,
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_user_source_strength
+   ON entity_relationships(user_id, source_entity_id, strength DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_entity_rels_user_target_strength
+   ON entity_relationships(user_id, target_entity_id, strength DESC)`,
+  // bucket_shares is owned by the dashboard schema and is indexed there.
 ];
 
 /**

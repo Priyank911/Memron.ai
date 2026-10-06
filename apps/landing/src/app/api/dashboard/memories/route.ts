@@ -24,8 +24,11 @@ export async function GET(request: NextRequest) {
 
     const orgId = request.nextUrl.searchParams.get('orgId') || null;
     const cacheKey = `memories:${authUser.uid}:${orgId || 'default'}`;
-    const data = await cachedQuery(cacheKey, () => fetchMemories(authUser.uid, orgId, authUser.email), CACHE_PROFILES.memories);
-    return NextResponse.json(data);
+    const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
+    const data = forceRefresh
+      ? await fetchMemories(authUser.uid, orgId, authUser.email)
+      : await cachedQuery(cacheKey, () => fetchMemories(authUser.uid, orgId, authUser.email), CACHE_PROFILES.memories);
+    return NextResponse.json(data, forceRefresh ? { headers: { 'Cache-Control': 'no-store' } } : undefined);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
     console.error('[Dashboard Memories] Fatal:', msg);

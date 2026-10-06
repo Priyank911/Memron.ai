@@ -36,8 +36,11 @@ export async function GET(request: NextRequest) {
     const cacheProfile = range === 'today'
       ? { ...CACHE_PROFILES.stats, ttl: 5_000, swr: 5_000 }
       : CACHE_PROFILES.stats;
-    const payload = await cachedQuery(cacheKey, () => fetchStats(firebaseUid, range, orgId, timezone), cacheProfile);
-    return NextResponse.json(payload);
+    const forceRefresh = searchParams.get('refresh') === '1';
+    const payload = forceRefresh
+      ? await fetchStats(firebaseUid, range, orgId, timezone)
+      : await cachedQuery(cacheKey, () => fetchStats(firebaseUid, range, orgId, timezone), cacheProfile);
+    return NextResponse.json(payload, forceRefresh ? { headers: { 'Cache-Control': 'no-store' } } : undefined);
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Unknown';
     console.error('[Dashboard Stats] Fatal:', msg);
@@ -193,14 +196,15 @@ async function fetchStats(
   }
 
   // Heatmap
-  let heatmapData: { month: string; weeks: number[][] }[] = [];
+  let heatmapData: { month: string; weeks: { date: string | null; value: number }[][] }[] = [];
   if (heatmapRes.status === 'fulfilled') {
     const dayMap = new Map<string, number>();
     for (const r of heatmapRes.value.rows) {
       const key = r.day?.toISOString?.().split('T')[0] || String(r.day).slice(0, 10);
       dayMap.set(key, parseInt(r.count, 10));
     }
-    const now = new Date();
+    const currentDateKey = formatDateInTimezone(new Date(), timezone);
+    const now = new Date(`${currentDateKey}T00:00:00Z`);
     for (let m = 4; m >= 0; m--) {
       const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - m, 1));
       const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
@@ -208,16 +212,20 @@ async function fetchStats(
       const daysInMonth = monthEnd.getUTCDate();
       const weekCount = Math.ceil((leadingDays + daysInMonth) / 7);
       const monthLabel = monthStart.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
-      const weeks: number[][] = [];
+      const weeks: { date: string | null; value: number }[][] = [];
       for (let w = 0; w < weekCount; w++) {
-        const week: number[] = [];
+        const week: { date: string | null; value: number }[] = [];
         for (let d = 0; d < 7; d++) {
           const dayIndex = w * 7 + d - leadingDays + 1;
           if (dayIndex < 1 || dayIndex > daysInMonth) {
-            week.push(-1);
+            week.push({ date: null, value: -1 });
           } else {
             const date = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), dayIndex));
-            week.push(dayMap.get(date.toISOString().split('T')[0]) || 0);
+            const dateKey = date.toISOString().split('T')[0];
+            week.push({
+              date: dateKey,
+              value: dateKey > currentDateKey ? -1 : (dayMap.get(dateKey) || 0),
+            });
           }
         }
         weeks.push(week);

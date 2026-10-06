@@ -126,9 +126,24 @@ interface RetrievedMemory {
   bucket: string;
   tags: string[];
   tokenCount: number;
-  score: number;
+  score?: number;
+  matchPercent?: number;
   content?: string;
   createdAt: string;
+}
+
+function normalizeAssistantMarkup(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n\n')
+    .replace(/<p\s*>/gi, '')
+    .replace(/<li\s*>/gi, '- ')
+    .replace(/<\/li\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 interface ChatSession {
@@ -913,7 +928,7 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
                   ) : (
                     <div className="pg-assistant-block">
                       <div className="pg-llm-answer">
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown>{normalizeAssistantMarkup(msg.content)}</ReactMarkdown>
                       </div>
                       {msg.retrievedMemories && msg.retrievedMemories.length > 0 && (
                         <div className="pg-retrieved-stack">
@@ -923,7 +938,9 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
                               <div className="pg-memory-result-main">
                                 <div className="pg-memory-result-title"><IconMemory size={12} />{memory.title || '(untitled)'}</div>
                                 <div className="pg-memory-result-meta">
-                                  <span>{memory.bucket}</span><span>{Math.round(memory.score * 100)}% match</span><span>{memory.tokenCount.toLocaleString()} tokens</span>
+                                  <span>{memory.bucket}</span>
+                                  {memory.matchPercent != null && <span>{memory.matchPercent}% semantic match</span>}
+                                  {memory.tokenCount > 0 && <span>{memory.tokenCount.toLocaleString()} tokens</span>}
                                 </div>
                               </div>
                               <button

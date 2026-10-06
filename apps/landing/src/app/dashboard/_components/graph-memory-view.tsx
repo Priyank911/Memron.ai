@@ -91,7 +91,8 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
     try {
       setRefreshing(true);
       const orgId = org?.id;
-      const url = orgId ? `/api/dashboard/graph?orgId=${orgId}` : '/api/dashboard/graph';
+      const refresh = `refresh=1&refreshAt=${Date.now()}`;
+      const url = orgId ? `/api/dashboard/graph?orgId=${orgId}&${refresh}` : `/api/dashboard/graph?${refresh}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Failed to fetch graph data: ${res.statusText}`);
       const json: GraphData = await res.json();

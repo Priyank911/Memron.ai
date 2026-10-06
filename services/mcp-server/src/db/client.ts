@@ -16,6 +16,39 @@ const { Pool } = pg;
 
 let _pool: pg.Pool | null = null;
 
+// Hyperdrive/session-pool connections are shared by all requests in a Worker
+// isolate. A single recall can otherwise fan out into vector, BM25, graph,
+// recency, and hydration queries at the same time and make every request wait
+// behind the same small remote pool. Keep the edge-side concurrency bounded;
+// Node/Railway keeps its existing pool behavior.
+let activeWorkerQueries = 0;
+const waitingWorkerQueries: Array<() => void> = [];
+
+async function acquireWorkerQuerySlot(): Promise<() => void> {
+  const max = Math.max(
+    1,
+    Math.min(
+      4,
+      config.db.maxConnections,
+      Number(getEnv('WORKER_DB_CONCURRENCY') || config.db.maxConnections),
+    ),
+  );
+  if (activeWorkerQueries < max) {
+    activeWorkerQueries++;
+  } else {
+    await new Promise<void>((resolve) => waitingWorkerQueries.push(resolve));
+    activeWorkerQueries++;
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeWorkerQueries = Math.max(0, activeWorkerQueries - 1);
+    waitingWorkerQueries.shift()?.();
+  };
+}
+
 function createPool(): pg.Pool {
   const sslConfig = config.db.ssl || (config.nodeEnv === 'production'
     ? { rejectUnauthorized: false }
@@ -165,65 +198,60 @@ export async function query<T extends pg.QueryResultRow = any>(
   const workerRuntime = getEnv('MEMRON_RUNTIME') === 'worker';
   const maxRetries = options?.maxRetries ?? (workerRuntime ? 0 : 2);
   const baseDelay = options?.retryDelay ?? (workerRuntime ? 50 : 100);
-  const workerQueryTimeoutMs = 3_500;
+  const workerQueryTimeoutMs = Math.max(
+    2_500,
+    Math.min(15_000, Number(getEnv('WORKER_DB_QUERY_TIMEOUT_MS') || 10_000)),
+  );
+  const releaseWorkerSlot = workerRuntime ? await acquireWorkerQuerySlot() : () => undefined;
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const start = Date.now();
-    try {
-      const queryPromise = getPool().query<T>({
-        text,
-        values: params,
-        ...(workerRuntime ? { query_timeout: workerQueryTimeoutMs } : {}),
-      });
-      // `query_timeout` bounds execution after a client is acquired. The
-      // race also bounds time spent waiting for a saturated pg-pool queue.
-      // The underlying pg promise is intentionally allowed to settle and
-      // release its client after the timeout.
-      const result = workerRuntime
-        ? await Promise.race([
-            queryPromise,
-            new Promise<never>((_, reject) => setTimeout(
-              () => reject(new Error(`Database query timeout after ${workerQueryTimeoutMs}ms`)),
-              workerQueryTimeoutMs,
-            )),
-          ])
-        : await queryPromise;
-      const duration = Date.now() - start;
+  try {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const start = Date.now();
+      try {
+        const result = await getPool().query<T>({
+          text,
+          values: params,
+          ...(workerRuntime ? { query_timeout: workerQueryTimeoutMs } : {}),
+        });
+        const duration = Date.now() - start;
 
-      // Update stats
-      totalQueries++;
-      totalDuration += duration;
+        // Update stats
+        totalQueries++;
+        totalDuration += duration;
 
-      // Smart slow query detection
-      const isDDL = /^\s*(CREATE|ALTER|DROP|DO \$\$|BEGIN|COMMIT|ROLLBACK)/i.test(text);
-      const isWrite = /^\s*(INSERT|UPDATE|DELETE)/i.test(text);
-      const slowThreshold = isWrite ? 2000 : 1000;
+        // Smart slow query detection
+        const isDDL = /^\s*(CREATE|ALTER|DROP|DO \$\$|BEGIN|COMMIT|ROLLBACK)/i.test(text);
+        const isWrite = /^\s*(INSERT|UPDATE|DELETE)/i.test(text);
+        const slowThreshold = isWrite ? 2000 : 1000;
 
-      if (duration > slowThreshold && !isDDL) {
-        console.warn(`[DB] Slow query (${duration}ms): ${text.slice(0, 100)}`);
+        if (duration > slowThreshold && !isDDL) {
+          console.warn(`[DB] Slow query (${duration}ms): ${text.slice(0, 100)}`);
+        }
+
+        return result;
+      } catch (error) {
+        const duration = Date.now() - start;
+        lastError = error instanceof Error ? error : new Error(String(error));
+        failedQueries++;
+
+        // Check if error is retryable
+        const isRetryable = isRetryableError(lastError);
+
+        if (isRetryable && attempt < maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
+          console.warn(`[DB] Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${lastError.message}`);
+          await sleep(delay);
+          continue;
+        }
+
+        // Log and throw final error
+        console.error(`[DB] Query failed after ${attempt + 1} attempts (${duration}ms): ${lastError.message} — ${text.slice(0, 100)}`);
+        throw lastError;
       }
-
-      return result;
-    } catch (error) {
-      const duration = Date.now() - start;
-      lastError = error instanceof Error ? error : new Error(String(error));
-      failedQueries++;
-
-      // Check if error is retryable
-      const isRetryable = isRetryableError(lastError);
-
-      if (isRetryable && attempt < maxRetries) {
-        const delay = baseDelay * Math.pow(2, attempt); // Exponential backoff
-        console.warn(`[DB] Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${lastError.message}`);
-        await sleep(delay);
-        continue;
-      }
-
-      // Log and throw final error
-      console.error(`[DB] Query failed after ${attempt + 1} attempts (${duration}ms): ${lastError.message} — ${text.slice(0, 100)}`);
-      throw lastError;
     }
+  } finally {
+    releaseWorkerSlot();
   }
 
   throw lastError || new Error('Query failed with unknown error');

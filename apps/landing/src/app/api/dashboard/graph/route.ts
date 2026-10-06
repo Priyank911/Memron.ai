@@ -13,8 +13,11 @@ export async function GET(request: NextRequest) {
     if (!rl.allowed) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
     const orgId = request.nextUrl.searchParams.get('orgId') || null;
     const cacheKey = `graph:${authUser.uid}:${orgId || 'default'}`;
-    const data = await cachedQuery(cacheKey, () => fetchGraphData(authUser.uid, orgId), GRAPH_CACHE_PROFILE);
-    return NextResponse.json(data);
+    const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
+    const data = forceRefresh
+      ? await fetchGraphData(authUser.uid, orgId)
+      : await cachedQuery(cacheKey, () => fetchGraphData(authUser.uid, orgId), GRAPH_CACHE_PROFILE);
+    return NextResponse.json(data, forceRefresh ? { headers: { 'Cache-Control': 'no-store' } } : undefined);
   } catch (error: unknown) {
     console.error('[Dashboard Graph] Fatal:', error instanceof Error ? error.message : error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -156,6 +159,44 @@ async function fetchGraphData(firebaseUid: string, targetOrgId: string | null = 
     } catch (error) {
       console.warn('[Dashboard Graph] Sovereign edge query warning:', error);
     }
+  }
+
+  // Shared buckets are copied into the recipient's account, but their old
+  // memories do not have recipient-owned entity rows because the copy path
+  // intentionally does not decrypt and re-run the graph extractor. Expose
+  // those canonical memory records as first-class graph nodes until (or if)
+  // entity extraction catches up. This keeps shared context visible without
+  // copying the source user's private graph or changing memory ownership.
+  try {
+    const sharedMemories = await supaQuery(
+      `SELECT pointer_id, bucket, title, metadata, importance, created_at, updated_at
+       FROM memories
+       WHERE user_id = $1 AND is_active = true AND bucket LIKE 'shared-%'
+       ORDER BY created_at DESC
+       LIMIT 150`,
+      [uid],
+    );
+    const representedPointers = new Set(
+      nodes.flatMap((node: any) => [node.firstSeenIn, ...(node.evidence || []).map((item: any) => item.pointerId)]).filter(Boolean),
+    );
+    for (const row of sharedMemories.rows || []) {
+      if (!row.pointer_id || representedPointers.has(row.pointer_id)) continue;
+      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+      nodes.push({
+        id: `memory:${row.pointer_id}`,
+        label: row.title || 'Shared memory',
+        type: 'memory',
+        description: `Stored in ${row.bucket}`,
+        summary: metadata.summary || metadata.description || metadata.context || row.title || '',
+        mentionCount: 1,
+        importanceScore: Number(row.importance || 0.5),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        firstSeenIn: row.pointer_id,
+      });
+    }
+  } catch (error) {
+    console.warn('[Dashboard Graph] Shared-memory node query warning:', error);
   }
 
   // Resolve the real memory records behind entities and relationships. The

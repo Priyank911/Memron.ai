@@ -51,7 +51,8 @@ export interface PipelineResult {
     title: string;
     tags: string[];
     tokenCount: number;
-    score: number;
+    score?: number;
+    matchPercent?: number;
     content?: string;
     createdAt: string;
   }>;
@@ -134,6 +135,7 @@ export async function runRAGPipeline(
       tags: m.tags,
       tokenCount: m.tokenCount,
       score: m.score,
+      matchPercent: m.matchPercent,
       content: m.content,
       createdAt: m.createdAt,
     })),

@@ -29,7 +29,8 @@ export interface RetrievedMemory {
   title: string;
   tags: string[];
   tokenCount: number;
-  score: number;
+  score?: number;
+  matchPercent?: number;
   content: string;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -228,7 +229,10 @@ export async function buildRAGContext(
       title: r.title || '(untitled)',
       tags,
       tokenCount: parseInt(r.token_count || '0', 10),
-      score: r._rrfScore ?? 0.3,
+      score: r._rrfScore,
+      matchPercent: r.vector_distance != null && Number.isFinite(Number(r.vector_distance))
+        ? Math.round(Math.max(0, Math.min(1, 1 - Number(r.vector_distance))) * 100)
+        : undefined,
       content: r.title || '',  // Content is encrypted; use title as display text
       metadata: r.metadata || {},
       createdAt: r.created_at,

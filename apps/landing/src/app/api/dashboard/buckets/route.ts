@@ -31,8 +31,11 @@ export async function GET(request: NextRequest) {
 
     const orgId = request.nextUrl.searchParams.get('orgId') || null;
     const cacheKey = `buckets:${authUser.uid}:${orgId || 'default'}`;
-    const data = await cachedQuery(cacheKey, () => fetchBuckets(authUser.uid, orgId), CACHE_PROFILES.buckets);
-    return NextResponse.json(data);
+    const forceRefresh = request.nextUrl.searchParams.get('refresh') === '1';
+    const data = forceRefresh
+      ? await fetchBuckets(authUser.uid, orgId)
+      : await cachedQuery(cacheKey, () => fetchBuckets(authUser.uid, orgId), CACHE_PROFILES.buckets);
+    return NextResponse.json(data, forceRefresh ? { headers: { 'Cache-Control': 'no-store' } } : undefined);
   } catch (error: unknown) {
     console.error('[Dashboard API] Buckets error:', error instanceof Error ? error.message : 'Unknown');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

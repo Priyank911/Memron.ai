@@ -136,10 +136,18 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const bm25Promise = (async () => {
     if (!bm25Enabled) return { mem: [] as { id: string; score: number }[], atomic: [] as { id: string; score: number }[] };
     try {
-      const [memResults, atomicResults] = await Promise.all([
+      const [memResult, atomicResult] = await Promise.allSettled([
         searchMemoriesBM25({ userId: options.userId, query: options.query, limit: topK }),
         searchAtomicMemoriesBM25({ userId: options.userId, query: options.query, limit: topK }),
       ]);
+      const memResults = memResult.status === 'fulfilled' ? memResult.value : [];
+      const atomicResults = atomicResult.status === 'fulfilled' ? atomicResult.value : [];
+      if (memResult.status === 'rejected') {
+        console.warn(JSON.stringify({ event: 'bm25_signal_table_failed', table: 'memories', error: String(memResult.reason).slice(0, 200) }));
+      }
+      if (atomicResult.status === 'rejected') {
+        console.warn(JSON.stringify({ event: 'bm25_signal_table_failed', table: 'atomic_memories', error: String(atomicResult.reason).slice(0, 200) }));
+      }
       return {
         mem: memResults.map(r => ({ id: r.id, score: r.rank })),
         atomic: atomicResults.map(r => ({ id: r.id, score: r.rank })),

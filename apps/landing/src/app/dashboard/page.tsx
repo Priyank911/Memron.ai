@@ -79,27 +79,36 @@ function formatAxisDate(date?: string, range?: string, fallback?: string) {
 function getAxisTickIndices(range: string, count: number) {
   if (count <= 1) return count === 1 ? [0] : [];
   if (range === 'today') {
-    // A clock face reads best at two-hour intervals; keep the last label at 22:00.
-    return Array.from({ length: Math.ceil(count / 2) }, (_, index) => index * 2)
+    // Keep a calm clock-face cadence. Never pack more than eight labels.
+    const step = count > 16 ? 3 : 2;
+    const indices = Array.from({ length: Math.ceil(count / step) }, (_, index) => index * step)
       .filter(index => index < count);
+    if (indices[indices.length - 1] !== count - 1 && count <= 12) indices.push(count - 1);
+    return indices;
   }
   if (range === '7d') return Array.from({ length: count }, (_, index) => index);
   if (range === '30d') {
-    // Calendar cadence: every third day, plus the final day when needed.
-    const indices = Array.from({ length: Math.ceil(count / 3) }, (_, index) => index * 3)
+    // Seven evenly spaced calendar anchors prevent date labels from colliding.
+    const step = Math.max(1, Math.ceil((count - 1) / 6));
+    const indices = Array.from({ length: Math.ceil(count / step) }, (_, index) => index * step)
       .filter(index => index < count);
     if (indices[indices.length - 1] !== count - 1) indices.push(count - 1);
     return indices;
   }
   if (range === 'quarter') {
     // Weekly buckets remain readable while preserving the endpoints.
-    const indices = Array.from({ length: Math.ceil(count / 2) }, (_, index) => index * 2)
+    const step = Math.max(1, Math.ceil((count - 1) / 6));
+    const indices = Array.from({ length: Math.ceil(count / step) }, (_, index) => index * step)
       .filter(index => index < count);
     if (indices[indices.length - 1] !== count - 1) indices.push(count - 1);
     return indices;
   }
-  // Year data is already monthly; never omit a month from the axis.
-  return Array.from({ length: count }, (_, index) => index);
+  // Year data is monthly; six anchors are easier to scan than twelve collisions.
+  const step = Math.max(1, Math.ceil((count - 1) / 5));
+  const indices = Array.from({ length: Math.ceil(count / step) }, (_, index) => index * step)
+    .filter(index => index < count);
+  if (indices[indices.length - 1] !== count - 1) indices.push(count - 1);
+  return indices;
 }
 
 export default function DashboardPage() {
@@ -449,7 +458,7 @@ export default function DashboardPage() {
       const d = new Date(now.getFullYear(), now.getMonth() - (4 - m), 1);
       return {
         month: d.toLocaleDateString('en-US', { month: 'short' }),
-        weeks: Array.from({ length: 5 }, () => Array(7).fill(0)),
+        weeks: Array.from({ length: 5 }, () => Array.from({ length: 7 }, () => ({ date: null, value: -1 }))),
       };
     });
   }, [stats.heatmapData]);
@@ -956,10 +965,24 @@ export default function DashboardPage() {
                   <div className="mm-heatmap-grid">
                     {month.weeks.map((week, wi) => (
                       <div key={wi} className="mm-heatmap-week">
-                        {week.map((v, di) => {
-                          if (v === -1) return <div key={di} className="mm-hm-cell lv-empty" />;
+                        {week.map((cell, di) => {
+                          if (cell.value === -1 || !cell.date) return <div key={di} className="mm-hm-cell lv-empty" aria-hidden="true" />;
+                          const v = cell.value;
                           const lv = v === 0 ? 0 : v <= 1 ? 1 : v <= 2 ? 2 : v <= 4 ? 3 : 4;
-                          return <div key={di} className={`mm-hm-cell lv-${lv}`} title={`${v} memories`} />;
+                          const stamp = new Intl.DateTimeFormat(undefined, {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          }).format(new Date(`${cell.date}T12:00:00`));
+                          return (
+                            <div
+                              key={di}
+                              className={`mm-hm-cell lv-${lv}`}
+                              title={`${stamp} · ${v} ${v === 1 ? 'memory' : 'memories'}`}
+                              aria-label={`${stamp}, ${v} ${v === 1 ? 'memory' : 'memories'}`}
+                            />
+                          );
                         })}
                       </div>
                     ))}
@@ -1104,9 +1127,9 @@ export default function DashboardPage() {
 
               const vbW = 940;
               const chartW = 860;
-              const chartH = 244;
+              const chartH = 252;
               const padTop = 18;
-              const padBottom = 42;
+              const padBottom = 50;
               const padLeft = 58;
               const plotH = chartH - padTop - padBottom;
 
@@ -1215,11 +1238,35 @@ export default function DashboardPage() {
                     })}
                   </g>
 
-                  {/* X-axis labels — up to 10 */}
+                  {/* X-axis: restrained date anchors with a dedicated label band. */}
                   {getAxisTickIndices(timeRange, n).map((i) => {
                     const d = areaChartData[i];
                     const x = padLeft + 3 + (n > 1 ? (i / (n - 1)) * chartW : chartW / 2);
-                    return <text key={i} x={x} y={chartH - 10} className="mm-chart-label" textAnchor="middle" style={{ fontSize: 9.5 }}>{formatAxisDate(d.date, timeRange, d.label)}</text>;
+                    const isFirst = i === 0;
+                    const isLast = i === n - 1;
+                    return (
+                      <g key={i}>
+                        <line
+                          x1={x}
+                          y1={padTop + plotH}
+                          x2={x}
+                          y2={padTop + plotH + 5}
+                          stroke="var(--mm-border)"
+                          strokeWidth="0.8"
+                          opacity="0.7"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                        <text
+                          x={x}
+                          y={chartH - 13}
+                          className="mm-chart-label mm-trend-axis-label"
+                          textAnchor={isFirst ? 'start' : isLast ? 'end' : 'middle'}
+                          style={{ fontSize: 9.5 }}
+                        >
+                          {formatAxisDate(d.date, timeRange, d.label)}
+                        </text>
+                      </g>
+                    );
                   })}
                 </svg>
               );

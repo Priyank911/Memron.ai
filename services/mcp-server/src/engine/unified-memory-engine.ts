@@ -207,8 +207,12 @@ export async function storeMemory(
       space,
       engine_version: 'v2',
       created_via: 'memory_engine_v2',
+      status: 'untriaged',
     },
-    status: 'knowledge',
+    // New agent writes must enter the dashboard Inbox. Promotion to Context
+    // or Knowledge is an explicit user action, so CLI and VS Code writes do
+    // not silently bypass triage.
+    status: 'untriaged',
     source: 'agent',
     decayExempt: type === 'preference',
     apiKeyId: options?.apiKeyId,

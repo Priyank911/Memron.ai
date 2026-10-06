@@ -19,19 +19,20 @@ export async function searchMemoriesBM25(params: {
 }): Promise<BM25Result[]> {
   const limit = params.limit ?? 20;
 
-  // search_tsv generated column was removed (to_tsvector is not immutable on all PG versions).
-  // Use dynamic to_tsvector directly — one extra CPU cycle per row but no error spam.
+  // Keep this expression aligned with idx_memories_title_search. The previous
+  // title + tags + bucket expression could not use the deployed GIN index and
+  // turned every recall into a full-table scan over the remote pooler.
   const sql = `
     SELECT
       pointer_id as id,
       ts_rank_cd(
-        to_tsvector('english', coalesce(title, '') || ' ' || coalesce(tags::text, '') || ' ' || coalesce(bucket, '')),
+        to_tsvector('english', coalesce(title, '')),
         plainto_tsquery('english', $2)
       ) as rank
     FROM memories
     WHERE user_id = $1
       AND is_active = true
-      AND to_tsvector('english', coalesce(title, '') || ' ' || coalesce(tags::text, '') || ' ' || coalesce(bucket, '')) @@ plainto_tsquery('english', $2)
+      AND to_tsvector('english', coalesce(title, '')) @@ plainto_tsquery('english', $2)
     ORDER BY rank DESC
     LIMIT $3
   `;

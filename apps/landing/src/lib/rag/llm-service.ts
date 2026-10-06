@@ -163,6 +163,19 @@ function sanitizeOutput(text: string): string {
   for (const pat of EXFIL_PATTERNS) {
     clean = clean.replace(pat, '[redacted]');
   }
+  // Models sometimes return HTML line-breaks even though the UI renders
+  // Markdown. Convert supported structural tags to Markdown-friendly text
+  // and remove remaining markup so tags cannot appear as raw output.
+  clean = clean
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n\n')
+    .replace(/<p\s*>/gi, '')
+    .replace(/<li\s*>/gi, '- ')
+    .replace(/<\/li\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n');
   // Strip em-dashes
   clean = clean.replace(/\u2014/g, '-').replace(/\u2013/g, '-');
   return clean.trim();

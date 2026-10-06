@@ -13,7 +13,7 @@ export interface DashboardStats {
   sparkMemories: number[];
   dailyChart: { label: string; value: number; date?: string }[];
   hourlyChart: { label: string; value: number }[];
-  heatmapData: { month: string; weeks: number[][] }[];
+  heatmapData: { month: string; weeks: { date: string | null; value: number }[][] }[];
   peakHour: string;
   memoryDelta: number;
   previousMemories: number;
@@ -236,10 +236,12 @@ export function useDashboardData(
     try {
       setLoading(true);
       setError(null);
+      const refreshParam = `&refresh=1&refreshAt=${Date.now()}`;
+      const refreshQuery = `?refresh=1&refreshAt=${Date.now()}`;
       const [sRes, mRes, bRes] = await Promise.all([
-        fetch(`/api/dashboard/stats?range=${timeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts),
-        fetch(`/api/dashboard/memories${orgQuery}`, opts),
-        fetch(`/api/dashboard/buckets${orgQuery}`, opts),
+        fetch(`/api/dashboard/stats?range=${timeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}${refreshParam}`, opts),
+        fetch(`/api/dashboard/memories${orgQuery ? `${orgQuery}&refresh=1&refreshAt=${Date.now()}` : refreshQuery}`, opts),
+        fetch(`/api/dashboard/buckets${orgQuery ? `${orgQuery}&refresh=1&refreshAt=${Date.now()}` : refreshQuery}`, opts),
       ]);
       if (sRes.ok) setStats(await sRes.json());
       if (mRes.ok) setMemories((await mRes.json()).memories || []);

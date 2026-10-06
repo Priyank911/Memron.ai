@@ -1567,6 +1567,14 @@ html[data-mm-theme='light'] .mm-sb-logo-light { display: block; }
     letter-spacing: 0.02em;
 }
 
+.mm-trend-axis-label {
+    dominant-baseline: alphabetic;
+    paint-order: stroke;
+    stroke: var(--mm-bg-card);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+}
+
 /* ── Chart Hover Tooltip ── */
 .mm-chart-tooltip {
     position: absolute;
@@ -2074,6 +2082,7 @@ html[data-mm-theme='light'] .mm-sb-logo-light { display: block; }
     gap: 4px;
     padding: 14px 16px;
     overflow-x: auto;
+    align-items: flex-start;
 }
 
 .mm-heatmap-col {
@@ -2081,29 +2090,30 @@ html[data-mm-theme='light'] .mm-sb-logo-light { display: block; }
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    flex: 1;
-    min-width: 0;
+    flex: 0 0 auto;
+    min-width: 98px;
 }
 
 .mm-heatmap-grid {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    width: 100%;
+    width: max-content;
 }
 
 .mm-heatmap-week {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, 13px);
     gap: 3px;
 }
 
 .mm-hm-cell {
-    aspect-ratio: 1;
+    width: 13px;
+    height: 13px;
+    aspect-ratio: auto;
     border-radius: 3px;
     transition: all var(--mm-transition);
     cursor: pointer;
-    min-width: 0;
 }
 
 .mm-hm-cell:hover {
@@ -2112,7 +2122,8 @@ html[data-mm-theme='light'] .mm-sb-logo-light { display: block; }
 }
 
 .mm-hm-cell.lv-empty {
-    background: transparent;
+    background: rgba(255, 255, 255, 0.018);
+    cursor: default;
 }
 
 .mm-hm-cell.lv-0 {
