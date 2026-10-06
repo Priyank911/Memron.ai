@@ -6,10 +6,10 @@
  * content in the memories table for vector similarity search.
  *
  * Provider selection:
- *   1. GEMINI_API_KEY → Gemini Embedding 2 (1024d output)
- *   2. EMBEDDING_PROVIDER=openrouter → LiquidAI LFM2.5 (explicit legacy option)
- *   3. EMBEDDING_PROVIDER=openai → OpenAI text-embedding-3-small (explicit)
- *   4. No configured provider → embeddings disabled, keyword-only search
+ *   1. EMBEDDING_PROVIDER selects the primary provider (Gemini by default).
+ *   2. EMBEDDING_FALLBACK_PROVIDER optionally selects an explicitly approved
+ *      secondary provider used only after primary failure/circuit open.
+ *   3. No configured provider → embeddings disabled, keyword-only search.
  *
  * Gemini is the default provider. OpenRouter and OpenAI remain available only
  * when selected explicitly.
@@ -48,8 +48,7 @@ interface ProviderConfig {
 
 let _loggedDisabled = false;
 
-function resolveProvider(): ProviderConfig | null {
-  const requestedProvider = (getEnv('EMBEDDING_PROVIDER') || 'gemini').toLowerCase();
+function resolveProviderByName(requestedProvider: string): ProviderConfig | null {
   const geminiKey = getEnv('GEMINI_API_KEY');
   const openRouterKey = getEnv('OPENROUTER_API_KEY');
   const openaiKey = getEnv('OPENAI_API_KEY');
@@ -101,11 +100,28 @@ function resolveProvider(): ProviderConfig | null {
     };
   }
 
-  if (!_loggedDisabled) {
+  return null;
+}
+
+function resolveProviders(): ProviderConfig[] {
+  const primary = (getEnv('EMBEDDING_PROVIDER') || 'gemini').toLowerCase();
+  const fallbackNames = (getEnv('EMBEDDING_FALLBACK_PROVIDER') || '')
+    .split(',')
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean);
+  const names = Array.from(new Set([primary, ...fallbackNames]));
+  const providers = names
+    .map((name) => resolveProviderByName(name))
+    .filter((provider): provider is ProviderConfig => provider !== null);
+  if (!providers.length && !_loggedDisabled) {
     _loggedDisabled = true;
     console.info('[Embeddings] No configured embedding provider — embeddings disabled, using keyword search only');
   }
-  return null;
+  return providers;
+}
+
+function resolveProvider(): ProviderConfig | null {
+  return resolveProviders()[0] || null;
 }
 
 // ─── Circuit breaker ────────────────────────────────────────
@@ -126,17 +142,20 @@ function circuitOpen(): boolean {
 export function getEmbeddingHealth(): {
   configured: boolean;
   provider: string | null;
+  fallbackProvider: string | null;
   circuitOpen: boolean;
   consecutiveFailures: number;
   cooldownMsRemaining: number;
   activeSlots: number;
   queuedSlots: number;
 } {
-  const provider = resolveProvider();
+  const providers = resolveProviders();
+  const provider = providers[0];
   const open = _failures >= CIRCUIT_THRESHOLD && Date.now() - _lastFail <= CIRCUIT_RESET_MS;
   return {
-    configured: provider !== null,
+    configured: providers.length > 0,
     provider: provider?.name ?? null,
+    fallbackProvider: providers[1]?.name ?? null,
     circuitOpen: open,
     consecutiveFailures: _failures,
     cooldownMsRemaining: open ? Math.max(0, CIRCUIT_RESET_MS - (Date.now() - _lastFail)) : 0,
@@ -167,7 +186,7 @@ function releaseSlot(): void {
 // ─── Public API ─────────────────────────────────────────────
 
 export function isEmbeddingConfigured(): boolean {
-  return resolveProvider() !== null;
+  return resolveProviders().length > 0;
 }
 
 /**
@@ -190,89 +209,90 @@ export function buildEmbeddingInput(
  * Returns null if no embedding provider is configured or on failure.
  */
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  const provider = resolveProvider();
-  if (!provider) return null;
+  const configuredProviders = resolveProviders();
+  if (!configuredProviders.length) return null;
 
   const input = text.trim();
   if (!input) return null;
-  if (circuitOpen()) return null;
+  // The breaker belongs to the primary path. If an explicitly configured
+  // fallback exists, keep semantic retrieval alive without retrying the
+  // exhausted primary provider on every Worker request.
+  const providers = circuitOpen() && configuredProviders.length > 1
+    ? configuredProviders.slice(1)
+    : configuredProviders;
+  if (!providers.length) return null;
 
   const slot = await acquireSlot();
   if (!slot) return null;
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    for (const provider of providers) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      try {
+        const res = await fetch(provider.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(provider.name === 'gemini' ? {} : { 'Authorization': `Bearer ${provider.apiKey}` }),
+            ...(provider.headers || {}),
+          },
+          body: JSON.stringify(provider.buildBody(input)),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
 
-    const res = await fetch(provider.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(provider.name === 'gemini' ? {} : { 'Authorization': `Bearer ${provider.apiKey}` }),
-        ...(provider.headers || {}),
-      },
-      body: JSON.stringify(provider.buildBody(input)),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      const isRateLimitFailure = res.status === 429;
-      const isBillingFailure = isRateLimitFailure && /insufficient|credits|billing/i.test(errBody);
-      if (isBillingFailure) {
-        // Do not hammer the provider once it has explicitly rejected the
-        // account for billing or quota. Memories remain durable and keyword
-        // search continues while semantic indexing is paused.
-        _failures = CIRCUIT_THRESHOLD;
-        _lastFail = Date.now();
-        if (!_loggedDisabled) {
-          _loggedDisabled = true;
-          console.error(`[Embeddings] ${provider.name} rejected the request (quota/billing limit). Semantic indexing paused for 60 seconds; keyword and graph extraction remain available.`);
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => '');
+          const isRateLimitFailure = res.status === 429;
+          const isBillingFailure = isRateLimitFailure && /insufficient|credits|billing|quota/i.test(errBody);
+          if (isBillingFailure) {
+            _failures = CIRCUIT_THRESHOLD;
+            _lastFail = Date.now();
+            console.error(`[Embeddings] ${provider.name} rejected the request (quota/billing limit); trying configured fallback if available.`);
+          } else if (isRateLimitFailure) {
+            _failures = Math.min(_failures + 1, CIRCUIT_THRESHOLD - 1);
+            _lastFail = Date.now();
+            console.warn(`[Embeddings] ${provider.name} rate limit hit; trying configured fallback if available.`);
+          } else {
+            _failures++;
+            _lastFail = Date.now();
+            console.warn(`[Embeddings] ${provider.name} error ${res.status}; trying configured fallback if available.`);
+          }
+          continue;
         }
-      } else if (isRateLimitFailure) {
-        // Rate limit: brief cooldown instead of full circuit breaker.
-        // A single 429 should not block embeddings for 60 seconds.
-        _failures = Math.min(_failures + 1, CIRCUIT_THRESHOLD - 1);
-        _lastFail = Date.now();
-        if (!_loggedDisabled) {
-          _loggedDisabled = true;
-          console.warn(`[Embeddings] ${provider.name} rate limit hit — brief cooldown before retry`);
+
+        const data = await res.json();
+        const embedding: number[] = provider.name === 'gemini'
+          ? (data?.embedding?.values ?? data?.embeddings?.[0]?.values)
+          : data?.data?.[0]?.embedding;
+        if (!embedding || !Array.isArray(embedding)) {
+          _failures++;
+          _lastFail = Date.now();
+          console.warn(`[Embeddings] ${provider.name} unexpected response shape; trying configured fallback if available.`);
+          continue;
         }
-      } else {
-        console.warn(`[Embeddings] ${provider.name} error ${res.status}: ${errBody.slice(0, 200)}`);
-        _failures++; _lastFail = Date.now();
+        if (embedding.length !== embeddingDims()) {
+          _failures++;
+          _lastFail = Date.now();
+          console.warn(`[Embeddings] ${provider.name} returned ${embedding.length} dimensions; expected ${embeddingDims()}.`);
+          continue;
+        }
+        _failures = 0;
+        _loggedDisabled = false;
+        return embedding;
+      } catch (err: any) {
+        clearTimeout(timer);
+        _failures++;
+        _lastFail = Date.now();
+        console.warn(`[Embeddings] ${provider.name} ${err.name === 'AbortError' ? 'timeout' : `error: ${err.message}`}; trying configured fallback if available.`);
       }
-      return null;
     }
-
-    const data = await res.json();
-    const embedding: number[] = provider.name === 'gemini'
-      ? (data?.embedding?.values ?? data?.embeddings?.[0]?.values)
-      : data?.data?.[0]?.embedding;
-
-    if (!embedding || !Array.isArray(embedding)) {
-      console.warn(`[Embeddings] ${provider.name} unexpected response shape`);
-      _failures++; _lastFail = Date.now();
-      return null;
-    }
-
-    if (embedding.length !== embeddingDims()) {
-      console.warn(`[Embeddings] ${provider.name} returned ${embedding.length} dimensions; expected ${embeddingDims()}. Check EMBEDDING_DIMENSIONS and the database migration.`);
-      _failures++; _lastFail = Date.now();
-      return null;
-    }
-
-    _failures = 0;
-    return embedding;
+    return null;
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.warn(`[Embeddings] ${provider.name} timeout`);
-    } else {
-      console.warn(`[Embeddings] ${provider.name} error:`, err.message);
-    }
-    _failures++; _lastFail = Date.now();
+    console.warn(`[Embeddings] unexpected embedding error: ${err.message}`);
+    _failures++;
+    _lastFail = Date.now();
     return null;
   } finally {
     releaseSlot();
@@ -282,23 +302,26 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 /** Generate a bounded batch of embeddings for the indexing worker. */
 export async function generateEmbeddings(texts: string[]): Promise<Array<number[] | null>> {
   if (texts.length === 0) return [];
-  const provider = resolveProvider();
-  if (!provider) return texts.map(() => null);
+  const configuredProviders = resolveProviders();
+  if (!configuredProviders.length) return texts.map(() => null);
   const normalized = texts.map(text => text.trim());
   if (normalized.some(text => !text)) return texts.map(() => null);
-  if (circuitOpen()) return texts.map(() => null);
+  const provider = circuitOpen() && configuredProviders.length > 1
+    ? configuredProviders[1]
+    : configuredProviders[0];
+  if (!provider) return texts.map(() => null);
+
+  // Do not hold a batch slot while calling generateEmbedding: each foreground
+  // request acquires its own limiter slot, so retaining one here could deadlock
+  // a non-Gemini fallback batch under load.
+  if (provider.name !== 'gemini') {
+    return Promise.all(normalized.map(text => generateEmbedding(text)));
+  }
 
   const slot = await acquireSlot();
   if (!slot) return texts.map(() => null);
   const started = Date.now();
   try {
-    // Gemini has a native batch endpoint. Other providers use the same
-    // single-input path as foreground queries so queued memories are not
-    // silently left without vectors.
-    if (provider.name !== 'gemini') {
-      return await Promise.all(normalized.map(text => generateEmbedding(text)));
-    }
-
     const model = getEnv('GEMINI_EMBEDDING_MODEL') || 'gemini-embedding-2';
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`, {
       method: 'POST',

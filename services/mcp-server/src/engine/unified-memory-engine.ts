@@ -53,6 +53,8 @@ export interface RecallResult {
   confidence: number;
   age: string;
   matched_by?: string[];
+  matched_terms?: string[];
+  lexical_coverage?: number;
 }
 
 export interface RecallResponse {
@@ -192,14 +194,11 @@ export function splitRecallQuestions(input: string): string[] {
   if (!normalized) return [];
   const clean = (part: string) => part.trim().replace(/[?]+$/g, '').trim();
   const byQuestionMark = normalized.split(/\?+/).map(clean).filter(Boolean);
-  if (byQuestionMark.length > 1) return byQuestionMark;
+  const isQuestion = (part: string) => /^(?:(?:and|also)\s+)?(?:what|which|who|where|when|why|how|can|do|does|is|are|will|would)\b/i.test(part);
+  if (byQuestionMark.length > 1 && byQuestionMark.slice(1).every(isQuestion)) return byQuestionMark;
   const byLine = normalized.split(/\n+/).map(clean).filter(Boolean);
-  if (byLine.length > 1) return byLine;
-  // Handles "What is A and what is B?" without breaking normal prose.
-  const byInterrogative = normalized.split(/\s+(?=(?:what|which|who|where|when|why|how)\b)/i)
-    .map((part) => clean(part).replace(/\s+(?:and|also|plus)\s*$/i, ''))
-    .filter(Boolean);
-  return byInterrogative.length > 1 ? byInterrogative : [normalized];
+  if (byLine.length > 1 && byLine.every(isQuestion)) return byLine;
+  return [normalized];
 }
 
 export async function storeMemory(
@@ -315,6 +314,8 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
         confidence: resultConfidence(item.fusedScore, item.vectorSimilarity, Object.keys(item.signals).length),
         age: relativeAge(item.createdAt),
         matched_by: Object.keys(item.signals),
+        matched_terms: item.lexicalEvidence?.matchedTerms,
+        lexical_coverage: item.lexicalEvidence?.coverage,
       },
     }));
 

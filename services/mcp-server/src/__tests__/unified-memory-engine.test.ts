@@ -11,8 +11,10 @@ describe('memory engine v2 query policy', () => {
       'Which database does Memron use',
     ]);
     expect(splitRecallQuestions('What changed in the dashboard and which database does Memron use?')).toEqual([
-      'What changed in the dashboard',
-      'which database does Memron use',
+      'What changed in the dashboard and which database does Memron use?',
+    ]);
+    expect(splitRecallQuestions("What is the name of the PM? Retrieve the stored person's name or project manager identity.")).toEqual([
+      "What is the name of the PM? Retrieve the stored person's name or project manager identity.",
     ]);
   });
   it('uses a compact budget for a single-fact query', () => {

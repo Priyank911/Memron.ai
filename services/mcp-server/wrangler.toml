@@ -41,6 +41,11 @@ PG_IDLE_TIMEOUT = "10000"
 RATE_LIMIT_MCP = "100"
 EMBEDDING_PROVIDER = "gemini"
 GEMINI_EMBEDDING_MODEL = "gemini-embedding-2"
+# Optional semantic failover during a Gemini quota/circuit-breaker event.
+# Configure the matching secret first, then set this to "openai" or
+# "openrouter" in the Worker environment. It is intentionally unset by
+# default so Memron never creates an unexpected paid-provider request.
+# EMBEDDING_FALLBACK_PROVIDER = "openai"
 AUTO_INGEST_ENABLED = "false"
 
 # v2 async graph enrichment. The store path remains durable in Postgres;

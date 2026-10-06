@@ -11,7 +11,7 @@
 
 import { searchAtomicMemoriesByVector } from '../db/queries-analysis.js';
 import { searchMemoriesByVector } from '../db/queries.js';
-import { searchMemoriesBM25, searchAtomicMemoriesBM25 } from './bm25-search.js';
+import { assessLexicalEvidence, searchMemoriesBM25, searchAtomicMemoriesBM25 } from './bm25-search.js';
 import { traverseSubgraph, getGraphNodeByBlindHash } from '../db/queries-graph.js';
 import { calculateDecayScore } from '../lib/memory-decay.js';
 import { fuseWithRRF, type RRFSignal, DEFAULT_SIGNAL_WEIGHTS } from '../lib/rrf.js';
@@ -59,6 +59,11 @@ export interface RetrievedMemory {
   vectorSimilarity?: number; // raw cosine similarity when the vector signal matched (undefined otherwise)
   signals: Record<string, number>;  // per-signal rank contributions
   decayScore?: number;
+  lexicalEvidence?: {
+    matchedTerms: string[];
+    matchedAliases: string[];
+    coverage: number;
+  };
   createdAt: Date;
 }
 
@@ -384,6 +389,15 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
 
   const retrievedMemories: RetrievedMemory[] = [];
   let tokenEstimate = 0;
+  let lexicalRejected = 0;
+
+  const needsLexicalConfirmation = (result: { id: string; signals: Record<string, number> }) => {
+    const similarity = vectorSimilarityById.get(result.id) || 0;
+    const hasStrongVector = similarity >= HIGH;
+    const hasVectorGraphEvidence = vectorSimilarityById.has(result.id) && result.signals.graph !== undefined;
+    const hasKeywordSignal = result.signals.bm25 !== undefined || result.signals.bm25_atomic !== undefined;
+    return hasKeywordSignal && !hasStrongVector && !hasVectorGraphEvidence;
+  };
 
   for (const result of gatedResults) {
     if (retrievedMemories.length >= topK) break;
@@ -392,6 +406,11 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     const amRow = atomicById.get(result.id);
     if (amRow) {
       const content = amRow.content;
+      const lexicalEvidence = assessLexicalEvidence(options.query, content);
+      if (needsLexicalConfirmation(result) && !lexicalEvidence.sufficient) {
+        lexicalRejected++;
+        continue;
+      }
       const estimate = Math.ceil(content.length / 4);
       if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
       retrievedMemories.push({
@@ -403,6 +422,11 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         fusedScore: result.fusedScore,
         vectorSimilarity: vectorSimilarityById.get(result.id),
         signals: result.signals,
+        lexicalEvidence: {
+          matchedTerms: lexicalEvidence.matchedTerms,
+          matchedAliases: lexicalEvidence.matchedAliases,
+          coverage: lexicalEvidence.coverage,
+        },
         createdAt: amRow.created_at,
       });
       tokenEstimate += estimate;
@@ -452,6 +476,15 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         }
       }
 
+      const lexicalEvidence = assessLexicalEvidence(
+        options.query,
+        [r.title, ...(r.tags || []), r.bucket, content].filter(Boolean).join(' '),
+      );
+      if (needsLexicalConfirmation(result) && !lexicalEvidence.sufficient) {
+        lexicalRejected++;
+        continue;
+      }
+
       const estimate = Math.ceil(content.length / 4);
       if (tokenEstimate + estimate > (options.tokenBudget ?? 2000) && retrievedMemories.length > 0) continue;
       retrievedMemories.push({
@@ -465,47 +498,15 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
         fusedScore: result.fusedScore,
         vectorSimilarity: vectorSimilarityById.get(result.id),
         signals: result.signals,
+        lexicalEvidence: {
+          matchedTerms: lexicalEvidence.matchedTerms,
+          matchedAliases: lexicalEvidence.matchedAliases,
+          coverage: lexicalEvidence.coverage,
+        },
         createdAt: r.created_at,
       });
       tokenEstimate += estimate;
       continue;
-    }
-  }
-
-  // ── Content-level lexical re-ranking ──────────────────────────────────────
-  // After hydration, do a lightweight lexical relevance check on the actual
-  // content. This catches false-positive vector matches where the embedding
-  // space says "close" but the content is about a completely different topic.
-  // We demote results with low query-term overlap in their actual text.
-  if (retrievedMemories.length > 1) {
-    const queryTerms = new Set(
-      (options.query.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) || []).filter(
-        t => !new Set(['the', 'and', 'for', 'are', 'was', 'what', 'when', 'where', 'how', 'who', 'why', 'which', 'with', 'from', 'that', 'this', 'does', 'have', 'about', 'can', 'tell', 'show', 'find', 'into', 'its', 'been', 'being', 'also', 'all', 'any']).has(t)
-      )
-    );
-    if (queryTerms.size > 0) {
-      for (const mem of retrievedMemories) {
-        const contentLower = mem.content.toLowerCase();
-        const contentTerms = new Set(contentLower.match(/[a-z][a-z0-9]{2,}/g) || []);
-        let matchCount = 0;
-        for (const qt of queryTerms) {
-          if (contentTerms.has(qt)) matchCount++;
-        }
-        const overlap = matchCount / queryTerms.size;
-        // If fewer than 15% of query terms appear in content, this is likely
-        // a false positive. Heavily discount the fused score so genuinely
-        // relevant results can overtake it.
-        if (overlap < 0.15) {
-          mem.fusedScore *= 0.35;
-        } else if (overlap < 0.30) {
-          mem.fusedScore *= 0.65;
-        } else if (overlap >= 0.50) {
-          // Strong overlap bonus
-          mem.fusedScore *= 1.25;
-        }
-      }
-      // Re-sort after demotion/promotion
-      retrievedMemories.sort((a, b) => b.fusedScore - a.fusedScore);
     }
   }
 
@@ -541,6 +542,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     signals: signalStats,
     candidates: totalCandidatesSet.size,
     returned: retrievedMemories.length,
+    lexicalRejected,
     totalMs: Math.round(endTime - startTime),
   }));
 

@@ -12,6 +12,13 @@ export interface BM25Result {
   headline?: string;
 }
 
+export interface LexicalEvidence {
+  matchedTerms: string[];
+  matchedAliases: string[];
+  coverage: number;
+  sufficient: boolean;
+}
+
 // PostgreSQL's plainto_tsquery is an implicit AND query. That is useful for
 // exact document search, but it is too strict for memory recall: a user often
 // asks with different inflections or punctuation than the stored title. Keep
@@ -26,13 +33,92 @@ const STOP_WORDS = new Set([
   'you', 'your',
 ]);
 
+// These terms can help discover a candidate, but a match on one of them is
+// not enough to answer a memory query. This prevents records about unrelated
+// projects from passing merely because they contain "project", "stored", or
+// "name" while semantic retrieval is temporarily unavailable.
+const LOW_SIGNAL_TERMS = new Set([
+  'change', 'changes', 'context', 'data', 'detail', 'details', 'find',
+  'identity', 'information', 'made', 'memory', 'memories', 'name', 'person',
+  'project', 'retrieve', 'stored', 'thing', 'things', 'use', 'used', 'using',
+]);
+
+// Transparent abbreviation expansion. A whole phrase must match before it can
+// satisfy the precision gate, so aliases improve recall without becoming a
+// source of broad single-keyword noise.
+const ALIAS_GROUPS: Record<string, string[][]> = {
+  auth: [['authentication']],
+  db: [['database']],
+  llm: [['language', 'model']],
+  pm: [['prime', 'minister'], ['project', 'manager']],
+};
+
+function normalizedWords(input: string): string[] {
+  return input.toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+function stem(word: string): string {
+  if (word.length <= 4) return word;
+  if (word.endsWith('ies') && word.length > 5) return `${word.slice(0, -3)}y`;
+  if (word.endsWith('ing') && word.length > 6) return word.slice(0, -3);
+  if (word.endsWith('ed') && word.length > 5) return word.slice(0, -2);
+  if (word.endsWith('es') && word.length > 5) return word.slice(0, -2);
+  if (word.endsWith('s') && word.length > 4) return word.slice(0, -1);
+  return word;
+}
+
+function hasTerm(candidateWords: string[], term: string): boolean {
+  const target = stem(term);
+  return candidateWords.some((word) => {
+    const candidate = stem(word);
+    return candidate === target
+      || (target.length >= 4 && candidate.startsWith(target))
+      || (candidate.length >= 4 && target.startsWith(candidate));
+  });
+}
+
+function sourceKeywordTerms(input: string): string[] {
+  return Array.from(new Set(
+    normalizedWords(input).filter((token) => token.length >= 2 && !STOP_WORDS.has(token)),
+  )).slice(0, 16);
+}
+
+function aliasesFor(terms: string[]): Array<{ label: string; terms: string[] }> {
+  return terms.flatMap((term) => (ALIAS_GROUPS[term] || []).map((group) => ({
+    label: `${term}:${group.join(' ')}`,
+    terms: group,
+  })));
+}
+
 export function extractKeywordTerms(input: string): string[] {
-  const tokens = input.toLowerCase().match(/[a-z0-9]+/g) || [];
-  return Array.from(new Set(tokens.filter((token) => token.length >= 2 && !STOP_WORDS.has(token)))).slice(0, 16);
+  const sourceTerms = sourceKeywordTerms(input);
+  const aliases = aliasesFor(sourceTerms).flatMap((alias) => alias.terms);
+  return Array.from(new Set([...sourceTerms, ...aliases])).slice(0, 16);
 }
 
 export function buildKeywordTsQuery(input: string): string {
   return extractKeywordTerms(input).map((term) => `${term}:*`).join(' | ');
+}
+
+/**
+ * Confirm that a candidate covers the user's discriminative intent. It runs
+ * after hydration over the decrypted, user-scoped candidate because encrypted
+ * bodies are deliberately not part of the database full-text index.
+ */
+export function assessLexicalEvidence(query: string, candidateText: string): LexicalEvidence {
+  const sourceTerms = sourceKeywordTerms(query);
+  const anchors = sourceTerms.filter((term) => !LOW_SIGNAL_TERMS.has(term));
+  const candidateWords = normalizedWords(candidateText);
+  const matchedTerms = anchors.filter((term) => hasTerm(candidateWords, term));
+  const matchedAliases = aliasesFor(sourceTerms)
+    .filter((alias) => alias.terms.every((term) => hasTerm(candidateWords, term)))
+    .map((alias) => alias.label);
+  const coverage = anchors.length ? matchedTerms.length / anchors.length : 0;
+  const sufficient = matchedAliases.length > 0
+    || (anchors.length === 1 && matchedTerms.length === 1)
+    || (anchors.length === 2 && matchedTerms.length === 2)
+    || (anchors.length >= 3 && matchedTerms.length >= 2 && coverage >= 0.4);
+  return { matchedTerms, matchedAliases, coverage, sufficient };
 }
 
 // Keep this expression byte-for-byte aligned with the schema's GIN index.

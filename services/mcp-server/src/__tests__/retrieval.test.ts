@@ -96,7 +96,7 @@ import {
 } from '../retrieval/anti-hallucination.js';
 
 import { buildMemoryPacket, formatPacketForPrompt } from '../retrieval/packet-builder.js';
-import { buildKeywordTsQuery, extractKeywordTerms } from '../retrieval/bm25-search.js';
+import { assessLexicalEvidence, buildKeywordTsQuery, extractKeywordTerms } from '../retrieval/bm25-search.js';
 
 describe('Recall keyword normalization', () => {
   it('builds bounded OR-prefix terms and ignores question filler', () => {
@@ -106,6 +106,15 @@ describe('Recall keyword normalization', () => {
     expect(buildKeywordTsQuery('What changes are made in Memron dashboard/Playground?')).toBe(
       'changes:* | made:* | memron:* | dashboard:* | playground:*',
     );
+  });
+
+  it('rejects weak BM25 overlap while retaining an exact role alias', () => {
+    const query = "What is the name of the PM? Retrieve the stored person's name or project manager identity.";
+    const relevant = assessLexicalEvidence(query, "The prime minister's full name is Narendra Damodardas Modi.");
+    const irrelevant = assessLexicalEvidence(query, 'The project uses Firebase Auth for authentication.');
+    expect(relevant.sufficient).toBe(true);
+    expect(relevant.matchedAliases).toContain('pm:prime minister');
+    expect(irrelevant.sufficient).toBe(false);
   });
 });
 
