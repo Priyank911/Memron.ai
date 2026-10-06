@@ -319,7 +319,14 @@ export default function DashboardPage() {
    */
   const areaChartData = useMemo<DashboardChartPoint[]>(() => {
     if (timeRange === 'today') {
-      if (stats.hourlyChart && stats.hourlyChart.length === 24) return stats.hourlyChart;
+      if (stats.hourlyChart && stats.hourlyChart.length === 24) {
+        const localHour = new Date().getHours();
+        const observedHours = Math.min(
+          24,
+          Math.max(1, stats.observedHours || localHour + 1),
+        );
+        return stats.hourlyChart.slice(0, observedHours);
+      }
       return Array.from({ length: 24 }, (_, h) => ({
         label: `${String(h).padStart(2, '0')}:00`,
         value: 0,
@@ -359,7 +366,7 @@ export default function DashboardPage() {
     }
 
     return daily;
-  }, [stats.hourlyChart, stats.dailyChart, timeRange]);
+  }, [stats.hourlyChart, stats.dailyChart, stats.observedHours, timeRange]);
 
   /* ── Fetch series data for Memory Trends — daily token sums aggregated to same bins as areaChartData ── */
   const fetchSeriesData = useMemo(() => {
@@ -795,14 +802,22 @@ export default function DashboardPage() {
               <div className="mm-insight-row">
                 <div className="mm-insight-info">
                   <span className="mm-insight-label">Memory Velocity</span>
-                  <span className="mm-insight-value">{stats.totalMemories > 0 && trendData.length > 0 ? (stats.totalMemories / trendData.length).toFixed(1) : '0'}<small className="mm-insight-unit">/day</small></span>
+                  <span className="mm-insight-value">{
+                    (() => {
+                      const periodTotal = timeRange === 'today'
+                        ? areaChartData.reduce((sum, point) => sum + point.value, 0)
+                        : trendData.reduce((sum, point) => sum + point.value, 0);
+                      const periodDays = timeRange === 'today' ? 1 : timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : timeRange === 'quarter' ? 90 : 365;
+                      return (periodTotal / periodDays).toFixed(1);
+                    })()
+                  }<small className="mm-insight-unit">/day</small></span>
                 </div>
                 <div className="mm-insight-spark-mini">
                   <Sparkline data={stats.sparkMemories.length > 2 ? stats.sparkMemories : [0, 1, 0]} width={48} height={18} color="#a78bfa" strokeWidth={1.5} />
                 </div>
               </div>
               <div className="mm-insight-bar-track">
-                <div className="mm-insight-bar-fill fill-violet" style={{ width: `${Math.min((stats.totalMemories / Math.max(trendData.length, 1)) * 20, 100)}%` }} />
+                <div className="mm-insight-bar-fill fill-violet" style={{ width: `${Math.min((areaChartData.reduce((sum, point) => sum + point.value, 0) / Math.max(timeRange === 'today' ? 1 : trendData.length, 1)) * 20, 100)}%` }} />
               </div>
               <span className="mm-insight-hint">creation rate this period</span>
             </div>

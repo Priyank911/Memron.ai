@@ -21,6 +21,7 @@ export interface DashboardStats {
   /** Daily token sums — proxy for MCP fetch/read query volume */
   mcpFetchChart: { label: string; value: number; date?: string }[];
   generatedAt?: string;
+  observedHours?: number;
 }
 
 export interface DashboardMemory {
@@ -60,6 +61,7 @@ const EMPTY_STATS: DashboardStats = {
   range: '30d',
   mcpFetchChart: [],
   generatedAt: undefined,
+  observedHours: 24,
 };
 
 export function useDashboardData(
@@ -73,6 +75,7 @@ export function useDashboardData(
   const [buckets, setBuckets] = useState<DashboardBucket[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
   // Keep a stable ref so doFetch ([] deps) always reads the latest value.
   const memoriesEnabledRef = useRef(memoriesEnabled);
@@ -96,7 +99,7 @@ export function useDashboardData(
       setError(null);
 
       if (statsOnly) {
-        const sRes = await fetch(`/api/dashboard/stats?range=${currentTimeRange}${orgParam}`, opts);
+        const sRes = await fetch(`/api/dashboard/stats?range=${currentTimeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts);
         if (!signal.aborted) {
           if (sRes.ok) setStats(await sRes.json());
           else {
@@ -107,7 +110,7 @@ export function useDashboardData(
       } else if (!withMemories) {
         // Settings / lightweight views: stats + buckets only
         const [sRes, bRes] = await Promise.all([
-          fetch(`/api/dashboard/stats?range=${currentTimeRange}${orgParam}`, opts),
+          fetch(`/api/dashboard/stats?range=${currentTimeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts),
           fetch(`/api/dashboard/buckets${orgQuery}`, opts),
         ]);
         if (!signal.aborted) {
@@ -120,7 +123,7 @@ export function useDashboardData(
         }
       } else {
         const [sRes, mRes, bRes] = await Promise.all([
-          fetch(`/api/dashboard/stats?range=${currentTimeRange}${orgParam}`, opts),
+          fetch(`/api/dashboard/stats?range=${currentTimeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts),
           fetch(`/api/dashboard/memories${orgQuery}`, opts),
           fetch(`/api/dashboard/buckets${orgQuery}`, opts),
         ]);
@@ -193,6 +196,18 @@ export function useDashboardData(
   // doFetch is stable ([] deps), so effect only re-runs when enabled/orgId/timeRange change.
   }, [enabled, orgId, timeRange, doFetch]);
 
+  // Keep the current-day ledger live without refetching the heavier memories and
+  // bucket lists. The API uses the viewer's calendar day and a short today-only
+  // cache, so the chart resets at local midnight and reflects new memories quickly.
+  useEffect(() => {
+    if (!enabled) return;
+    const interval = window.setInterval(() => {
+      const ac = new AbortController();
+      doFetch(orgId, timeRange, ac.signal, true).catch(() => {});
+    }, timeRange === 'today' ? 10_000 : 60_000);
+    return () => window.clearInterval(interval);
+  }, [enabled, orgId, timeRange, doFetch]);
+
   // Lazy memories load — fires ONLY when memoriesEnabled transitions false → true and
   // memories haven't been loaded yet (e.g. user navigates from settings → dashboard).
   const prevMemoriesEnabledRef = useRef(memoriesEnabled);
@@ -222,7 +237,7 @@ export function useDashboardData(
       setLoading(true);
       setError(null);
       const [sRes, mRes, bRes] = await Promise.all([
-        fetch(`/api/dashboard/stats?range=${timeRange}${orgParam}`, opts),
+        fetch(`/api/dashboard/stats?range=${timeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts),
         fetch(`/api/dashboard/memories${orgQuery}`, opts),
         fetch(`/api/dashboard/buckets${orgQuery}`, opts),
       ]);

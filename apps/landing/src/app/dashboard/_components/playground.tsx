@@ -1108,12 +1108,18 @@ export function Playground({ buckets, totalMemories, totalTokens, userName, onBa
           )}
         </div>
         <div className="pg-bucket-panel-foot">
-          <span className="pg-foot-stat"><IconMemory size={11} /> {totalTokens.toLocaleString()} tokens</span>
+          <div className="pg-rail-foot-meta">
+            <span className="pg-rail-foot-label">Workspace contents</span>
+            <span className="pg-foot-stat"><IconMemory size={11} /> {totalTokens.toLocaleString()} tokens</span>
+          </div>
           {shareBucketSlug && (
             <div className="pg-share-form">
+              <span className="pg-share-form-label">Share bucket</span>
               <input value={shareEmail} onChange={e => setShareEmail(e.target.value)} placeholder="recipient@email.com" />
-              <button onClick={shareBucket} disabled={!shareEmail.trim()}>{shareStatus || <Send size={12} />}</button>
-              <button onClick={() => setShareBucketSlug(null)}><X size={12} /></button>
+              <div className="pg-share-form-actions">
+                <button className="pg-share-submit" onClick={shareBucket} disabled={!shareEmail.trim()}>{shareStatus || <><Send size={12} /> Share</>}</button>
+                <button className="pg-share-cancel" onClick={() => setShareBucketSlug(null)} aria-label="Close share form"><X size={12} /></button>
+              </div>
             </div>
           )}
         </div>
