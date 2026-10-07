@@ -612,12 +612,24 @@ app.post('/token', async (c) => {
 
     const grantType = params.grant_type;
     let clientId = params.client_id;
+    let preloadedAuthCode: Awaited<ReturnType<typeof db.getAuthCode>> = null;
 
     // Under PKCE, public clients (CLI/VS Code) may omit client_id during token exchange
-    if (!clientId && params.code) {
-      const codeRow = await db.getAuthCode(params.code);
-      if (codeRow?.client_id) {
-        clientId = codeRow.client_id;
+    // Load the code once and reuse it below. The previous flow queried this
+    // row once to infer client_id and again to validate PKCE, doubling the
+    // chance of an edge timeout under Hyperdrive pressure.
+    if (grantType === 'authorization_code' && params.code) {
+      preloadedAuthCode = await db.getAuthCode(params.code);
+      if (preloadedAuthCode?.client_id) clientId = clientId || preloadedAuthCode.client_id;
+    }
+    // Public clients commonly omit client_id on refresh. The signed refresh
+    // token already carries the client binding, so use it to avoid a
+    // best-effort client-store lookup on the latency-sensitive edge path.
+    if (!clientId && grantType === 'refresh_token' && params.refresh_token) {
+      try {
+        clientId = (await tokens.verifyRefreshToken(params.refresh_token)).cid;
+      } catch {
+        // The provider performs the authoritative verification below.
       }
     }
     if (!clientId) {
@@ -629,7 +641,10 @@ app.post('/token', async (c) => {
     // for its metadata during token exchange; this is important on the edge
     // because every sequential Hyperdrive round trip consumes the request
     // budget. Confidential clients still use the durable store.
-    let client = /^memron_[A-Za-z0-9_-]{16,}$/.test(clientId) && !params.client_secret
+    let client = (
+      (grantType === 'refresh_token' || /^memron_[A-Za-z0-9_-]{16,}$/.test(clientId))
+      && !params.client_secret
+    )
       ? { client_id: clientId, redirect_uris: params.redirect_uri ? [params.redirect_uri] : [] }
       : await oauthProvider.clientsStore.getClient(clientId);
     if (!client) {
@@ -654,9 +669,12 @@ app.post('/token', async (c) => {
       // row through to the provider. The previous implementation queried the
       // same code twice before issuing tokens, which made intermittent
       // Hyperdrive latency look like an OAuth parse failure in Copilot.
-      const authCode = await db.getAuthCode(code, client.client_id);
+      const authCode = preloadedAuthCode;
       if (!authCode) {
         return c.json({ error: 'invalid_grant', error_description: 'Invalid or expired authorization code' }, 400);
+      }
+      if (authCode.client_id && authCode.client_id !== client.client_id) {
+        return c.json({ error: 'invalid_grant', error_description: 'Authorization code was issued to a different client' }, 400);
       }
       if (redirectUri && authCode.redirect_uri !== redirectUri) {
         return c.json({ error: 'invalid_grant', error_description: 'Redirect URI mismatch' }, 400);
@@ -782,7 +800,7 @@ app.get('/auth/success', (c) => {
 async function authenticateV2(c: any): Promise<any | Response> {
   const header = c.req.header('authorization');
   if (!header) return c.json({ ok: false, error: 'missing_token' }, 401);
-  const token = header.replace(/^Bearer\s+/i, '');
+  const token = header.replace(/^Bearer\s+/i, '').trim().replace(/^"(.*)"$/, '$1');
   try {
     return await tokenVerifier.verifyAccessToken(token);
   } catch {
@@ -884,16 +902,21 @@ async function handleMcpRequest(c: any) {
       'Missing Authorization header. Use: Bearer <api_key> or Bearer <oauth_token>'
     );
   }
-  const token = authHeader.replace(/^Bearer\s+/i, '');
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim().replace(/^"(.*)"$/, '$1');
   let authInfo;
   try {
     authInfo = await tokenVerifier.verifyAccessToken(token);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Authentication failed';
-    const isExpired = /expired/i.test(msg);
+    console.warn(JSON.stringify({
+      event: 'mcp_auth_rejected',
+      reason: 'invalid_token',
+      tokenKind: token.startsWith('mm_') ? 'api_key' : token.split('.').length === 3 ? 'jwt' : 'unknown',
+      tokenLength: token.length,
+    }));
     return unauthorizedResponse(
-      isExpired ? 'invalid_token' : 'invalid_token',
-      msg
+      'invalid_token',
+      'Invalid or expired access token. Reconnect the MCP client to obtain a new token.'
     );
   }
 

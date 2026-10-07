@@ -25,26 +25,42 @@ export class MemronTokenVerifier {
    * 3. If both fail, throw (request is rejected with 401)
    */
   async verifyAccessToken(token: string): Promise<AuthInfo> {
+    // A JWT-shaped credential can only be an OAuth access token. Do not send
+    // malformed, expired, or differently-signed JWTs through the API-key
+    // database fallback: that adds a 4-second Hyperdrive timeout to every
+    // expired OAuth request and makes MCP clients retry in a tight loop.
+    const looksLikeJwt = token.split('.').length === 3;
+
     // ── Attempt 1: JWT Access Token ──────────────────────────
     try {
       const payload = await tokens.verifyAccessToken(token);
+      const userId = Number(payload.sub);
+      if (!Number.isInteger(userId) || userId <= 0 || !payload.cid || !payload.email) {
+        throw new Error('Invalid access token claims');
+      }
       return {
         token,
         clientId: payload.cid,
         scopes: payload.scopes ?? [],
         expiresAt: payload.exp,
         extra: {
-          userId: parseInt(payload.sub, 10),
+          userId,
           email: payload.email,
           orgId: payload.org ? parseInt(payload.org, 10) : undefined,
         },
       };
     } catch {
-      // Not a valid JWT — try API key
+      if (looksLikeJwt) {
+        throw new Error('Invalid or expired access token');
+      }
+      // Not a JWT-shaped token — try API key
     }
 
     // ── Attempt 2: Memron API Key ────────────────────────────
-    if (tokens.isApiKey(token)) {
+    // Do not gate the lookup on the current display format. Older keys and
+    // keys issued by the dashboard before a format change are still safely
+    // authenticated by their hash in the database.
+    if (token.length > 0) {
       const keyHash = tokens.hashApiKey(token);
       const result = await db.getUserByApiKeyHash(keyHash);
 

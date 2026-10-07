@@ -1084,6 +1084,11 @@ const MIGRATIONS = [
   // graph entity lookups use the same user+canonical key as the Worker query.
   `CREATE INDEX IF NOT EXISTS idx_memories_user_active_created
    ON memories(user_id, created_at DESC) WHERE is_active = true`,
+  // Keep semantic retrieval bounded as the memory table grows. The partial
+  // index excludes inactive and not-yet-indexed rows from the HNSW graph.
+  `CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw
+   ON memories USING hnsw (embedding vector_cosine_ops)
+   WHERE is_active = true AND embedding IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS idx_entities_user_canonical
    ON entities(user_id, canonical_name)`,
   `CREATE INDEX IF NOT EXISTS idx_entity_rels_user_source_strength

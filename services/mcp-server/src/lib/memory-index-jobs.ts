@@ -1,6 +1,6 @@
 /** Postgres-backed consumer for asynchronous memory graph indexing. */
 import { query } from '../db/client.js';
-import { buildEmbeddingInput, generateEmbeddings, isEmbeddingConfigured, toPgVector } from './embeddings.js';
+import { buildEmbeddingInput, generateEmbeddings, isEmbeddingAvailable, toPgVector } from './embeddings.js';
 import { indexStoredMemoryInGraph } from './memory-graph.js';
 import { getMemoryByPointer, updateMemoryEmbeddingByPointer, updateMemoryIndexStatus } from '../db/queries.js';
 import { decrypt } from './encryption.js';
@@ -40,7 +40,7 @@ export async function processCloudflareMemoryIndexMessage(message: CloudflareMem
   // If the memory doesn't have an embedding yet (e.g. foreground timeout on edge),
   // generate and backfill it here in the background consumer.
   let memoryEmbedding: number[] | null = null;
-  if (!row.embedding && isEmbeddingConfigured()) {
+  if (!row.embedding && isEmbeddingAvailable()) {
     try {
       const input = buildEmbeddingInput(message.title, row.tags || [], content);
       const [embedding] = await generateEmbeddings([input]);
@@ -139,7 +139,10 @@ export async function processMemoryIndexBatch(): Promise<number> {
   let embeddings: Array<number[] | null>;
   try {
     embeddings = await generateEmbeddings(inputs);
-    if (isEmbeddingConfigured() && embeddings.some(embedding => embedding === null)) {
+    // A provider quota outage should not keep the same durable jobs retrying
+    // forever. The graph/index record remains useful for keyword retrieval and
+    // a later queued job can add vectors after the provider recovers.
+    if (isEmbeddingAvailable() && embeddings.some(embedding => embedding === null)) {
       throw new Error('Embedding batch did not return a vector for every queued memory');
     }
   } catch (error) {

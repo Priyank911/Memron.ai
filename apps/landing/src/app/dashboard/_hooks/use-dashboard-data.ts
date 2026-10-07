@@ -64,15 +64,66 @@ const EMPTY_STATS: DashboardStats = {
   observedHours: 24,
 };
 
+/* ── Module-level SWR cache ──
+ * First paint reads from here (no null flash), every mount revalidates in
+ * the background. Survives route changes because it lives outside React.
+ * 401s are never cached — a 401 right after login is a session race, not data.
+ */
+interface CacheEntry {
+  stats: DashboardStats;
+  memories: DashboardMemory[];
+  buckets: DashboardBucket[];
+  at: number;
+}
+const DATA_CACHE = new Map<string, CacheEntry>();
+const INFLIGHT = new Map<string, Promise<CacheEntry | null>>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+const dashboardCacheKey = (orgId: string | null, range: string) =>
+  `${orgId ?? 'default'}|${range}`;
+
+function readCache(orgId: string | null, range: string): CacheEntry | null {
+  const entry = DATA_CACHE.get(dashboardCacheKey(orgId, range));
+  if (!entry || Date.now() - entry.at > CACHE_TTL_MS) return null;
+  return entry;
+}
+
+/** fetch with session-race retry: a 401 immediately after login usually means
+ *  the auth cookie isn't usable server-side yet — wait and try again. */
+async function fetchJsonWithRetry(
+  url: string,
+  signal: AbortSignal,
+  retries = 2,
+): Promise<{ ok: boolean; status: number; data: any }> {
+  let attempt = 0;
+  for (;;) {
+    const res = await fetch(url, { credentials: 'include', signal });
+    if (res.status !== 401 || attempt >= retries || signal.aborted) {
+      const data = res.ok ? await res.json().catch(() => null) : null;
+      return { ok: res.ok, status: res.status, data };
+    }
+    attempt += 1;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 1200 * attempt);
+      signal.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      }, { once: true });
+    });
+  }
+}
+
 export function useDashboardData(
   enabled = true,
   timeRange = '30d',
   orgId: string | null = null,
   memoriesEnabled = true,  // when false, skip the /memories fetch (e.g. on settings page)
 ) {
-  const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
-  const [memories, setMemories] = useState<DashboardMemory[]>([]);
-  const [buckets, setBuckets] = useState<DashboardBucket[]>([]);
+  // Seed from the module cache so the first paint already shows data —
+  // no null/empty flash while the background revalidation runs.
+  const [stats, setStats] = useState<DashboardStats>(() => readCache(orgId, timeRange)?.stats ?? EMPTY_STATS);
+  const [memories, setMemories] = useState<DashboardMemory[]>(() => readCache(orgId, timeRange)?.memories ?? []);
+  const [buckets, setBuckets] = useState<DashboardBucket[]>(() => readCache(orgId, timeRange)?.buckets ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -83,66 +134,85 @@ export function useDashboardData(
 
   // Stable fetch — receives all params as arguments so it never needs to be recreated.
   // Empty deps [] means this callback reference is the same for the component lifetime.
+  // Successful full fetches are written to the module cache; concurrent mounts
+  // share one in-flight request instead of firing duplicates.
   const doFetch = useCallback(async (
     currentOrgId: string | null,
     currentTimeRange: string,
     signal: AbortSignal,
     statsOnly: boolean,
   ) => {
-    const opts: RequestInit = { credentials: 'include', signal };
     const orgParam = currentOrgId ? `&orgId=${encodeURIComponent(currentOrgId)}` : '';
     const orgQuery = currentOrgId ? `?orgId=${encodeURIComponent(currentOrgId)}` : '';
     const withMemories = memoriesEnabledRef.current;
+    const key = dashboardCacheKey(currentOrgId, currentTimeRange);
 
+    const finish = (entry: CacheEntry | null) => {
+      if (signal.aborted) return;
+      if (entry) {
+        DATA_CACHE.set(key, entry);
+        setStats(entry.stats);
+        if (withMemories && !statsOnly) setMemories(entry.memories);
+        if (!statsOnly) setBuckets(entry.buckets);
+      }
+    };
+
+    // Dedupe: if another mount already has this exact fetch in flight, await it.
+    const shared = !statsOnly ? INFLIGHT.get(key) : undefined;
+    if (shared) {
+      setLoading(true);
+      try {
+        finish(await shared);
+      } catch { /* ignore */ }
+      finally {
+        if (!signal.aborted) setLoading(false);
+      }
+      return;
+    }
+
+    const run = (async (): Promise<CacheEntry | null> => {
+      const statsUrl = `/api/dashboard/stats?range=${currentTimeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`;
+      if (statsOnly) {
+        const sRes = await fetchJsonWithRetry(statsUrl, signal);
+        if (signal.aborted) return null;
+        if (!sRes.ok || !sRes.data) throw new Error(`Stats ${sRes.status}`);
+        const prev = DATA_CACHE.get(key);
+        return {
+          stats: sRes.data,
+          memories: prev?.memories ?? [],
+          buckets: prev?.buckets ?? [],
+          at: Date.now(),
+        };
+      }
+      const [sRes, mRes, bRes] = await Promise.all([
+        fetchJsonWithRetry(statsUrl, signal),
+        withMemories
+          ? fetchJsonWithRetry(`/api/dashboard/memories${orgQuery}`, signal)
+          : Promise.resolve({ ok: true, status: 200, data: { memories: [] } }),
+        fetchJsonWithRetry(`/api/dashboard/buckets${orgQuery}`, signal),
+      ]);
+      if (signal.aborted) return null;
+      if (!sRes.ok || !sRes.data) throw new Error(`Stats ${sRes.status}`);
+      return {
+        stats: sRes.data,
+        memories: withMemories ? (mRes.data?.memories || []) : [],
+        buckets: bRes.data?.buckets || [],
+        at: Date.now(),
+      };
+    })();
+
+    if (!statsOnly) INFLIGHT.set(key, run);
     try {
       setLoading(true);
       setError(null);
-
-      if (statsOnly) {
-        const sRes = await fetch(`/api/dashboard/stats?range=${currentTimeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts);
-        if (!signal.aborted) {
-          if (sRes.ok) setStats(await sRes.json());
-          else {
-            const e = await sRes.json().catch(() => ({}));
-            setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
-          }
-        }
-      } else if (!withMemories) {
-        // Settings / lightweight views: stats + buckets only
-        const [sRes, bRes] = await Promise.all([
-          fetch(`/api/dashboard/stats?range=${currentTimeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts),
-          fetch(`/api/dashboard/buckets${orgQuery}`, opts),
-        ]);
-        if (!signal.aborted) {
-          if (sRes.ok) setStats(await sRes.json());
-          else {
-            const e = await sRes.json().catch(() => ({}));
-            setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
-          }
-          if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
-        }
-      } else {
-        const [sRes, mRes, bRes] = await Promise.all([
-          fetch(`/api/dashboard/stats?range=${currentTimeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}`, opts),
-          fetch(`/api/dashboard/memories${orgQuery}`, opts),
-          fetch(`/api/dashboard/buckets${orgQuery}`, opts),
-        ]);
-        if (!signal.aborted) {
-          if (sRes.ok) setStats(await sRes.json());
-          else {
-            const e = await sRes.json().catch(() => ({}));
-            setError(`Stats ${sRes.status}: ${e.error || 'unknown'}`);
-          }
-          if (mRes.ok) setMemories((await mRes.json()).memories || []);
-          if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
-        }
-      }
+      finish(await run);
     } catch (err: any) {
-      if (err.name !== 'AbortError' && !signal.aborted) setError(err.message);
+      if (err?.name !== 'AbortError' && !signal.aborted) {
+        setError(err?.message || 'Failed to load dashboard data');
+      }
     } finally {
+      if (!statsOnly) INFLIGHT.delete(key);
       // Only clear loading if this fetch was not superseded by another one.
-      // Checking signal.aborted prevents an aborted fetch from clearing the loading
-      // state that the next (active) fetch has already set.
       if (!signal.aborted) setLoading(false);
     }
   }, []); // stable — intentionally no deps
@@ -220,17 +290,17 @@ export function useDashboardData(
     // (state reads inside an effect are always current at execution time)
     const ac = new AbortController();
     const orgQuery = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
-    fetch(`/api/dashboard/memories${orgQuery}`, { credentials: 'include', signal: ac.signal })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setMemories(d.memories || []); })
+    fetchJsonWithRetry(`/api/dashboard/memories${orgQuery}`, ac.signal)
+      .then(r => { if (r.ok && r.data) setMemories(r.data.memories || []); })
       .catch(() => {});
     return () => ac.abort();
   }, [enabled, memoriesEnabled, orgId]);
 
-  // Manual refresh exposed to the Topbar button — always does a full refresh.
+  // Manual refresh exposed to the Topbar button — always does a full refresh
+  // and overwrites the module cache so revisits start from fresh data.
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const opts: RequestInit = { credentials: 'include' };
-    if (signal instanceof AbortSignal) opts.signal = signal;
+    const fallback = signal instanceof AbortSignal ? null : new AbortController();
+    const activeSignal = signal instanceof AbortSignal ? signal : fallback!.signal;
     const orgParam = orgId ? `&orgId=${encodeURIComponent(orgId)}` : '';
     const orgQuery = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
     try {
@@ -239,13 +309,25 @@ export function useDashboardData(
       const refreshParam = `&refresh=1&refreshAt=${Date.now()}`;
       const refreshQuery = `?refresh=1&refreshAt=${Date.now()}`;
       const [sRes, mRes, bRes] = await Promise.all([
-        fetch(`/api/dashboard/stats?range=${timeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}${refreshParam}`, opts),
-        fetch(`/api/dashboard/memories${orgQuery ? `${orgQuery}&refresh=1&refreshAt=${Date.now()}` : refreshQuery}`, opts),
-        fetch(`/api/dashboard/buckets${orgQuery ? `${orgQuery}&refresh=1&refreshAt=${Date.now()}` : refreshQuery}`, opts),
+        fetchJsonWithRetry(`/api/dashboard/stats?range=${timeRange}&timezone=${encodeURIComponent(timezone)}${orgParam}${refreshParam}`, activeSignal),
+        fetchJsonWithRetry(`/api/dashboard/memories${orgQuery ? `${orgQuery}&refresh=1&refreshAt=${Date.now()}` : refreshQuery}`, activeSignal),
+        fetchJsonWithRetry(`/api/dashboard/buckets${orgQuery ? `${orgQuery}&refresh=1&refreshAt=${Date.now()}` : refreshQuery}`, activeSignal),
       ]);
-      if (sRes.ok) setStats(await sRes.json());
-      if (mRes.ok) setMemories((await mRes.json()).memories || []);
-      if (bRes.ok) setBuckets((await bRes.json()).buckets || []);
+      if (sRes.ok && sRes.data) {
+        const entry: CacheEntry = {
+          stats: sRes.data,
+          memories: mRes.data?.memories || [],
+          buckets: bRes.data?.buckets || [],
+          at: Date.now(),
+        };
+        DATA_CACHE.set(dashboardCacheKey(orgId, timeRange), entry);
+        INFLIGHT.delete(dashboardCacheKey(orgId, timeRange));
+        setStats(entry.stats);
+        setMemories(entry.memories);
+        setBuckets(entry.buckets);
+      } else if (!sRes.ok) {
+        setError(`Stats ${sRes.status}`);
+      }
     } catch (err: any) {
       if (err.name !== 'AbortError') setError(err.message);
     } finally {

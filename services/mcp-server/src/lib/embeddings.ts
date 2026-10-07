@@ -189,6 +189,12 @@ export function isEmbeddingConfigured(): boolean {
   return resolveProviders().length > 0;
 }
 
+/** True when at least one configured provider can currently be attempted. */
+export function isEmbeddingAvailable(): boolean {
+  const providers = resolveProviders();
+  return providers.length > 0 && (!circuitOpen() || providers.length > 1);
+}
+
 /**
  * Build embedding input text from memory fields.
  * Combines title + tags + content for maximum semantic coverage.
@@ -217,9 +223,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   // The breaker belongs to the primary path. If an explicitly configured
   // fallback exists, keep semantic retrieval alive without retrying the
   // exhausted primary provider on every Worker request.
-  const providers = circuitOpen() && configuredProviders.length > 1
-    ? configuredProviders.slice(1)
-    : configuredProviders;
+  const providers = circuitOpen() ? configuredProviders.slice(1) : configuredProviders;
   if (!providers.length) return null;
 
   const slot = await acquireSlot();
@@ -306,9 +310,7 @@ export async function generateEmbeddings(texts: string[]): Promise<Array<number[
   if (!configuredProviders.length) return texts.map(() => null);
   const normalized = texts.map(text => text.trim());
   if (normalized.some(text => !text)) return texts.map(() => null);
-  const provider = circuitOpen() && configuredProviders.length > 1
-    ? configuredProviders[1]
-    : configuredProviders[0];
+  const provider = circuitOpen() ? configuredProviders[1] : configuredProviders[0];
   if (!provider) return texts.map(() => null);
 
   // Do not hold a batch slot while calling generateEmbedding: each foreground

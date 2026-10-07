@@ -197,22 +197,45 @@ export default function DashboardPage() {
     return () => window.removeEventListener('popstate', h);
   }, []);
 
-  /* ── Fetch onboarding data + workspaces ── */
+  /* ── Fetch onboarding data + workspaces ──
+   * Retries on failure: immediately after login the session cookie is often
+   * not usable server-side yet, so the first attempt can 401 while a refresh
+   * seconds later succeeds. Retrying here (instead of resolving empty) is
+   * what stops the dashboard from painting nulls on first load. */
   useEffect(() => {
     if (!isLoaded || !user) return;
+    let cancelled = false;
+    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
     (async () => {
-      try {
-        // Fetch both endpoints and parse their bodies in one Promise.all so that
-        // all resulting state updates happen in a single React batch (one render).
-        const [onboardRes, wsRes] = await Promise.all([
-          fetch('/api/onboarding', { credentials: 'include' }),
-          fetch('/api/workspaces', { credentials: 'include' }),
-        ]);
-
-        const [onboardData, wsData] = await Promise.all([
-          onboardRes.ok ? onboardRes.json().catch(() => null) : Promise.resolve(null),
-          wsRes.ok     ? wsRes.json().catch(() => null)     : Promise.resolve(null),
-        ]);
+      let onboardData: any = null;
+      let wsData: any = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (cancelled) return;
+        if (attempt > 0) await sleep(1200 * attempt);
+        if (cancelled) return;
+        try {
+          // Fetch both endpoints and parse their bodies in one Promise.all so that
+          // all resulting state updates happen in a single React batch (one render).
+          const [onboardRes, wsRes] = await Promise.all([
+            fetch('/api/onboarding', { credentials: 'include' }),
+            fetch('/api/workspaces', { credentials: 'include' }),
+          ]);
+          if (onboardRes.ok || wsRes.ok) {
+            const [oData, wData] = await Promise.all([
+              onboardRes.ok ? onboardRes.json().catch(() => null) : Promise.resolve(null),
+              wsRes.ok     ? wsRes.json().catch(() => null)     : Promise.resolve(null),
+            ]);
+            // Accept partial success — but require at least one payload with
+            // real content, otherwise this was a session race; retry.
+            if (oData?.organization || oData?.user || (wData?.workspaces || []).length > 0) {
+              onboardData = oData;
+              wsData = wData;
+              break;
+            }
+          }
+        } catch { /* network error — retry below */ }
+      }
+      if (cancelled) return;
 
         const wsList: WorkspaceItem[] = wsData?.workspaces || [];
         const savedWsId = localStorage.getItem('mm-selected-workspace');
@@ -240,10 +263,9 @@ export default function DashboardPage() {
         if (onboardData?.apiKey) setApiKeyInfo(onboardData.apiKey);
         if (wsList.length > 0) setWorkspaces(wsList);
         if (resolvedOrg) setOrganization(resolvedOrg);
-      } catch { /* ignore */ } finally {
-        setOrgResolved(true);
-      }
+        if (!cancelled) setOrgResolved(true);
     })();
+    return () => { cancelled = true; };
   }, [isLoaded, user]);
 
   /* ── Ctrl+K ── */

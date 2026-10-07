@@ -12,7 +12,7 @@ import * as pg from 'pg';
 import { config } from '../config.js';
 import { getEnv } from '../env.js';
 
-const { Pool } = pg;
+const { Client, Pool } = pg;
 
 let _pool: pg.Pool | null = null;
 
@@ -108,6 +108,42 @@ function createPool(): pg.Pool {
 }
 
 /**
+ * Hyperdrive owns the origin pool. A module-level pg.Pool in a Worker can
+ * retain request-owned sockets across isolate invocations and compete with
+ * Hyperdrive's pool. Use a short-lived client per query instead.
+ */
+function createWorkerClient(): pg.Client {
+  const connectionString = getEnv('HYPERDRIVE_CONNECTION_STRING');
+  if (!connectionString) {
+    throw new Error('HYPERDRIVE_CONNECTION_STRING is not configured');
+  }
+
+  return new Client({
+    connectionString,
+    connectionTimeoutMillis: config.db.connectionTimeout,
+  });
+}
+
+async function workerQuery<T extends pg.QueryResultRow>(
+  text: string,
+  params: unknown[],
+  timeoutMs: number,
+): Promise<pg.QueryResult<T>> {
+  const client = createWorkerClient();
+  try {
+    await client.connect();
+    // pg's Pool query config exposes query_timeout, but Client does not type
+    // that extension. Set the server-side timeout explicitly for both.
+    await client.query('SELECT set_config($1, $2, false)', ['statement_timeout', `${timeoutMs}ms`]);
+    return await client.query<T>({ text, values: params });
+  } finally {
+    await client.end().catch((error: unknown) => {
+      console.warn('[DB] Worker client close failed:', error instanceof Error ? error.message : String(error));
+    });
+  }
+}
+
+/**
  * Lazily-created pool. Module import must never open connections: on
  * Cloudflare Workers, env (and therefore the Hyperdrive string) arrives
  * after module load, and opening a pool at import time would use blanks.
@@ -188,7 +224,7 @@ export async function warmPool(): Promise<void> {
 export async function query<T extends pg.QueryResultRow = any>(
   text: string,
   params?: unknown[],
-  options?: { maxRetries?: number; retryDelay?: number }
+  options?: { maxRetries?: number; retryDelay?: number; queryTimeoutMs?: number }
 ): Promise<pg.QueryResult<T>> {
   // A Worker request has a bounded wall-clock lifetime. Retrying a saturated
   // Hyperdrive/session-pool connection three times can consume that entire
@@ -200,7 +236,7 @@ export async function query<T extends pg.QueryResultRow = any>(
   const baseDelay = options?.retryDelay ?? (workerRuntime ? 50 : 100);
   const workerQueryTimeoutMs = Math.max(
     2_500,
-    Math.min(15_000, Number(getEnv('WORKER_DB_QUERY_TIMEOUT_MS') || 10_000)),
+    Math.min(15_000, Number(options?.queryTimeoutMs || getEnv('WORKER_DB_QUERY_TIMEOUT_MS') || 10_000)),
   );
   const releaseWorkerSlot = workerRuntime ? await acquireWorkerQuerySlot() : () => undefined;
   let lastError: Error | null = null;
@@ -209,11 +245,12 @@ export async function query<T extends pg.QueryResultRow = any>(
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const start = Date.now();
       try {
-        const result = await getPool().query<T>({
-          text,
-          values: params,
-          ...(workerRuntime ? { query_timeout: workerQueryTimeoutMs } : {}),
-        });
+        const result = workerRuntime
+          ? await workerQuery<T>(text, params || [], workerQueryTimeoutMs)
+          : await getPool().query<T>({
+              text,
+              values: params,
+            });
         const duration = Date.now() - start;
 
         // Update stats

@@ -2,8 +2,9 @@
  * Pointer System — Compressed references to encrypted memory records.
  *
  * Instead of passing raw context (thousands of tokens), agents exchange
- * pointers: short 12-char identifiers like `ptr_kN7xQ2mP` that cost ~3 tokens.
- * This achieves 89–95% token compression.
+ * pointers: short 12-char identifiers like `ptr_kN7xQ2mP` that tokenize to
+ * only a few tokens. Actual savings are measured per memory — see
+ * `calculateCompression`, which records original vs. pointer token counts.
  */
 import { nanoid } from 'nanoid';
 

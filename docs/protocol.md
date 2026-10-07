@@ -18,7 +18,7 @@ encrypted, stored memory records.
 |------------------------|-------------|
 | Token compression rate | 89–95%      |
 | Pointer ID length      | 12 chars    |
-| Pointer token cost     | ~3 tokens   |
+| Pointer token cost     | a few tokens (measured per store) |
 | Typical context saved  | 500-10K tokens per pointer |
 
 ### Pointer Format

@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 const stats = [
   { value: '89–95%', label: 'Token Compression' },
-  { value: '<3', label: 'Pointer Size (tokens)' },
+  { value: '8', label: 'Live MCP Tools' },
   { value: '4', label: 'Memory Buckets' },
   { value: 'AES-256', label: 'Encryption Standard' },
 ];
@@ -58,7 +58,7 @@ const values = [
   },
   {
     title: 'Compression Over Replay',
-    desc: '3-token pointers replace 1000-token histories. Efficiency is not optional - it is the architecture.',
+    desc: 'Pointer references replace full-history replay, and every store records what was saved. Efficiency is not optional - it is the architecture.',
   },
 ];
 

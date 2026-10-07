@@ -182,6 +182,9 @@ export class MemronOAuthProvider {
     } catch {
       throw new Error('Invalid or expired refresh token');
     }
+    if (refreshPayload.cid !== client.client_id) {
+      throw new Error('Refresh token was issued to a different client');
+    }
 
     // Verify the refresh token hash is in the database and not revoked
     const refreshHash = tokens.hashToken(refreshToken);
@@ -198,6 +201,9 @@ export class MemronOAuthProvider {
 
     const org = await db.getOrgForUser(user.id);
     const grantedScopes = scopes ?? storedRefresh.scopes;
+    if (grantedScopes.some(scope => !storedRefresh.scopes.includes(scope))) {
+      throw new Error('Requested scope exceeds the originally granted scope');
+    }
 
     // Issue new access token
     const newAccessToken = await tokens.signAccessToken({

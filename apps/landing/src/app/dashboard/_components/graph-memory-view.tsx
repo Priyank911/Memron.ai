@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   GitBranch, Search, RefreshCw, ZoomIn, ZoomOut, Maximize2,
-  Layers, Shield, X, Database
+  Layers, Shield, X, Database, Orbit
 } from 'lucide-react';
 import type { OrgInfo } from './types';
 
@@ -17,6 +17,8 @@ export interface GraphNode {
   isRoot?: boolean;
   x?: number;
   y?: number;
+  /** Depth axis for the orbital projection. Set once at init, never re-randomized. */
+  z?: number;
   vx?: number;
   vy?: number;
   radius?: number;
@@ -29,6 +31,10 @@ export interface GraphNode {
     summary?: string;
     createdAt?: string;
   }>;
+  /** Projected screen coords written by the render loop for hit-testing. */
+  _sx?: number;
+  _sy?: number;
+  _ss?: number;
 }
 
 export interface GraphEdge {
@@ -64,7 +70,20 @@ interface GraphMemoryViewProps {
   org: OrgInfo | null;
 }
 
+/* ── Camera ── */
+const PERSP = 900;          // perspective distance — larger = flatter
+const ORBIT_SPEED = 0.00012; // radians per ms
+const ORBIT_RESUME_MS = 3500;
+
+/** Deterministic depth from id so re-renders never reshuffle the scene. */
+function hashDepth(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) h = ((h * 31) + id.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 220) - 110;
+}
+
 export function GraphMemoryView({ org }: GraphMemoryViewProps) {
+  const orgId = org?.id ?? null;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -75,22 +94,38 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
   const [selectedType, setSelectedType] = useState<string>('all');
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [gravityOn, setGravityOn] = useState(true);
-  
-  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [orbitOn, setOrbitOn] = useState(true);
+
+  /* ── Refs: everything the 60fps loop reads lives here.
+   * The loop effect depends ONLY on [data], so pan / zoom / hover / select
+   * never tear down and restart the animation (that restart was the
+   * visible "re-render again and again" bug). */
+  const viewRef = useRef({ x: 0, y: 0, scale: 1 });
+  const hoverIdRef = useRef<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const searchRef = useRef('');
+  const typeRef = useRef('all');
+  const gravityRef = useRef(true);
+  const orbitRef = useRef({ angle: 0.6, auto: true, lastInteract: 0 });
+  const centerRef = useRef({ cx: 450, cy: 300 });
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const draggedNodeRef = useRef<GraphNode | null>(null);
-  const hoveredNodeRef = useRef<GraphNode | null>(null);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-
   const simNodesRef = useRef<GraphNode[]>([]);
   const animFrameRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
+  const orbitClockRef = useRef<number>(0);
+
+  // Mirror React state into refs (cheap, never restarts the loop).
+  useEffect(() => { selectedIdRef.current = selectedNode?.id ?? null; }, [selectedNode]);
+  useEffect(() => { searchRef.current = searchQuery; }, [searchQuery]);
+  useEffect(() => { typeRef.current = selectedType; }, [selectedType]);
+  useEffect(() => { gravityRef.current = gravityOn; }, [gravityOn]);
+  useEffect(() => { orbitRef.current.auto = orbitOn; }, [orbitOn]);
 
   const fetchGraph = useCallback(async () => {
     try {
       setRefreshing(true);
-      const orgId = org?.id;
       const refresh = `refresh=1&refreshAt=${Date.now()}`;
       const url = orgId ? `/api/dashboard/graph?orgId=${orgId}&${refresh}` : `/api/dashboard/graph?${refresh}`;
       const res = await fetch(url);
@@ -102,6 +137,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       const height = containerRef.current?.clientHeight || 600;
       const cx = width / 2;
       const cy = height / 2;
+      centerRef.current = { cx, cy };
       const degree = new Map<string, number>();
       (json.edges || []).forEach(edge => {
         degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
@@ -117,6 +153,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
           ...node,
           x: cx + Math.cos(angle) * dist,
           y: cy + Math.sin(angle) * dist,
+          z: hashDepth(node.id) + node.importanceScore * 50,
           vx: (Math.random() - 0.5) * 0.2,
           vy: (Math.random() - 0.5) * 0.2,
           radius: nodeRadius,
@@ -131,36 +168,66 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [org]);
+  }, [orgId]);
 
   useEffect(() => {
     fetchGraph();
   }, [fetchGraph]);
 
-  const filteredNodeIds = useMemo(() => {
-    if (!data?.nodes) return new Set<string>();
+  // Hub set for decluttered labels: top-8 by degree.
+  const hubIds = useMemo(() => {
+    if (!data) return new Set<string>();
+    const degree = new Map<string, number>();
+    (data.edges || []).forEach(e => {
+      degree.set(e.source, (degree.get(e.source) || 0) + 1);
+      degree.set(e.target, (degree.get(e.target) || 0) + 1);
+    });
     return new Set(
-      data.nodes
-        .filter(n => {
-          const matchesSearch = !searchQuery || n.label.toLowerCase().includes(searchQuery.toLowerCase());
-          const normalizedType = n.type.toLowerCase();
-          const matchesType = selectedType === 'all'
-            || normalizedType === selectedType.toLowerCase()
-            || (selectedType === 'knowledge' && (normalizedType === 'memory' || normalizedType === 'knowledge'))
-            || n.isRoot;
-          return matchesSearch && matchesType;
-        })
+      [...(data.nodes || [])]
+        .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+        .slice(0, 8)
         .map(n => n.id)
     );
-  }, [data, searchQuery, selectedType]);
+  }, [data]);
 
+  const nodeMatchesFilter = (n: GraphNode, query: string, type: string): boolean => {
+    const matchesSearch = !query || n.label.toLowerCase().includes(query.toLowerCase());
+    const normalizedType = n.type.toLowerCase();
+    const matchesType = type === 'all'
+      || normalizedType === type.toLowerCase()
+      || (type === 'knowledge' && (normalizedType === 'memory' || normalizedType === 'knowledge'))
+      || n.isRoot === true;
+    return matchesSearch && matchesType;
+  };
+
+  /* ── The single render loop. Deps: [data] only. ── */
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let startTime = performance.now();
+    const startTime = performance.now();
+
+    const project = (n: GraphNode, W: number, H: number) => {
+      const { cx, cy } = centerRef.current;
+      const view = viewRef.current;
+      const a = orbitRef.current.angle;
+      const cosA = Math.cos(a);
+      const sinA = Math.sin(a);
+      const dx = (n.x ?? cx) - cx;
+      const dy = (n.y ?? cy) - cy;
+      const dz = n.z ?? 0;
+      const rx = dx * cosA + dz * sinA;
+      const rz = -dx * sinA + dz * cosA;
+      const s = PERSP / (PERSP + rz);
+      return {
+        sx: W / 2 + view.x + rx * s * view.scale,
+        sy: H / 2 + view.y + dy * s * view.scale,
+        s,
+        depth: Math.max(0, Math.min(1, (rz + 260) / 520)), // 0 = far, 1 = near
+      };
+    };
 
     const render = (time: number) => {
       const elapsed = (time - startTime) / 1000;
@@ -171,35 +238,70 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
 
-      if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
+      if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
       }
+
+      // Orbit advance (paused briefly after interaction).
+      const orbit = orbitRef.current;
+      if (orbitClockRef.current === 0) orbitClockRef.current = time;
+      const orbitDelta = Math.min(100, time - orbitClockRef.current);
+      orbitClockRef.current = time;
+      if (orbit.auto && time - orbit.lastInteract > ORBIT_RESUME_MS) {
+        orbit.angle += ORBIT_SPEED * orbitDelta;
+      }
+
+      const gravityOnNow = gravityRef.current;
+      const hoverId = hoverIdRef.current;
+      const selectedId = selectedIdRef.current;
+      const query = searchRef.current;
+      const type = typeRef.current;
 
       ctx.save();
       ctx.scale(dpr, dpr);
 
       const isLight = document.documentElement.getAttribute('data-mm-theme') === 'light';
 
-      // The graph deliberately uses a neutral monochrome palette. Semantic
-      // meaning comes from line style and node geometry, not accent colors.
+      // Backdrop + depth vignette.
       ctx.fillStyle = isLight ? '#f7f7f7' : '#050505';
       ctx.fillRect(0, 0, width, height);
+      const glow = ctx.createRadialGradient(
+        width / 2, height / 2, 0, width / 2, height / 2, Math.max(width, height) * 0.62
+      );
+      glow.addColorStop(0, isLight ? 'rgba(0,0,0,0.045)' : 'rgba(129,140,248,0.06)');
+      glow.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, width, height);
 
-      ctx.translate(width / 2 + transform.x, height / 2 + transform.y);
-      ctx.scale(transform.scale, transform.scale);
-      ctx.translate(-width / 2, -height / 2);
+      // Perspective floor rings (static anchor for the 3D read).
+      const view = viewRef.current;
+      ctx.save();
+      ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 4; i += 1) {
+        ctx.beginPath();
+        ctx.setLineDash([2, 7]);
+        ctx.ellipse(
+          width / 2 + view.x, height / 2 + view.y + 40 * view.scale,
+          120 * i * view.scale, 38 * i * view.scale, 0, 0, Math.PI * 2
+        );
+        ctx.stroke();
+      }
+      ctx.restore();
 
       const nodes = simNodesRef.current;
+
+      // 2D force pass in world space (unchanged physics, damped).
       {
-        const iterations = gravityOn ? 0.34 : 0.18;
-        const repulsion = gravityOn ? 6200 : 12500;
-        const collisionPadding = gravityOn ? 34 : 58;
+        const iterations = gravityOnNow ? 0.34 : 0.18;
+        const repulsion = gravityOnNow ? 6200 : 12500;
+        const collisionPadding = gravityOnNow ? 34 : 58;
         for (let i = 0; i < nodes.length; i++) {
           const a = nodes[i];
           if (a === draggedNodeRef.current) continue;
-          let fx = (width / 2 - a.x!) * 0.0008;
-          let fy = (height / 2 - a.y!) * 0.0008;
+          let fx = (centerRef.current.cx - a.x!) * 0.0008;
+          let fy = (centerRef.current.cy - a.y!) * 0.0008;
           for (let j = i + 1; j < nodes.length; j++) {
             const b = nodes[j];
             const dx = a.x! - b.x!;
@@ -238,115 +340,131 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
           const dx = t.x! - s.x!;
           const dy = t.y! - s.y!;
           const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-          const targetDistance = gravityOn ? 142 : 238;
+          const targetDistance = gravityOnNow ? 142 : 238;
           const force = (distance - targetDistance) * 0.0008;
           if (s !== draggedNodeRef.current) { s.x! += dx * force * simStep; s.y! += dy * force * simStep; }
           if (t !== draggedNodeRef.current) { t.x! -= dx * force * simStep; t.y! -= dy * force * simStep; }
         });
       }
 
-      if (data?.edges) {
-        data.edges.forEach(edge => {
-          const s = nodes.find(n => n.id === edge.source);
-          const t = nodes.find(n => n.id === edge.target);
-          if (!s || !t) return;
+      // Project + depth-sort (far → near painter's order).
+      const projected = nodes.map(n => ({ n, p: project(n, width, height) }));
+      projected.forEach(({ n, p }) => { n._sx = p.sx; n._sy = p.sy; n._ss = p.s; });
+      projected.sort((a, b) => a.p.depth - b.p.depth);
+      const byId = new Map(projected.map(({ n, p }) => [n.id, p]));
 
-          const isHovered = hoveredNodeId === s.id || hoveredNodeId === t.id || selectedNode?.id === s.id || selectedNode?.id === t.id;
-          const isDimmed = hoveredNodeId && !isHovered;
+      // Edges with depth-weighted alpha.
+      if (data?.edges) {
+        const maxEdges = 400;
+        const step = Math.max(1, Math.ceil(data.edges.length / maxEdges));
+        for (let ei = 0; ei < data.edges.length; ei += step) {
+          const edge = data.edges[ei];
+          const ps = byId.get(edge.source);
+          const pt = byId.get(edge.target);
+          if (!ps || !pt) continue;
+
+          const isHovered = hoverId === edge.source || hoverId === edge.target || selectedId === edge.source || selectedId === edge.target;
+          const isDimmed = !!hoverId && !isHovered;
+          const depthAlpha = 0.3 + 0.7 * ((ps.depth + pt.depth) / 2);
 
           ctx.save();
           ctx.beginPath();
-          ctx.moveTo(s.x!, s.y!);
-          ctx.lineTo(t.x!, t.y!);
+          ctx.moveTo(ps.sx, ps.sy);
+          ctx.lineTo(pt.sx, pt.sy);
 
           if (isHovered) {
             ctx.strokeStyle = isLight ? '#111111' : '#ffffff';
-            ctx.lineWidth = 2.2;
-            ctx.shadowColor = isLight ? 'rgba(0,0,0,0.24)' : 'rgba(255,255,255,0.4)';
-            ctx.shadowBlur = 7;
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 1;
           } else if (isDimmed) {
-            ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.03)' : 'rgba(255, 255, 255, 0.03)';
+            ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)';
             ctx.lineWidth = 0.8;
+            ctx.globalAlpha = 1;
           } else {
             const weak = edge.edgeSource === 'co_occurrence';
-            ctx.strokeStyle = isLight ? (weak ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.68)') : (weak ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.68)');
-            ctx.lineWidth = weak ? 1.15 : Math.max(1.5, Math.min(2.8, 1.3 + (edge.confidence || edge.strength) * 1.5));
-            if (weak) ctx.setLineDash([5, 6]);
-            if (!isDimmed) { ctx.shadowColor = weak ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.16)'; ctx.shadowBlur = 4; }
+            ctx.strokeStyle = isLight ? (weak ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.62)') : (weak ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.6)');
+            ctx.lineWidth = weak ? 1 : Math.max(1, Math.min(2.4, 1.1 + (edge.confidence || edge.strength) * 1.3));
+            ctx.globalAlpha = depthAlpha;
+            if (weak || !edge.isValid) ctx.setLineDash([4, 5]);
           }
-
-          if (!edge.isValid) {
-            ctx.setLineDash([3, 5]);
-          }
-
           ctx.stroke();
           ctx.restore();
 
-          if (edge.isValid && !isDimmed) {
-            const progress = (elapsed * 0.35 + (s.radius! * 0.1)) % 1;
-            const px = s.x! + (t.x! - s.x!) * progress;
-            const py = s.y! + (t.y! - s.y!) * progress;
-
+          // Flow pulse on strong valid edges only.
+          if (edge.isValid && !isDimmed && edge.edgeSource !== 'co_occurrence') {
+            const progress = (elapsed * 0.3 + (ps.sx * 0.002)) % 1;
+            const px = ps.sx + (pt.sx - ps.sx) * progress;
+            const py = ps.sy + (pt.sy - ps.sy) * progress;
+            ctx.save();
+            ctx.globalAlpha = 0.5 + 0.5 * depthAlpha;
             ctx.beginPath();
-            ctx.arc(px, py, 1.8, 0, Math.PI * 2);
-            ctx.fillStyle = isHovered ? '#ffffff' : (isLight ? '#222222' : '#d4d4d4');
+            ctx.arc(px, py, 1.6, 0, Math.PI * 2);
+            ctx.fillStyle = isHovered ? '#ffffff' : (isLight ? '#333333' : '#d4d4d4');
             ctx.fill();
+            ctx.restore();
           }
-        });
+        }
       }
 
-      nodes.forEach(node => {
-        const isMatched = filteredNodeIds.has(node.id);
-        const isHovered = hoveredNodeId === node.id;
-        const isSelected = selectedNode?.id === node.id;
-        const r = node.radius || 18;
+      // Nodes, far → near.
+      const q = query.trim().toLowerCase();
+      projected.forEach(({ n, p }) => {
+        const matched = nodeMatchesFilter(n, query, type);
+        const isHovered = hoverId === n.id;
+        const isSelected = selectedId === n.id;
+        const baseR = n.radius || 18;
+        const r = Math.max(3, baseR * p.s * view.scale);
+        const showLabel = isHovered || isSelected || hubIds.has(n.id) || (!!q && n.label.toLowerCase().includes(q));
 
         ctx.save();
-        ctx.globalAlpha = isMatched ? 1.0 : 0.18;
+        ctx.globalAlpha = matched ? (0.45 + 0.55 * p.depth) : 0.15;
 
+        // Halo (depth-scaled).
+        const haloR = r * 2.6;
+        const halo = ctx.createRadialGradient(p.sx, p.sy, r * 0.4, p.sx, p.sy, haloR);
+        const haloColor = isLight ? 'rgba(0,0,0,0.10)' : 'rgba(129,140,248,0.20)';
+        halo.addColorStop(0, haloColor);
+        halo.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = halo;
         ctx.beginPath();
-        ctx.arc(node.x!, node.y!, r, 0, Math.PI * 2);
+        ctx.arc(p.sx, p.sy, haloR, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Core.
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
         ctx.fillStyle = isLight ? (isSelected ? '#111111' : '#d5d5d5') : (isSelected ? '#f5f5f5' : '#242424');
         ctx.strokeStyle = isHovered || isSelected ? (isLight ? '#000000' : '#ffffff') : (isLight ? '#555555' : '#9a9a9a');
         ctx.lineWidth = isHovered || isSelected ? 2 : 1;
-        ctx.shadowColor = isHovered || isSelected ? (isLight ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.38)') : 'transparent';
-        ctx.shadowBlur = isHovered || isSelected ? 12 : 0;
         ctx.fill();
         ctx.stroke();
 
-        const labelText = node.label;
-        ctx.font = '500 10.5px "Inter", sans-serif';
-        const textMetrics = ctx.measureText(labelText);
-        const pillWidth = textMetrics.width + 16;
-        const pillHeight = 22;
-        const pillX = node.x! - pillWidth / 2;
-        const pillY = node.y! - r - 22;
-
-        ctx.save();
-        ctx.shadowColor = isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(0, 0, 0, 0.6)';
-        ctx.shadowBlur = 10;
-        ctx.fillStyle = isLight
-          ? (isHovered || isSelected ? 'rgba(255, 255, 255, 1)' : 'rgba(245, 245, 248, 0.95)')
-          : (isHovered || isSelected ? 'rgba(24, 24, 32, 0.96)' : 'rgba(12, 12, 16, 0.9)');
-        
-        ctx.beginPath();
-        roundRect(ctx, pillX, pillY, pillWidth, pillHeight, 5);
-        ctx.fill();
-
-        ctx.strokeStyle = (isHovered || isSelected)
-          ? (isLight ? '#111111' : '#ffffff')
-          : (isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.14)');
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        ctx.fillStyle = isLight
-          ? (isHovered || isSelected ? '#ffffff' : '#111111')
-          : (isHovered || isSelected ? '#ffffff' : '#e5e5e5');
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(labelText, node.x!, pillY + pillHeight / 2);
-        ctx.restore();
-
+        // Compact label pill — hubs / hover / selection / search hits only.
+        if (showLabel) {
+          ctx.font = '500 10.5px "Inter", sans-serif';
+          const pillWidth = ctx.measureText(n.label).width + 16;
+          const pillHeight = 22;
+          const pillX = p.sx - pillWidth / 2;
+          const pillY = p.sy - r - 24;
+          ctx.save();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = isLight
+            ? (isHovered || isSelected ? 'rgba(255,255,255,1)' : 'rgba(245,245,248,0.95)')
+            : (isHovered || isSelected ? 'rgba(24,24,32,0.96)' : 'rgba(12,12,16,0.9)');
+          ctx.beginPath();
+          roundRect(ctx, pillX, pillY, pillWidth, pillHeight, 5);
+          ctx.fill();
+          ctx.strokeStyle = (isHovered || isSelected)
+            ? (isLight ? '#111111' : '#ffffff')
+            : (isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)');
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = isLight ? '#111111' : (isHovered || isSelected ? '#ffffff' : '#e5e5e5');
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(n.label, p.sx, pillY + pillHeight / 2);
+          ctx.restore();
+        }
         ctx.restore();
       });
 
@@ -356,7 +474,8 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
     animFrameRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animFrameRef.current);
-  }, [data, transform, hoveredNodeId, selectedNode, filteredNodeIds, gravityOn]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
     ctx.moveTo(x + r, y);
@@ -370,24 +489,19 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
     ctx.quadraticCurveTo(x, y, x + r, y);
   }
 
+  const markInteract = () => { orbitRef.current.lastInteract = performance.now(); };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    markInteract();
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const dpr = window.devicePixelRatio || 1;
-    const width = canvas.width / dpr;
-    const height = canvas.height / dpr;
-
-    const worldX = (mouseX - (width / 2 + transform.x)) / transform.scale + width / 2;
-    const worldY = (mouseY - (height / 2 + transform.y)) / transform.scale + height / 2;
 
     const clickedNode = simNodesRef.current.find(n => {
-      const dx = worldX - n.x!;
-      const dy = worldY - n.y!;
-      return Math.sqrt(dx * dx + dy * dy) <= (n.radius || 18) + 8;
+      if (n._sx == null || n._sy == null) return false;
+      const dx = (e.clientX - rect.left) - n._sx;
+      const dy = (e.clientY - rect.top) - n._sy;
+      return Math.sqrt(dx * dx + dy * dy) <= Math.max(10, (n.radius || 18) * (n._ss || 1) * viewRef.current.scale) + 8;
     });
 
     if (clickedNode) {
@@ -395,7 +509,7 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
       setSelectedNode(clickedNode);
     } else {
       isDraggingRef.current = true;
-      dragStartRef.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+      dragStartRef.current = { x: e.clientX - viewRef.current.x, y: e.clientY - viewRef.current.y };
     }
   };
 
@@ -403,45 +517,46 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const dpr = window.devicePixelRatio || 1;
-    const width = canvas.width / dpr;
-    const height = canvas.height / dpr;
-
-    const worldX = (mouseX - (width / 2 + transform.x)) / transform.scale + width / 2;
-    const worldY = (mouseY - (height / 2 + transform.y)) / transform.scale + height / 2;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
 
     if (draggedNodeRef.current) {
-      draggedNodeRef.current.x = worldX;
-      draggedNodeRef.current.y = worldY;
+      markInteract();
+      // Approximate inverse projection using the node's own depth scale.
+      const node = draggedNodeRef.current;
+      const s = node._ss || 1;
+      const view = viewRef.current;
+      const a = orbitRef.current.angle;
+      const cosA = Math.cos(a);
+      const sinA = Math.sin(a);
+      const { cx, cy } = centerRef.current;
+      const rx = (mx - rect.width / 2 - view.x) / (s * view.scale);
+      const ry = (my - rect.height / 2 - view.y) / (s * view.scale);
+      const dz = node.z ?? 0;
+      const dx = Math.abs(cosA) > 0.05 ? (rx - dz * sinA) / cosA : rx;
+      node.x = dx + cx;
+      node.y = ry + cy;
       return;
     }
 
     if (isDraggingRef.current) {
-      setTransform(prev => ({
-        ...prev,
-        x: e.clientX - dragStartRef.current.x,
-        y: e.clientY - dragStartRef.current.y,
-      }));
+      markInteract();
+      viewRef.current.x = e.clientX - dragStartRef.current.x;
+      viewRef.current.y = e.clientY - dragStartRef.current.y;
       return;
     }
 
     const hovered = simNodesRef.current.find(n => {
-      const dx = worldX - n.x!;
-      const dy = worldY - n.y!;
-      return Math.sqrt(dx * dx + dy * dy) <= (n.radius || 18) + 6;
+      if (n._sx == null || n._sy == null) return false;
+      const dx = mx - n._sx;
+      const dy = my - n._sy;
+      return Math.sqrt(dx * dx + dy * dy) <= Math.max(10, (n.radius || 18) * (n._ss || 1) * viewRef.current.scale) + 6;
     });
 
-    if (hovered) {
-      hoveredNodeRef.current = hovered;
-      setHoveredNodeId(hovered.id);
-      canvas.style.cursor = 'pointer';
-    } else {
-      hoveredNodeRef.current = null;
-      setHoveredNodeId(null);
-      canvas.style.cursor = 'grab';
+    const nextId = hovered ? hovered.id : null;
+    if (hoverIdRef.current !== nextId) {
+      hoverIdRef.current = nextId;
+      canvas.style.cursor = nextId ? 'pointer' : 'grab';
     }
   };
 
@@ -452,15 +567,26 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    markInteract();
+    const view = viewRef.current;
     const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-    setTransform(prev => ({
-      ...prev,
-      scale: Math.min(Math.max(prev.scale * zoomFactor, 0.4), 3.0),
-    }));
+    view.scale = Math.min(Math.max(view.scale * zoomFactor, 0.4), 3.0);
+  };
+
+  const zoomBy = (factor: number) => {
+    markInteract();
+    const view = viewRef.current;
+    view.scale = Math.min(Math.max(view.scale * factor, 0.4), 3.0);
   };
 
   const resetZoom = () => {
-    setTransform({ x: 0, y: 0, scale: 1 });
+    markInteract();
+    viewRef.current = { x: 0, y: 0, scale: 1 };
+  };
+
+  const toggleOrbit = () => {
+    markInteract();
+    setOrbitOn(v => !v);
   };
 
   const selectedNodeEdges = useMemo(() => {
@@ -532,6 +658,17 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
           </button>
 
           <button
+            onClick={toggleOrbit}
+            aria-pressed={orbitOn}
+            className="mm-graph-btn"
+            title={orbitOn ? 'Pause the orbital rotation' : 'Resume the orbital rotation'}
+          >
+            <Orbit size={13} />
+            <span>Orbit</span>
+            <span className="mm-graph-toggle-state">{orbitOn ? 'On' : 'Off'}</span>
+          </button>
+
+          <button
             onClick={fetchGraph}
             disabled={refreshing}
             className="mm-graph-btn"
@@ -542,14 +679,14 @@ export function GraphMemoryView({ org }: GraphMemoryViewProps) {
 
           <div className="mm-graph-zoom-box">
             <button
-              onClick={() => setTransform(p => ({ ...p, scale: Math.min(p.scale * 1.2, 3.0) }))}
+              onClick={() => zoomBy(1.2)}
               className="mm-graph-zoom-btn"
               title="Zoom In"
             >
               <ZoomIn size={14} />
             </button>
             <button
-              onClick={() => setTransform(p => ({ ...p, scale: Math.max(p.scale * 0.8, 0.4) }))}
+              onClick={() => zoomBy(0.8)}
               className="mm-graph-zoom-btn"
               title="Zoom Out"
             >

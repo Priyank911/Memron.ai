@@ -159,10 +159,10 @@ export async function searchMemoriesByVector(params: {
   embedding: number[];
   limit?: number;
   minSimilarity?: number;
-}): Promise<(MemoryRow & { similarity: number })[]> {
+}): Promise<Array<{ pointer_id: string; title: string; similarity: number }>> {
   const embeddingStr = `[${params.embedding.join(',')}]`;
-  const result = await query<MemoryRow & { similarity: number }>(
-    `SELECT *, 1 - (embedding <=> $1::vector) AS similarity
+  const result = await query<{ pointer_id: string; title: string; similarity: number }>(
+    `SELECT pointer_id, title, 1 - (embedding <=> $1::vector) AS similarity
      FROM memories
      WHERE user_id = $2 AND is_active = true AND embedding IS NOT NULL
      ORDER BY embedding <=> $1::vector
@@ -698,6 +698,7 @@ export async function getAuthCode(code: string, clientId?: string): Promise<Auth
       `SELECT * FROM mcp_auth_codes
        WHERE code = $1 AND (client_id = $2 OR client_id IS NULL) AND used = false AND expires_at > NOW()`,
       [code, clientId],
+      { queryTimeoutMs: 4_000 },
     );
     if (result.rows.length > 0) return result.rows[0];
   }
@@ -705,6 +706,7 @@ export async function getAuthCode(code: string, clientId?: string): Promise<Auth
     `SELECT * FROM mcp_auth_codes
      WHERE code = $1 AND used = false AND expires_at > NOW()`,
     [code],
+    { queryTimeoutMs: 4_000 },
   );
   return fallback.rows[0] ?? null;
 }
@@ -860,6 +862,7 @@ export async function getUserByApiKeyHash(keyHash: string): Promise<{
          JOIN users u ON ak.user_id = u.id
          WHERE ak.key_hash = $1 AND ak.is_active = true AND (u.is_active IS NULL OR u.is_active = true)`,
         [keyHash],
+        { queryTimeoutMs: 4_000 },
       );
 
       if (!result.rows[0]) return null;

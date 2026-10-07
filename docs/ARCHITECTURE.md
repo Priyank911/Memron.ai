@@ -70,7 +70,7 @@ Raw Content (Agent Output)
   │     └── Content is immutable, addressable by ID
   │
   ├─5─► PointerEngine.createPointer() → Returns ptr_xxxxxxxx
-  │     └── Compression: ~1000 tokens → ~3 tokens (99.7%)
+  │     └── Compression: full history → pointer reference (savings measured per store)
   │
   └─6─► Return Pointer to Agent
         └── Agent uses pointer in subsequent conversations

@@ -122,7 +122,7 @@ export const DOC_ITEMS: Record<string, DocItem> = {
     readTime: '3 min read',
     updated: 'Oct 2026 · engine v2',
     content: {
-      lead: 'Memron is the memory backbone for autonomous agents. Raw conversation turns go in — encrypted, indexed memory pointers come out. Agents recall with **3-token pointers** like `ptr_7xK9q2` instead of replaying 40,000 raw tokens.',
+      lead: 'Memron is the memory backbone for autonomous agents. Raw conversation turns go in — encrypted, indexed memory pointers come out. Agents recall with compact pointer references like `ptr_7xK9q2` instead of replaying tens of thousands of raw tokens.',
       sections: [
         {
           id: 'the-three-problems',
@@ -131,7 +131,7 @@ export const DOC_ITEMS: Record<string, DocItem> = {
           alert: {
             type: 'important',
             title: 'The two guarantees',
-            message: 'Memron guarantees (1) ~90% token reduction via pointer compression and (2) measurably less factual drift via pinned constraints + hybrid recall. Pointers are 3 tokens; the paragraphs they stand for are not.',
+            message: 'Memron is built for two outcomes: (1) pointer compression you can verify per workspace on the dashboard — every store records original vs. pointer tokens — and (2) less factual drift via pinned constraints plus hybrid recall. A pointer stands in for the full paragraph; the model fetches detail only when it needs it.',
           },
         },
         {
@@ -264,7 +264,7 @@ export const DOC_ITEMS: Record<string, DocItem> = {
         {
           id: 'memory-pointers',
           heading: 'Pointers, not pastes',
-          body: 'Instead of injecting full histories, Memron hands the model a pointer such as `ptr_82a1f` (about **3 tokens**). The agent dereferences it with `memory_recall` only when the underlying detail matters.\n\nA `500-token` paragraph becomes one pointer. Over a `20-turn` trajectory that is the difference between drowning and working.',
+          body: 'Instead of injecting full histories, Memron hands the model a short pointer reference such as `ptr_82a1f`. The agent dereferences it with `memory_recall` only when the underlying detail matters.\n\nA long paragraph becomes one reference. Over a long trajectory that is the difference between drowning and working — and the savings are recorded per store, so your dashboard shows the real number, not a slogan.',
           alert: {
             type: 'tip',
             title: 'Inbox by default',
