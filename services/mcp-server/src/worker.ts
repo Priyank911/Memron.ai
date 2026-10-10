@@ -15,6 +15,7 @@
  * 11. MCP Stateless JSON-RPC (ALL /mcp) — with dual API-key & OAuth JWT auth
  * 12. Health check (GET /health)
  */
+import { EXPECTED_SCHEMA_VERSION } from './db/schema.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -183,6 +184,8 @@ app.get('/health', (c) => {
     status: 'healthy',
     runtime: 'cloudflare-worker',
     service: 'memron-mcp',
+    // Lets an operator confirm the deployed build contains Tier 0 memory shells.
+    engine: { tier0_shells: true, schema_expected: EXPECTED_SCHEMA_VERSION },
     time: new Date().toISOString(),
   });
 });

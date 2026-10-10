@@ -37,7 +37,7 @@ export interface AliasPair {
 const KIND_WEIGHT: Record<ShellKind, number> = { name: 1.0, phrase: 0.6, term: 0.3 };
 const MAX_NAME_KEYS = 200;
 const MAX_SOFT_KEYS = 100;
-const MAX_QUERY_KEYS = 60;
+const MAX_QUERY_KEYS = 120;
 const MAX_INDEXED_CHARS = 50_000;
 /** Terms that point at more memories than this are not discriminative. */
 const MAX_TERM_DF = 40;
@@ -304,6 +304,12 @@ export function analyzeShellQuery(queryText: string): ShellQuery {
     for (const w of words(clause)) {
       if (w.length >= 3 && !STOP.has(w) && !GENERIC.has(w) && !INTENT.has(w)) keys.add(w);
     }
+    // Contiguous raw content-word n-grams address multi-word names and let
+    // declared aliases ("Adaptive Retrieval Core" <-> "ARC") fire.
+    const rw = words(clause).filter((w) => !STOP.has(w) && !INTENT.has(w));
+    for (let n = 2; n <= 4; n++) {
+      for (let i = 0; i + n <= rw.length; i++) keys.add(rw.slice(i, i + n).join(' '));
+    }
     const cw = contentWords(clause);
     for (let i = 0; i < cw.length; i++) {
       const t = cw[i];
@@ -338,6 +344,9 @@ export interface ShellRows {
 /** Hashed, ready-to-insert rows. Pure; used by both store and update paths. */
 export function buildShellRows(userId: number, content: string, tags: string[] = []): ShellRows {
   const shellKeys = extractShellKeys(content, tags);
+  // A memory with nothing extractable still gets a sentinel row so the repair
+  // job does not retry it on every recall.
+  if (!shellKeys.length) shellKeys.push({ key: '__no_keys__', kind: 'term', weight: 0 });
   const aliasFrom: string[] = [];
   const aliasTo: string[] = [];
   for (const pair of extractAliasPairs(content)) {
@@ -428,6 +437,8 @@ export interface ShellHit {
   nameMatch: boolean;
   /** True when the memory covers the query's rarest (most discriminative) term. */
   coversAnchor: boolean;
+  /** True when it covers the anchor through an exact NAME address. */
+  anchorByName: boolean;
   via: 'direct' | 'related';
 }
 
@@ -440,9 +451,6 @@ export interface ShellLookup {
   anchorTerm?: string;
   ms: number;
 }
-
-/** Keys shared by more memories than this are only used to score existing candidates. */
-const DF_FETCH_CAP = 400;
 
 const idf = (n: number, df: number): number => Math.log(1 + (n - df + 0.5) / (df + 0.5));
 
@@ -461,113 +469,115 @@ export async function lookupShells(userId: number, queryText: string, limit = 20
   const empty = (): ShellLookup => ({ hits: [], analysis, decisive: false, ms: Math.round(performance.now() - started) });
   if (!analysis.keys.length || !analysis.terms.length) return empty();
 
-  const hashToKey = new Map<string, string>();
-  for (const key of analysis.keys) hashToKey.set(computeBlindHash(key, userId), key);
+  const queryHashes = new Map<string, string>();
+  for (const key of analysis.keys) queryHashes.set(computeBlindHash(key, userId), key);
 
-  const aliasRows = await query<{ alias_key: string; canonical_key: string }>(
-    'SELECT alias_key, canonical_key FROM shell_aliases WHERE user_id = $1 AND alias_key = ANY($2::text[])',
-    [userId, Array.from(hashToKey.keys())],
-  );
-  for (const r of aliasRows.rows) {
-    const source = hashToKey.get(r.alias_key);
-    if (source && !hashToKey.has(r.canonical_key)) hashToKey.set(r.canonical_key, source);
-  }
-  const allHashes = Array.from(hashToKey.keys());
-
-  const [dfRows, totalRow] = await Promise.all([
-    query<{ shell_key: string; df: number }>(
-      `SELECT s.shell_key, count(*)::int AS df
+  // ONE round trip: alias expansion, document frequency, active-memory count
+  // and the candidate rows. On Workers every query is a fresh connection, so
+  // round trips, not SQL, are the cost.
+  type Row = { shell_key: string; src_key: string; pointer_id: string; kind: ShellKind; weight: number; df: number; total: number };
+  const res = await query<Row>(
+    `WITH q AS (
+       SELECT k, k AS src FROM unnest($2::text[]) AS t(k)
+       UNION
+       SELECT a.canonical_key, a.alias_key FROM shell_aliases a
+       WHERE a.user_id = $1 AND a.alias_key = ANY($2::text[])
+     ),
+     hit AS (
+       SELECT s.shell_key, q.src, s.pointer_id, s.kind, s.weight
        FROM shell_index s
+       JOIN q ON q.k = s.shell_key
        JOIN memories m ON m.pointer_id = s.pointer_id AND m.user_id = s.user_id AND m.is_active = true
-       WHERE s.user_id = $1 AND s.shell_key = ANY($2::text[])
-       GROUP BY s.shell_key`,
-      [userId, allHashes],
-    ),
-    query<{ n: number }>('SELECT count(*)::int AS n FROM memories WHERE user_id = $1 AND is_active = true', [userId]),
-  ]);
-  const total = Math.max(1, totalRow.rows[0]?.n ?? 1);
-  const df = new Map(dfRows.rows.map((r) => [r.shell_key, r.df]));
-  if (df.size === 0) return empty();
-
-  const lowHashes = allHashes.filter((h) => (df.get(h) ?? 0) > 0 && (df.get(h) ?? 0) <= DF_FETCH_CAP);
-  const highHashes = allHashes.filter((h) => (df.get(h) ?? 0) > DF_FETCH_CAP);
-
-  type Row = { shell_key: string; pointer_id: string; kind: ShellKind; weight: number };
-  const fetchRows = (hashes: string[], pointers?: string[]) => query<Row>(
-    `SELECT s.shell_key, s.pointer_id, s.kind, s.weight
-     FROM shell_index s
-     JOIN memories m ON m.pointer_id = s.pointer_id AND m.user_id = s.user_id AND m.is_active = true
-     WHERE s.user_id = $1 AND s.shell_key = ANY($2::text[])
-       ${pointers ? 'AND s.pointer_id = ANY($3::text[])' : ''}
-     ORDER BY (s.kind = 'name') DESC, s.weight DESC
-     LIMIT 20000`,
-    pointers ? [userId, hashes, pointers] : [userId, hashes],
+       WHERE s.user_id = $1
+     )
+     SELECT h.shell_key, h.src AS src_key, h.pointer_id, h.kind, h.weight,
+            count(*) OVER (PARTITION BY h.shell_key)::int AS df,
+            (SELECT count(*)::int FROM memories WHERE user_id = $1 AND is_active = true) AS total
+     FROM hit h
+     ORDER BY (h.kind = 'name') DESC, h.weight DESC
+     LIMIT 8000`,
+    [userId, Array.from(queryHashes.keys())],
   );
-
-  let rows: Row[] = lowHashes.length ? (await fetchRows(lowHashes)).rows : [];
-  if (highHashes.length && rows.length) {
-    // Very common keys never create candidates; they only score memories a
-    // more specific key already found.
-    const candidates = Array.from(new Set(rows.map((r) => r.pointer_id)));
-    rows = rows.concat((await fetchRows(highHashes, candidates)).rows);
-  }
+  const rows = res.rows;
   if (!rows.length) return empty();
+  const total = Math.max(1, rows[0].total);
 
-  // Per-term IDF from the most specific key that covers the term.
-  const termDf = new Map<string, number>();
-  for (const [hash, key] of hashToKey) {
-    const d = df.get(hash);
-    if (!d) continue;
+  // hash -> typed query key whose terms a match covers (aliases map to the key the user typed).
+  const termsOf = (key: string): string[] => {
+    const out: string[] = [];
     for (const part of key.split(' ')) {
-      const t = analysis.terms.includes(stem(part)) ? stem(part) : (analysis.terms.includes(part) ? part : null);
-      if (!t) continue;
-      termDf.set(t, Math.min(termDf.get(t) ?? Infinity, d));
+      const sp = stem(part);
+      if (analysis.terms.includes(sp)) out.push(sp);
+      else if (analysis.terms.includes(part)) out.push(part);
+    }
+    return out;
+  };
+
+  // Per-term document frequency from the most specific key, and whether any
+  // exact NAME address exists for the term.
+  const termDf = new Map<string, number>();
+  const termHasName = new Set<string>();
+  for (const r of rows) {
+    const key = queryHashes.get(r.src_key);
+    if (!key) continue;
+    for (const t of termsOf(key)) {
+      termDf.set(t, Math.min(termDf.get(t) ?? Infinity, r.df));
+      if (r.kind === 'name') termHasName.add(t);
     }
   }
-  const termIdf = new Map<string, number>();
-  for (const t of analysis.terms) termIdf.set(t, idf(total, termDf.get(t) ?? 0));
-  const idfSum = analysis.terms.reduce((sum, t) => sum + (termIdf.get(t) || 0), 0);
-  // A term absent from the index entirely is the rarest term of all.
-  let anchorTerm: string | undefined;
-  let anchorIdf = -1;
-  for (const t of analysis.terms) {
-    if ((termDf.get(t) ?? 0) === 0) continue; // unindexed: cannot anchor a hit
-    const v = termIdf.get(t) || 0;
-    if (v > anchorIdf) { anchorIdf = v; anchorTerm = t; }
-  }
+  // Terms with no address at all ("purpose", "operation") are noise: they can
+  // never be covered, so they must not inflate the denominator.
+  const indexedTerms = analysis.terms.filter((t) => termDf.has(t));
+  if (!indexedTerms.length) return empty();
+  const termIdf = new Map<string, number>(indexedTerms.map((t) => [t, idf(total, termDf.get(t)!)]));
+  const idfSum = indexedTerms.reduce((sum, t) => sum + (termIdf.get(t) || 0), 0);
+  const unindexedFraction = 1 - indexedTerms.length / analysis.terms.length;
 
-  const perMemory = new Map<string, { score: number; covered: Set<string>; keys: Set<string>; name: boolean }>();
+  // Anchor: the rarest term, preferring terms with an exact name address.
+  const pickAnchor = (pool: string[]): string | undefined => {
+    let best: string | undefined;
+    let bestIdf = -1;
+    for (const t of pool) {
+      const v = termIdf.get(t) || 0;
+      if (v > bestIdf) { bestIdf = v; best = t; }
+    }
+    return best;
+  };
+  const namedTerms = indexedTerms.filter((t) => termHasName.has(t));
+  const anchorTerm = pickAnchor(namedTerms.length ? namedTerms : indexedTerms);
+  const anchorIsName = Boolean(anchorTerm && termHasName.has(anchorTerm));
+
+  const perMemory = new Map<string, { score: number; covered: Set<string>; nameCovered: Set<string>; keys: Set<string>; name: boolean }>();
   for (const r of rows) {
-    const key = hashToKey.get(r.shell_key);
+    const key = queryHashes.get(r.src_key);
     if (!key) continue;
     let entry = perMemory.get(r.pointer_id);
     if (!entry) {
-      entry = { score: 0, covered: new Set(), keys: new Set(), name: false };
+      entry = { score: 0, covered: new Set(), nameCovered: new Set(), keys: new Set(), name: false };
       perMemory.set(r.pointer_id, entry);
     }
-    const frequency = df.get(r.shell_key) || 1;
-    entry.score += r.weight * idf(total, frequency);
+    entry.score += r.weight * idf(total, r.df);
     entry.keys.add(key);
     if (r.kind === 'name') entry.name = true;
-    for (const part of key.split(' ')) {
-      const sp = stem(part);
-      if (analysis.terms.includes(sp)) entry.covered.add(sp);
-      else if (analysis.terms.includes(part)) entry.covered.add(part);
+    for (const t of termsOf(key)) {
+      entry.covered.add(t);
+      if (r.kind === 'name') entry.nameCovered.add(t);
     }
   }
 
   const maxScore = Math.max(1e-9, ...Array.from(perMemory.values(), (e) => e.score));
-  const candidatesOut: ShellHit[] = [];
+  const out: ShellHit[] = [];
   for (const [pointerId, e] of perMemory) {
-    if (!e.covered.size) continue;
-    const covered = Array.from(e.covered);
+    const covered = Array.from(e.covered).filter((t) => termIdf.has(t));
+    if (!covered.length) continue;
     const weighted = idfSum > 0
       ? covered.reduce((sum, t) => sum + (termIdf.get(t) || 0), 0) / idfSum
-      : covered.length / analysis.terms.length;
+      : covered.length / indexedTerms.length;
     const coversAnchor = anchorTerm ? e.covered.has(anchorTerm) : false;
-    // Keep full matches, anchor holders with real support, and strong partials.
-    if (!(weighted >= 0.99 || (coversAnchor && weighted >= 0.3) || weighted >= 0.6)) continue;
-    candidatesOut.push({
+    const anchorByName = Boolean(anchorTerm && e.nameCovered.has(anchorTerm));
+    // Keep full matches, anchor holders, and strong partials.
+    if (!(weighted >= 0.99 || coversAnchor || weighted >= 0.6)) continue;
+    out.push({
       pointerId,
       score: weighted + 0.35 * Math.min(1, e.score / maxScore),
       coverage: covered.length / analysis.terms.length,
@@ -575,16 +585,23 @@ export async function lookupShells(userId: number, queryText: string, limit = 20
       matchedKeys: e.keys.size,
       nameMatch: e.name,
       coversAnchor,
+      anchorByName,
       via: 'direct',
     });
   }
-  // A memory that covers every query term outranks one that does not, then
-  // IDF-weighted score decides. Partial anchor holders still follow.
-  const full = (h: ShellHit) => (h.coverage >= 0.999 ? 1 : 0);
-  const hits = candidatesOut.sort((a, b) => (full(b) - full(a)) || (b.score - a.score)).slice(0, limit);
+  // Order: covers every indexed term, then covers the anchor, then score.
+  const full = (h: ShellHit) => (h.weightedCoverage >= 0.999 ? 1 : 0);
+  const hits = out.sort((a, b) =>
+    (full(b) - full(a)) || (Number(b.coversAnchor) - Number(a.coversAnchor)) || (b.score - a.score)).slice(0, limit);
 
   const top = hits[0];
-  const decisive = Boolean(top && top.weightedCoverage >= 0.99 && (top.nameMatch || analysis.terms.length >= 2));
+  // Decisive when the top memory covers every term that CAN be covered, and
+  // either names the subject or the query is mostly addressable; or, for a
+  // verbose natural-language query, when it holds the exact name the query is about.
+  const decisive = Boolean(top && (
+    (top.weightedCoverage >= 0.99 && unindexedFraction <= 0.5 && (top.nameMatch || indexedTerms.length >= 2))
+    || (anchorIsName && top.anchorByName)
+  ));
   return { hits, analysis, decisive, anchorTerm, ms: Math.round(performance.now() - started) };
 }
 
@@ -637,11 +654,36 @@ export async function expandRelatedShells(
     matchedKeys: r.shared,
     nameMatch: true,
     coversAnchor: false,
+    anchorByName: false,
     via: 'related' as const,
   }));
 }
 
 // ───────────────────────── repair ─────────────────────────
+
+/** Per-isolate throttle: users known to be fully indexed are rechecked at most once a minute. */
+const healChecked = new Map<number, number>();
+const HEAL_RECHECK_MS = 60_000;
+
+/**
+ * Self-heal on the read path. Memories written by anything that does not
+ * index shells (an older Worker build, the dashboard, imports) get addressed
+ * the first time their owner recalls. Bounded per call, throttled, and
+ * never allowed to fail or delay a recall beyond its own small budget.
+ */
+export async function healShellIndex(userId: number, limit = 8): Promise<number> {
+  const last = healChecked.get(userId);
+  if (last && Date.now() - last < HEAL_RECHECK_MS) return 0;
+  try {
+    const r = await repairShellIndex({ userId, limit });
+    // Keep rechecking promptly while a backlog remains; throttle once clean.
+    if (r.scanned < limit) healChecked.set(userId, Date.now());
+    return r.repaired;
+  } catch (error) {
+    console.warn(JSON.stringify({ event: 'shell_heal_failed', error: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200) }));
+    return 0;
+  }
+}
 
 /**
  * Re-index active memories that have no shell rows (stored before the index
