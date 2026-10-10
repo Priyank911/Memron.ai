@@ -22,7 +22,7 @@
  */
 import { query } from './client.js';
 
-export const EXPECTED_SCHEMA_VERSION = 11;
+export const EXPECTED_SCHEMA_VERSION = 12;
 
 const MIGRATIONS = [
   // A single explicit gate makes schema drift visible instead of allowing a
@@ -396,7 +396,7 @@ const MIGRATIONS = [
        'memories','mcp_oauth_clients','mcp_pending_auth',
        'mcp_auth_codes','mcp_refresh_tokens','forensic_snapshots',
        'buckets','conversation_history','graph_nodes','graph_edges',
-       'pinned_facts'
+       'pinned_facts','shell_index'
      ] LOOP
        EXECUTE format('ALTER TABLE IF EXISTS %I ENABLE ROW LEVEL SECURITY', t);
        FOR r IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated') LOOP
@@ -1095,6 +1095,20 @@ const MIGRATIONS = [
    ON entity_relationships(user_id, source_entity_id, strength DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_entity_rels_user_target_strength
    ON entity_relationships(user_id, target_entity_id, strength DESC)`,
+  // ─── Memory Shells (Tier 0 lock-and-key index) ───────────────
+  // Synchronous, deterministic address book: blind-hashed key -> pointer.
+  // Written at store time with no embedding or queue dependency.
+  `CREATE TABLE IF NOT EXISTS shell_index (
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shell_key   VARCHAR(64) NOT NULL,
+    pointer_id  VARCHAR(64) NOT NULL,
+    kind        VARCHAR(16) NOT NULL DEFAULT 'term',
+    weight      DOUBLE PRECISION NOT NULL DEFAULT 0.3,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, shell_key, pointer_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_shell_index_pointer ON shell_index(user_id, pointer_id)`,
+  `ALTER TABLE shell_index ENABLE ROW LEVEL SECURITY`,
   // bucket_shares is owned by the dashboard schema and is indexed there.
 ];
 

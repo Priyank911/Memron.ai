@@ -6,6 +6,7 @@
  * memory.update  → Update content/metadata (with forensic snapshot)
  * memory.delete  → Soft-delete a memory by pointer
  */
+import { indexMemoryShells } from '../retrieval/shell-index.js';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
@@ -318,6 +319,16 @@ export function registerMemoryTools(server: McpServer): void {
         const updated = await db.updateMemory(updateParams);
         if (!updated) {
           throw new Error('Update failed — memory may have been deleted');
+        }
+
+        // Keep the Tier 0 address book in step with edited content.
+        if (args.content) {
+          await indexMemoryShells({
+            userId,
+            pointerId: args.pointerId,
+            content: args.content,
+            tags: updated.tags,
+          }).catch(() => undefined);
         }
 
         // Recompute embedding if content or title changed

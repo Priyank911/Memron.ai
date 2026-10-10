@@ -21,6 +21,7 @@
     "db:migrate:analysis": "tsx src/db/migrate-analysis.ts",
     "db:backfill:graph": "tsx src/db/backfill-graph.ts",
     "db:backfill:memory-graph": "tsx src/db/backfill-memory-graph.ts",
+    "db:backfill:shells": "tsx src/db/backfill-shell-index.ts",
     "db:resolve-user": "tsx src/db/resolve-user.ts",
     "load-test": "tsx src/__tests__/load-test.ts",
     "railway:logs": "echo 'Use: railway logs -s memron-mcp' && railway logs"
