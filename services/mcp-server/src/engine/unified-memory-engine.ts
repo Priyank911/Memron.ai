@@ -17,7 +17,7 @@ import * as db from '../db/queries.js';
 import { enqueueMemoryIndexJob, type MemoryIndexQueue } from '../lib/memory-index-queue.js';
 import { hybridRetrieve } from '../retrieval/hybrid-retrieval.js';
 import { decrypt } from '../lib/encryption.js';
-import { buildShellRows, lookupShells, type ShellHit } from '../retrieval/shell-index.js';
+import { buildShellRows, expandRelatedShells, lookupShells, type ShellHit } from '../retrieval/shell-index.js';
 import { query as dbQuery } from '../db/client.js';
 
 export interface StoreRequest {
@@ -56,6 +56,8 @@ export interface RecallResult {
   matched_by?: string[];
   matched_terms?: string[];
   lexical_coverage?: number;
+  /** Workspace the memory was stored in, so callers can group results. */
+  space?: string;
 }
 
 export interface RecallResponse {
@@ -310,13 +312,13 @@ export async function storeMemory(
 interface ShellRanked {
   hit: ShellHit;
   result: RecallResult;
+  cost: number;
 }
 
-/** Dereference Tier 0 pointers into decrypted results, within budget. */
+/** Dereference Tier 0 pointers into decrypted results (budget applied later). */
 async function hydrateShellHits(
   userId: number,
   hits: ShellHit[],
-  budget: number,
   space?: string,
 ): Promise<ShellRanked[]> {
   if (!hits.length) return [];
@@ -328,7 +330,6 @@ async function hydrateShellHits(
   );
   const byId = new Map<string, any>(rows.rows.map((r: any) => [r.pointer_id, r]));
   const out: ShellRanked[] = [];
-  let used = 0;
   for (const hit of hits) {
     const row = byId.get(hit.pointerId);
     if (!row) continue;
@@ -339,23 +340,55 @@ async function hydrateShellHits(
     } catch {
       continue;
     }
-    const cost = estimateTokens(text);
-    if (out.length > 0 && used + cost > budget) continue;
-    used += cost;
+    const related = hit.via === 'related';
     out.push({
       hit,
+      cost: estimateTokens(text),
       result: {
         ref: hit.pointerId,
         text,
         type: String(row.metadata?.type || 'fact'),
-        confidence: Math.round(Math.min(0.95, 0.55 + 0.4 * hit.coverage + (hit.nameMatch ? 0.05 : 0)) * 100) / 100,
+        confidence: related
+          ? 0.5
+          : Math.round(Math.min(0.95, 0.55 + 0.4 * hit.weightedCoverage + (hit.nameMatch ? 0.05 : 0)) * 100) / 100,
         age: relativeAge(row.created_at),
-        matched_by: ['shell'],
+        matched_by: [related ? 'shell_related' : 'shell'],
         lexical_coverage: Math.round(hit.coverage * 100) / 100,
+        space: typeof row.metadata?.space === 'string' ? row.metadata.space : undefined,
       },
     });
   }
   return out;
+}
+
+/**
+ * Pick results within budget. When several workspaces hold memories for the
+ * same name, the best memory of each workspace goes first, so a tight budget
+ * never shows three memories from one conversation and hides the other two.
+ */
+function selectWithinBudget(ranked: ShellRanked[], budget: number): ShellRanked[] {
+  const seenSpace = new Set<string>();
+  const first: ShellRanked[] = [];
+  const rest: ShellRanked[] = [];
+  for (const item of ranked) {
+    const key = item.result.space ?? '';
+    if (item.hit.via === 'direct' && !seenSpace.has(key)) {
+      seenSpace.add(key);
+      first.push(item);
+    } else {
+      rest.push(item);
+    }
+  }
+  const out: ShellRanked[] = [];
+  let used = 0;
+  for (const item of [...first, ...rest]) {
+    if (out.length > 0 && used + item.cost > budget) continue;
+    used += item.cost;
+    out.push(item);
+  }
+  // Present in rank order, direct hits before related ones.
+  const order = new Map(ranked.map((item, i) => [item.result.ref, i]));
+  return out.sort((a, b) => (order.get(a.result.ref)! - order.get(b.result.ref)!));
 }
 
 async function recallSingleMemory(userId: number, request: RecallRequest): Promise<RecallAnswer> {
@@ -364,25 +397,47 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
   if (query.length > 2_000) throw new EngineError('query_too_long', { limit: 2_000 });
 
   const profile = classifyRecallQuery(query);
-  const budget = clampBudget(request.budget, profile);
+  let budget = clampBudget(request.budget, profile);
   const space = request.space?.trim() || undefined;
 
-  // Tier 0: deterministic address lookup. One indexed query, no embedding.
+  // Tier 0: deterministic address lookup, no embedding.
   let shellRanked: ShellRanked[] = [];
   let shellDecisive = false;
   try {
     const lookup = await lookupShells(userId, query);
-    // A decisive answer returns only fully covered memories; partial matches
-    // would dilute an exact answer.
-    const usable = lookup.decisive ? lookup.hits.filter((h) => h.coverage >= 0.99) : lookup.hits;
-    shellRanked = await hydrateShellHits(userId, usable, budget, space);
-    shellDecisive = lookup.decisive && shellRanked.length > 0;
+    // A decisive answer keeps full matches plus a few anchor holders (the
+    // memory that has the rarest keyword but misses a common one), so an
+    // accurate one-keyword memory is never silently dropped.
+    let usable = lookup.hits;
+    if (lookup.decisive) {
+      const full = lookup.hits.filter((h) => h.weightedCoverage >= 0.99);
+      const anchored = lookup.hits.filter((h) => h.weightedCoverage < 0.99 && h.coversAnchor).slice(0, 3);
+      usable = [...full, ...anchored];
+    }
+    // Several memories behind one name: widen the default budget so they
+    // are returned together instead of cut to one.
+    if (request.budget === undefined && usable.filter((h) => h.weightedCoverage >= 0.99).length > 1) {
+      budget = Math.max(budget, 3_000);
+    }
+    let hydrated = await hydrateShellHits(userId, usable, space);
+
+    // "jev related": add memories linked through rare shared names.
+    if (lookup.analysis.broad && hydrated.length > 0) {
+      const direct = hydrated.slice(0, 5).map((h) => h.result.ref);
+      const related = await expandRelatedShells(userId, direct, hydrated.map((h) => h.result.ref), 5);
+      hydrated = hydrated.concat(await hydrateShellHits(userId, related, space));
+    }
+
+    shellRanked = selectWithinBudget(hydrated, budget);
+    shellDecisive = lookup.decisive && shellRanked.some((h) => h.hit.via === 'direct');
     console.info(JSON.stringify({
       event: 'shell_recall',
       decisive: shellDecisive,
       hits: lookup.hits.length,
       returned: shellRanked.length,
       terms: lookup.analysis.terms.length,
+      broad: lookup.analysis.broad,
+      anchor: lookup.anchorTerm ? 'set' : 'none',
       ms: lookup.ms,
     }));
   } catch (error) {
@@ -420,6 +475,9 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
     traceId: `v2_${crypto.randomUUID()}`,
     signals: profile.weights,
     space,
+    shellHits: shellRanked
+      .filter((h) => h.hit.via === 'direct')
+      .map((h) => ({ id: h.result.ref, score: h.hit.score })),
   });
 
   const rankedResults = retrieved.memories
@@ -464,7 +522,7 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
   // backfill; otherwise the engine finds an exact fact and then hides it.
   const hasKeywordEvidence = Boolean(top?.item.signals?.bm25 !== undefined);
   const tier1Ready = Boolean(top && (top.result.confidence >= 0.55 || hasKeywordEvidence));
-  const shellReady = shellRanked.some(({ hit }) => hit.coverage >= 0.5);
+  const shellReady = shellRanked.some(({ hit }) => hit.via === 'direct' && hit.weightedCoverage >= 0.5);
   const answerReady = tier1Ready || shellReady;
 
   return {
