@@ -12,6 +12,7 @@
     "start:stdio": "node dist/stdio.js",
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run src/__tests__/retrieval-integration.test.ts",
+    "test:shell": "MEMRON_REQUIRE_PG=1 vitest run src/__tests__/shell-index.integration.test.ts",
     "test:benchmark": "vitest run src/__tests__/benchmark.test.ts",
     "test:retrieval": "tsx src/scripts/test-retrieval.ts",
     "benchmark": "tsx src/benchmark/runner.ts",

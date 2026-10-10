@@ -12,6 +12,7 @@
  */
 import { query, transaction } from './client.js';
 import { userCache, type CachedUser } from '../lib/user-cache.js';
+import { SHELL_INSERT_CTES, type ShellRows } from '../retrieval/shell-index.js';
 
 // ─────────────────────────────────────────────────────────────
 // Memory Operations
@@ -69,6 +70,11 @@ export async function insertMemory(params: {
   importance?: number;
   embedding?: string;  // pgvector string '[0.1,0.2,...]' or null
   indexStatus?: string;
+  /**
+   * Tier 0 shell rows written in the SAME statement as the memory. Either
+   * both exist or neither does, in every runtime.
+   */
+  shells?: ShellRows;
 }): Promise<MemoryRow> {
   const hasEmbedding = !!params.embedding;
   const columns = [
@@ -106,12 +112,28 @@ export async function insertMemory(params: {
     params.indexStatus ?? 'pending',
   ];
 
-  const result = await query<MemoryRow>(
-    `INSERT INTO memories (${columns.join(', ')})
-     VALUES (${placeholders})
-     RETURNING *`,
-    values,
-  );
+  let result;
+  if (params.shells) {
+    // pointerId is $1 and userId is $2 in the column list above.
+    const base = paramCount + 1;
+    result = await query<MemoryRow>(
+      `WITH m AS (
+         INSERT INTO memories (${columns.join(', ')})
+         VALUES (${placeholders})
+         RETURNING *
+       ),
+       ${SHELL_INSERT_CTES(2, 1, base)}
+       SELECT * FROM m`,
+      [...values, params.shells.keys, params.shells.kinds, params.shells.weights, params.shells.aliasFrom, params.shells.aliasTo],
+    );
+  } else {
+    result = await query<MemoryRow>(
+      `INSERT INTO memories (${columns.join(', ')})
+       VALUES (${placeholders})
+       RETURNING *`,
+      values,
+    );
+  }
 
   // Increment bucket memory_count (non-blocking, best-effort)
   query(
