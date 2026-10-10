@@ -55,6 +55,18 @@ const STOP = new Set([
   'you', 'your', 'describe', 'description', 'explain', 'please',
 ]);
 
+/**
+ * Intent words describe HOW the user is asking, not WHAT. "jev related" asks
+ * for everything about Jev; "related" must not become a term that every
+ * memory has to cover.
+ */
+const INTENT_RAW = [
+  'related', 'relate', 'relates', 'relating', 'regarding', 'concerning', 'associated',
+  'everything', 'anything', 'info', 'overview',
+];
+// Query terms are stemmed before comparison, so match both forms.
+const INTENT = new Set<string>([...INTENT_RAW, ...INTENT_RAW.map((w) => stem(w))]);
+
 /** Generic words that can help ranking but must never anchor an answer alone. */
 const GENERIC = new Set([
   'change', 'changes', 'context', 'data', 'detail', 'details', 'identity', 'information', 'made',
@@ -254,6 +266,8 @@ export interface ShellQuery {
   keys: string[];
   /** True when the query names a specific thing (capitalized, compound, quoted). */
   hasNamedEntity: boolean;
+  /** True when the user asked for everything around a subject ("jev related"). */
+  broad: boolean;
 }
 
 /**
@@ -288,23 +302,26 @@ export function analyzeShellQuery(queryText: string): ShellQuery {
     // Raw, unstemmed words address single-word NAMES ("Helios" is stored as
     // the name "helios", not the stemmed term "helio").
     for (const w of words(clause)) {
-      if (w.length >= 3 && !STOP.has(w) && !GENERIC.has(w)) keys.add(w);
+      if (w.length >= 3 && !STOP.has(w) && !GENERIC.has(w) && !INTENT.has(w)) keys.add(w);
     }
     const cw = contentWords(clause);
     for (let i = 0; i < cw.length; i++) {
       const t = cw[i];
-      if (t.length >= 3 && !GENERIC.has(t)) {
+      if (t.length >= 3 && !GENERIC.has(t) && !INTENT.has(t)) {
         keys.add(t);
         if (!seen.has(t)) { seen.add(t); terms.push(t); }
       }
-      if (i + 1 < cw.length && cw[i].length >= 3 && cw[i + 1].length >= 3) keys.add(`${cw[i]} ${cw[i + 1]}`);
+      if (i + 1 < cw.length && cw[i].length >= 3 && cw[i + 1].length >= 3
+        && !INTENT.has(cw[i]) && !INTENT.has(cw[i + 1])) keys.add(`${cw[i]} ${cw[i + 1]}`);
     }
   }
 
+  const broad = words(queryText).some((w) => INTENT.has(w));
   return {
     terms,
     keys: Array.from(keys).filter((k) => k.length >= 2).slice(0, MAX_QUERY_KEYS),
     hasNamedEntity,
+    broad,
   };
 }
 
@@ -401,11 +418,17 @@ export async function addShellAlias(userId: number, alias: string, canonical: st
 
 export interface ShellHit {
   pointerId: string;
+  /** Rank score: IDF-weighted coverage plus a bounded aboutness bonus. */
   score: number;
-  /** Fraction of the query's discriminative terms this memory covers. */
+  /** Unweighted fraction of query terms this memory covers. */
   coverage: number;
+  /** IDF-weighted fraction: a rare term counts for more than a common one. */
+  weightedCoverage: number;
   matchedKeys: number;
   nameMatch: boolean;
+  /** True when the memory covers the query's rarest (most discriminative) term. */
+  coversAnchor: boolean;
+  via: 'direct' | 'related';
 }
 
 export interface ShellLookup {
@@ -413,13 +436,24 @@ export interface ShellLookup {
   analysis: ShellQuery;
   /** True when the top hit is strong enough to answer without Tier 1. */
   decisive: boolean;
+  /** The rarest query term, the one that best identifies what is being asked. */
+  anchorTerm?: string;
   ms: number;
 }
 
+/** Keys shared by more memories than this are only used to score existing candidates. */
+const DF_FETCH_CAP = 400;
+
+const idf = (n: number, df: number): number => Math.log(1 + (n - df + 0.5) / (df + 0.5));
+
 /**
- * Dereference the query's addresses. Two indexed queries, no embedding.
- * Coverage is computed per memory against the query's own terms so a lone
- * generic match cannot masquerade as an answer.
+ * Dereference the query's addresses. A handful of indexed queries, no embedding.
+ *
+ * Ranking is IDF-weighted so a rare keyword outweighs several common ones:
+ * when "coding" is in 200 memories and "Orion" in 3, the memory that has
+ * Orion beats a memory that has coding plus another common word. Memories
+ * that cover the anchor (rarest term) are kept even when they miss the
+ * common terms, so the accurate one-keyword memory is never silently dropped.
  */
 export async function lookupShells(userId: number, queryText: string, limit = 20): Promise<ShellLookup> {
   const started = performance.now();
@@ -427,12 +461,9 @@ export async function lookupShells(userId: number, queryText: string, limit = 20
   const empty = (): ShellLookup => ({ hits: [], analysis, decisive: false, ms: Math.round(performance.now() - started) });
   if (!analysis.keys.length || !analysis.terms.length) return empty();
 
-  // hash -> the query key whose terms a match on this hash covers.
   const hashToKey = new Map<string, string>();
   for (const key of analysis.keys) hashToKey.set(computeBlindHash(key, userId), key);
 
-  // Declared aliases expand the address set. A hit through an alias covers
-  // the terms of the key the user actually typed.
   const aliasRows = await query<{ alias_key: string; canonical_key: string }>(
     'SELECT alias_key, canonical_key FROM shell_aliases WHERE user_id = $1 AND alias_key = ANY($2::text[])',
     [userId, Array.from(hashToKey.keys())],
@@ -441,34 +472,81 @@ export async function lookupShells(userId: number, queryText: string, limit = 20
     const source = hashToKey.get(r.alias_key);
     if (source && !hashToKey.has(r.canonical_key)) hashToKey.set(r.canonical_key, source);
   }
+  const allHashes = Array.from(hashToKey.keys());
 
-  const rows = await query<{ shell_key: string; pointer_id: string; kind: ShellKind; weight: number }>(
+  const [dfRows, totalRow] = await Promise.all([
+    query<{ shell_key: string; df: number }>(
+      `SELECT s.shell_key, count(*)::int AS df
+       FROM shell_index s
+       JOIN memories m ON m.pointer_id = s.pointer_id AND m.user_id = s.user_id AND m.is_active = true
+       WHERE s.user_id = $1 AND s.shell_key = ANY($2::text[])
+       GROUP BY s.shell_key`,
+      [userId, allHashes],
+    ),
+    query<{ n: number }>('SELECT count(*)::int AS n FROM memories WHERE user_id = $1 AND is_active = true', [userId]),
+  ]);
+  const total = Math.max(1, totalRow.rows[0]?.n ?? 1);
+  const df = new Map(dfRows.rows.map((r) => [r.shell_key, r.df]));
+  if (df.size === 0) return empty();
+
+  const lowHashes = allHashes.filter((h) => (df.get(h) ?? 0) > 0 && (df.get(h) ?? 0) <= DF_FETCH_CAP);
+  const highHashes = allHashes.filter((h) => (df.get(h) ?? 0) > DF_FETCH_CAP);
+
+  type Row = { shell_key: string; pointer_id: string; kind: ShellKind; weight: number };
+  const fetchRows = (hashes: string[], pointers?: string[]) => query<Row>(
     `SELECT s.shell_key, s.pointer_id, s.kind, s.weight
      FROM shell_index s
      JOIN memories m ON m.pointer_id = s.pointer_id AND m.user_id = s.user_id AND m.is_active = true
      WHERE s.user_id = $1 AND s.shell_key = ANY($2::text[])
+       ${pointers ? 'AND s.pointer_id = ANY($3::text[])' : ''}
      ORDER BY (s.kind = 'name') DESC, s.weight DESC
-     LIMIT 5000`,
-    [userId, Array.from(hashToKey.keys())],
+     LIMIT 20000`,
+    pointers ? [userId, hashes, pointers] : [userId, hashes],
   );
 
-  const df = new Map<string, number>();
-  for (const r of rows.rows) df.set(r.shell_key, (df.get(r.shell_key) || 0) + 1);
+  let rows: Row[] = lowHashes.length ? (await fetchRows(lowHashes)).rows : [];
+  if (highHashes.length && rows.length) {
+    // Very common keys never create candidates; they only score memories a
+    // more specific key already found.
+    const candidates = Array.from(new Set(rows.map((r) => r.pointer_id)));
+    rows = rows.concat((await fetchRows(highHashes, candidates)).rows);
+  }
+  if (!rows.length) return empty();
+
+  // Per-term IDF from the most specific key that covers the term.
+  const termDf = new Map<string, number>();
+  for (const [hash, key] of hashToKey) {
+    const d = df.get(hash);
+    if (!d) continue;
+    for (const part of key.split(' ')) {
+      const t = analysis.terms.includes(stem(part)) ? stem(part) : (analysis.terms.includes(part) ? part : null);
+      if (!t) continue;
+      termDf.set(t, Math.min(termDf.get(t) ?? Infinity, d));
+    }
+  }
+  const termIdf = new Map<string, number>();
+  for (const t of analysis.terms) termIdf.set(t, idf(total, termDf.get(t) ?? 0));
+  const idfSum = analysis.terms.reduce((sum, t) => sum + (termIdf.get(t) || 0), 0);
+  // A term absent from the index entirely is the rarest term of all.
+  let anchorTerm: string | undefined;
+  let anchorIdf = -1;
+  for (const t of analysis.terms) {
+    if ((termDf.get(t) ?? 0) === 0) continue; // unindexed: cannot anchor a hit
+    const v = termIdf.get(t) || 0;
+    if (v > anchorIdf) { anchorIdf = v; anchorTerm = t; }
+  }
 
   const perMemory = new Map<string, { score: number; covered: Set<string>; keys: Set<string>; name: boolean }>();
-  for (const r of rows.rows) {
+  for (const r of rows) {
     const key = hashToKey.get(r.shell_key);
     if (!key) continue;
-    const frequency = df.get(r.shell_key) || 1;
-    // Names are exact addresses: never discounted or dropped for frequency.
-    if (r.kind === 'term' && frequency > MAX_TERM_DF) continue;
     let entry = perMemory.get(r.pointer_id);
     if (!entry) {
       entry = { score: 0, covered: new Set(), keys: new Set(), name: false };
       perMemory.set(r.pointer_id, entry);
     }
-    const idf = r.kind === 'name' ? 1 : 1 / Math.log2(2 + frequency);
-    entry.score += r.weight * idf;
+    const frequency = df.get(r.shell_key) || 1;
+    entry.score += r.weight * idf(total, frequency);
     entry.keys.add(key);
     if (r.kind === 'name') entry.name = true;
     for (const part of key.split(' ')) {
@@ -478,21 +556,89 @@ export async function lookupShells(userId: number, queryText: string, limit = 20
     }
   }
 
-  const hits: ShellHit[] = Array.from(perMemory.entries())
-    .map(([pointerId, e]) => ({
+  const maxScore = Math.max(1e-9, ...Array.from(perMemory.values(), (e) => e.score));
+  const candidatesOut: ShellHit[] = [];
+  for (const [pointerId, e] of perMemory) {
+    if (!e.covered.size) continue;
+    const covered = Array.from(e.covered);
+    const weighted = idfSum > 0
+      ? covered.reduce((sum, t) => sum + (termIdf.get(t) || 0), 0) / idfSum
+      : covered.length / analysis.terms.length;
+    const coversAnchor = anchorTerm ? e.covered.has(anchorTerm) : false;
+    // Keep full matches, anchor holders with real support, and strong partials.
+    if (!(weighted >= 0.99 || (coversAnchor && weighted >= 0.3) || weighted >= 0.6)) continue;
+    candidatesOut.push({
       pointerId,
-      score: e.score,
-      coverage: e.covered.size / analysis.terms.length,
+      score: weighted + 0.35 * Math.min(1, e.score / maxScore),
+      coverage: covered.length / analysis.terms.length,
+      weightedCoverage: weighted,
       matchedKeys: e.keys.size,
       nameMatch: e.name,
-    }))
-    .filter((h) => h.coverage > 0)
-    .sort((a, b) => (b.coverage - a.coverage) || (Number(b.nameMatch) - Number(a.nameMatch)) || (b.score - a.score))
-    .slice(0, limit);
+      coversAnchor,
+      via: 'direct',
+    });
+  }
+  // A memory that covers every query term outranks one that does not, then
+  // IDF-weighted score decides. Partial anchor holders still follow.
+  const full = (h: ShellHit) => (h.coverage >= 0.999 ? 1 : 0);
+  const hits = candidatesOut.sort((a, b) => (full(b) - full(a)) || (b.score - a.score)).slice(0, limit);
 
   const top = hits[0];
-  const decisive = Boolean(top && top.coverage >= 0.99 && (top.nameMatch || analysis.terms.length >= 2));
-  return { hits, analysis, decisive, ms: Math.round(performance.now() - started) };
+  const decisive = Boolean(top && top.weightedCoverage >= 0.99 && (top.nameMatch || analysis.terms.length >= 2));
+  return { hits, analysis, decisive, anchorTerm, ms: Math.round(performance.now() - started) };
+}
+
+/**
+ * Associative expansion over the shell graph (memories are linked by the
+ * rare names they share). A synchronous, LLM-free cousin of HippoRAG's
+ * personalized PageRank step: seeds spread activation through rare shared
+ * names, weighted by IDF, so "jev related" also surfaces the AriGraph
+ * memory that never says "Jev" but shares a rare name with a Jev memory.
+ */
+export async function expandRelatedShells(
+  userId: number,
+  seedPointers: string[],
+  exclude: string[],
+  limit = 5,
+): Promise<ShellHit[]> {
+  if (!seedPointers.length) return [];
+  const totalRow = await query<{ n: number }>('SELECT count(*)::int AS n FROM memories WHERE user_id = $1 AND is_active = true', [userId]);
+  const total = Math.max(2, totalRow.rows[0]?.n ?? 2);
+  const related = await query<{ pointer_id: string; activation: number; shared: number }>(
+      `WITH seed_names AS (
+         SELECT DISTINCT shell_key FROM shell_index
+         WHERE user_id = $1 AND kind = 'name' AND pointer_id = ANY($2::text[])
+       ),
+       name_df AS (
+         SELECT s.shell_key, count(*)::int AS df
+         FROM shell_index s JOIN seed_names n ON n.shell_key = s.shell_key
+         WHERE s.user_id = $1 AND s.kind = 'name'
+         GROUP BY s.shell_key
+         HAVING count(*) BETWEEN 2 AND 30
+       )
+       SELECT s.pointer_id,
+              sum(ln(1 + $4::float8 / d.df))::float8 AS activation,
+              count(*)::int AS shared
+       FROM shell_index s
+       JOIN name_df d ON d.shell_key = s.shell_key
+       JOIN memories m ON m.pointer_id = s.pointer_id AND m.user_id = s.user_id AND m.is_active = true
+       WHERE s.user_id = $1 AND s.kind = 'name' AND NOT (s.pointer_id = ANY($3::text[]))
+       GROUP BY s.pointer_id
+       ORDER BY activation DESC
+       LIMIT $5`,
+      [userId, seedPointers, exclude, total, limit],
+  );
+  const max = Math.max(1e-9, ...related.rows.map((r) => r.activation));
+  return related.rows.map((r) => ({
+    pointerId: r.pointer_id,
+    score: 0.2 * (r.activation / max),
+    coverage: 0,
+    weightedCoverage: 0,
+    matchedKeys: r.shared,
+    nameMatch: true,
+    coversAnchor: false,
+    via: 'related' as const,
+  }));
 }
 
 // ───────────────────────── repair ─────────────────────────

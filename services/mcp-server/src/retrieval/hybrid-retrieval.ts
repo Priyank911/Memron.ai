@@ -36,7 +36,14 @@ export interface HybridRetrievalOptions {
   traceId?: string;       // pipeline-eye: correlates every log line of one recall
   /** Optional v2 namespace filter, stored in memories.metadata.space. */
   space?: string;
+  /**
+   * Tier 0 shell hits (pointer ids with scores). They enter fusion as an
+   * ordinary ranked signal so partial address matches are ranked against
+   * vector/BM25/graph evidence instead of being bolted on afterwards.
+   */
+  shellHits?: Array<{ id: string; score: number }>;
   signals?: {             // override default signal weights
+    shell?: number;
     vector?: number;
     bm25?: number;
     bm25Atomic?: number;
@@ -94,6 +101,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     ...options.signals,
   };
 
+  const shellHits = (options.shellHits || []).filter((h) => h.id);
+  const shellWeight = options.signals?.shell ?? 2.0;
   const signalResults: RRFSignal[] = [];
   const signalsUsed: string[] = [];
   const allIds = new Set<string>();
@@ -301,6 +310,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   signalStats.recency = { hits: recencyHits.length, ms: Math.round(performance.now() - tRecency) };
 
   if (vectorHits.length) signalResults.push({ name: 'vector', weight: weights.vector, results: vectorHits });
+  if (shellHits.length) signalResults.push({ name: 'shell', weight: shellWeight, results: shellHits });
   if (bm25Split.mem.length) signalResults.push({ name: 'bm25', weight: weights.bm25, results: bm25Split.mem });
   if (bm25Split.atomic.length) signalResults.push({ name: 'bm25_atomic', weight: weights.bm25Atomic, results: bm25Split.atomic });
   // Recency is a tie-breaker, not an independent discovery channel. Blindly scoring
@@ -311,6 +321,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   bm25Split.mem.forEach(h => contentCandidateIds.add(h.id));
   bm25Split.atomic.forEach(h => contentCandidateIds.add(h.id));
   graphHits.forEach(h => contentCandidateIds.add(h.id));
+  shellHits.forEach(h => contentCandidateIds.add(h.id));
 
   const relevantRecencyHits = recencyHits.filter(h => contentCandidateIds.has(h.id));
   if (relevantRecencyHits.length) signalResults.push({ name: 'recency', weight: weights.recency, results: relevantRecencyHits });
@@ -321,6 +332,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   bm25Split.atomic.forEach(h => totalCandidatesSet.add(h.id));
   graphHits.forEach(h => totalCandidatesSet.add(h.id));
   recencyHits.forEach(h => totalCandidatesSet.add(h.id));
+  shellHits.forEach(h => totalCandidatesSet.add(h.id));
 
   // Fuse
   const fusedResults = fuseWithRRF(signalResults, { topK });
@@ -353,6 +365,8 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   const allowAtomicKeywordFallback = bm25Allowed && bm25Split.mem.length === 0;
   const gatedResults = fusedResults.filter((r) => {
     const sim = vectorSimilarityById.get(r.id);
+    // 0. A Tier 0 address match is deterministic evidence, not a guess.
+    if (r.signals['shell'] !== undefined) return true;
     // 1. High-confidence semantic match stands alone.
     if (sim != null && sim >= HIGH) return true;
     // 2. Strong curated keyword match (ranked in top 5 of BM25 signal).
