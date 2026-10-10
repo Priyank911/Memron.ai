@@ -17,7 +17,7 @@ import * as db from '../db/queries.js';
 import { enqueueMemoryIndexJob, type MemoryIndexQueue } from '../lib/memory-index-queue.js';
 import { hybridRetrieve } from '../retrieval/hybrid-retrieval.js';
 import { decrypt } from '../lib/encryption.js';
-import { indexMemoryShells, lookupShells, type ShellHit } from '../retrieval/shell-index.js';
+import { buildShellRows, lookupShells, type ShellHit } from '../retrieval/shell-index.js';
 import { query as dbQuery } from '../db/client.js';
 
 export interface StoreRequest {
@@ -278,19 +278,10 @@ export async function storeMemory(
     // into a lost memory or a request timeout.
     embedding: undefined,
     indexStatus: 'pending',
+    // Tier 0: shell rows commit atomically with the memory. A stored memory
+    // can never exist without its addresses.
+    shells: buildShellRows(userId, content, request.tags || []),
   });
-
-  // Tier 0: synchronous, deterministic addressing. No embedding, no queue.
-  // Failure never fails the store; the backfill script repairs gaps.
-  try {
-    await indexMemoryShells({ userId, pointerId, content, tags: request.tags });
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: 'shell_index_failed',
-      pointerId,
-      error: error instanceof Error ? error.message : String(error),
-    }));
-  }
 
   try {
     await enqueueMemoryIndexJob({
@@ -357,7 +348,7 @@ async function hydrateShellHits(
         ref: hit.pointerId,
         text,
         type: String(row.metadata?.type || 'fact'),
-        confidence: Math.round(Math.min(0.95, 0.55 + 0.4 * hit.coverage + (hit.entityMatch ? 0.05 : 0)) * 100) / 100,
+        confidence: Math.round(Math.min(0.95, 0.55 + 0.4 * hit.coverage + (hit.nameMatch ? 0.05 : 0)) * 100) / 100,
         age: relativeAge(row.created_at),
         matched_by: ['shell'],
         lexical_coverage: Math.round(hit.coverage * 100) / 100,
@@ -381,8 +372,19 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
   let shellDecisive = false;
   try {
     const lookup = await lookupShells(userId, query);
-    shellRanked = await hydrateShellHits(userId, lookup.hits, budget, space);
+    // A decisive answer returns only fully covered memories; partial matches
+    // would dilute an exact answer.
+    const usable = lookup.decisive ? lookup.hits.filter((h) => h.coverage >= 0.99) : lookup.hits;
+    shellRanked = await hydrateShellHits(userId, usable, budget, space);
     shellDecisive = lookup.decisive && shellRanked.length > 0;
+    console.info(JSON.stringify({
+      event: 'shell_recall',
+      decisive: shellDecisive,
+      hits: lookup.hits.length,
+      returned: shellRanked.length,
+      terms: lookup.analysis.terms.length,
+      ms: lookup.ms,
+    }));
   } catch (error) {
     console.warn(JSON.stringify({
       event: 'shell_lookup_failed',
@@ -436,6 +438,12 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
         lexical_coverage: item.lexicalEvidence?.coverage,
       } as RecallResult,
     }));
+
+  // Miss telemetry: Tier 1 found an answer that Tier 0 had no address for.
+  // These are the cases to study when widening extraction or aliases.
+  if (rankedResults[0] && !shellRanked.some((s) => s.result.ref === rankedResults[0].result.ref)) {
+    console.info(JSON.stringify({ event: 'shell_miss_tier1_hit', ref: rankedResults[0].result.ref, hadShellHits: shellRanked.length }));
+  }
 
   const shellById = new Map(shellRanked.map((s) => [s.result.ref, s]));
   const merged: RecallResult[] = shellRanked.map(({ result }) => result);

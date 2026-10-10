@@ -6,6 +6,7 @@
  * memory.update  → Update content/metadata (with forensic snapshot)
  * memory.delete  → Soft-delete a memory by pointer
  */
+import { buildShellRows } from '../retrieval/shell-index.js';
 import { indexMemoryShells } from '../retrieval/shell-index.js';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -108,6 +109,7 @@ export function registerMemoryTools(server: McpServer): void {
           metadata: { compressionRate: compression.rate },
           apiKeyId,
           embedding: embeddingStr,
+          shells: buildShellRows(userId, content, args.tags ?? []),
         });
 
         // Trigger background graph distillation & auto-ingestion (entities, relations, contradiction checks)

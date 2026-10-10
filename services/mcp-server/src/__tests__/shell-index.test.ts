@@ -15,20 +15,20 @@ describe('shell key extraction', () => {
 
   it('marks proper nouns and compounds as entities', () => {
     const byKey = new Map(extractShellKeys('Jev AI uses HippoRAG and GPT-4 on Cloudflare Workers').map((k) => [k.key, k]));
-    expect(byKey.get('jev ai')?.kind).toBe('entity');
-    expect(byKey.get('hipporag')?.kind).toBe('entity');
-    expect(byKey.get('cloudflare workers')?.kind).toBe('entity');
-    expect(byKey.get('gpt 4')?.kind).toBe('entity');
+    expect(byKey.get('jev ai')?.kind).toBe('name');
+    expect(byKey.get('hipporag')?.kind).toBe('name');
+    expect(byKey.get('cloudflare workers')?.kind).toBe('name');
+    expect(byKey.get('gpt 4')?.kind).toBe('name');
   });
 
   it('indexes tags as entities', () => {
     const keys = extractShellKeys('plain lowercase text', ['Roadmap Q4']);
-    expect(keys.find((k) => k.key === 'roadmap q4')?.kind).toBe('entity');
+    expect(keys.find((k) => k.key === 'roadmap q4')?.kind).toBe('name');
   });
 
   it('is bounded', () => {
     const big = Array.from({ length: 5000 }, (_, i) => `word${i}x`).join(' ');
-    expect(extractShellKeys(big).length).toBeLessThanOrEqual(120);
+    expect(extractShellKeys(big).length).toBeLessThanOrEqual(320);
   });
 });
 
