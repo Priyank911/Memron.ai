@@ -6,6 +6,7 @@
  * 3. memory_manage  — Unified mutation verb (update, delete, pin, unpin, triage, merge, feedback)
  * 4. memory_validate— Unified pre-flight guardrail check (active contradictions, failure recipes, pinned rules)
  */
+import { indexMemoryShells } from '../retrieval/shell-index.js';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
@@ -568,6 +569,12 @@ export function registerCoreVerbs(server: McpServer, options?: { queue?: MemoryI
               tokenCount: 3,
               originalTokens: newTokens,
             });
+            await indexMemoryShells({
+              userId,
+              pointerId: args.pointerId,
+              content: args.content,
+              tags: args.tags || existing.tags,
+            }).catch(() => undefined);
 
             memoryEvents.emit({
               type: 'memory.updated',

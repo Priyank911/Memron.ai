@@ -16,6 +16,9 @@ import { config } from '../config.js';
 import * as db from '../db/queries.js';
 import { enqueueMemoryIndexJob, type MemoryIndexQueue } from '../lib/memory-index-queue.js';
 import { hybridRetrieve } from '../retrieval/hybrid-retrieval.js';
+import { decrypt } from '../lib/encryption.js';
+import { indexMemoryShells, lookupShells, type ShellHit } from '../retrieval/shell-index.js';
+import { query as dbQuery } from '../db/client.js';
 
 export interface StoreRequest {
   content: string;
@@ -88,15 +91,32 @@ export interface QueryProfile {
 
 const MAX_RECALL_BUDGET = 10_000;
 
+const QUESTION_WORDS = new Set([
+  'what', 'which', 'who', 'whom', 'where', 'when', 'why', 'how', 'tell', 'show', 'find', 'give',
+  'describe', 'explain', 'recall', 'remember', 'list', 'can', 'could', 'do', 'does', 'did', 'is',
+  'are', 'was', 'were', 'will', 'would', 'please', 'the', 'and', 'also',
+]);
+
+/** Named-looking tokens, ignoring sentence-initial question or function words. */
+function countProperNouns(text: string): number {
+  const found = new Set<string>();
+  for (const m of text.matchAll(/\b[A-Za-z][A-Za-z0-9_.-]{2,}\b/g)) {
+    const token = m[0];
+    const named = /^[A-Z]/.test(token) || /[a-z][A-Z]/.test(token);
+    if (named && !QUESTION_WORDS.has(token.toLowerCase())) found.add(token.toLowerCase());
+  }
+  return found.size;
+}
+
 /** Small deterministic classifier: no extra model call on the hot path. */
 export function classifyRecallQuery(query: string): QueryProfile {
   const normalized = query.trim();
   const relationship = /\b(related|relate|connected|connection|between|relationship|depends on|linked|who else|how does .* relate|what changed between)\b/i.test(normalized)
-    || (normalized.match(/\b[A-Z][A-Za-z0-9_-]{2,}\b/g) || []).length >= 2;
-  const broad = /\b(everything|all|overview|全|entire|whole|complete|across|history of|tell me about the project)\b/i.test(normalized)
+    || countProperNouns(normalized) >= 2;
+  const broad = /\b(everything|overview|entire|whole|complete|across|history of|tell me about the project)\b/i.test(normalized)
     || normalized.length > 220;
   const temporal = /\b(recent|recently|latest|newest|current|still|when|changed|before|after|since)\b/i.test(normalized);
-  const exact = /["'`]/.test(normalized) || /\b[A-Z][A-Za-z0-9_-]{2,}\b/.test(normalized);
+  const exact = /["'`]/.test(normalized) || countProperNouns(normalized) >= 1;
 
   if (broad) {
     return {
@@ -260,6 +280,18 @@ export async function storeMemory(
     indexStatus: 'pending',
   });
 
+  // Tier 0: synchronous, deterministic addressing. No embedding, no queue.
+  // Failure never fails the store; the backfill script repairs gaps.
+  try {
+    await indexMemoryShells({ userId, pointerId, content, tags: request.tags });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'shell_index_failed',
+      pointerId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  }
+
   try {
     await enqueueMemoryIndexJob({
       userId,
@@ -284,6 +316,57 @@ export async function storeMemory(
   return { ok: true, ref: pointerId, filed_as: type, space };
 }
 
+interface ShellRanked {
+  hit: ShellHit;
+  result: RecallResult;
+}
+
+/** Dereference Tier 0 pointers into decrypted results, within budget. */
+async function hydrateShellHits(
+  userId: number,
+  hits: ShellHit[],
+  budget: number,
+  space?: string,
+): Promise<ShellRanked[]> {
+  if (!hits.length) return [];
+  const rows = await dbQuery<any>(
+    `SELECT pointer_id, content_encrypted, content_iv, content_tag, metadata, created_at
+     FROM memories
+     WHERE user_id = $1 AND is_active = true AND pointer_id = ANY($2::text[])`,
+    [userId, hits.map((h) => h.pointerId)],
+  );
+  const byId = new Map<string, any>(rows.rows.map((r: any) => [r.pointer_id, r]));
+  const out: ShellRanked[] = [];
+  let used = 0;
+  for (const hit of hits) {
+    const row = byId.get(hit.pointerId);
+    if (!row) continue;
+    if (space && row.metadata?.space !== space) continue;
+    let text = '';
+    try {
+      text = decrypt({ encrypted: row.content_encrypted, iv: row.content_iv, tag: row.content_tag });
+    } catch {
+      continue;
+    }
+    const cost = estimateTokens(text);
+    if (out.length > 0 && used + cost > budget) continue;
+    used += cost;
+    out.push({
+      hit,
+      result: {
+        ref: hit.pointerId,
+        text,
+        type: String(row.metadata?.type || 'fact'),
+        confidence: Math.round(Math.min(0.95, 0.55 + 0.4 * hit.coverage + (hit.entityMatch ? 0.05 : 0)) * 100) / 100,
+        age: relativeAge(row.created_at),
+        matched_by: ['shell'],
+        lexical_coverage: Math.round(hit.coverage * 100) / 100,
+      },
+    });
+  }
+  return out;
+}
+
 async function recallSingleMemory(userId: number, request: RecallRequest): Promise<RecallAnswer> {
   const query = request.query?.trim();
   if (!query) throw new EngineError('query_required');
@@ -291,6 +374,34 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
 
   const profile = classifyRecallQuery(query);
   const budget = clampBudget(request.budget, profile);
+  const space = request.space?.trim() || undefined;
+
+  // Tier 0: deterministic address lookup. One indexed query, no embedding.
+  let shellRanked: ShellRanked[] = [];
+  let shellDecisive = false;
+  try {
+    const lookup = await lookupShells(userId, query);
+    shellRanked = await hydrateShellHits(userId, lookup.hits, budget, space);
+    shellDecisive = lookup.decisive && shellRanked.length > 0;
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'shell_lookup_failed',
+      error: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+    }));
+  }
+
+  if (shellDecisive) {
+    const results = shellRanked.map(({ result }) => result);
+    return {
+      query,
+      answer_ready: true,
+      budget_used: Math.min(budget, results.reduce((sum, r) => sum + estimateTokens(r.text), 0)),
+      results,
+    };
+  }
+
+  // Tier 1: probabilistic fusion. Shell hits that were not decisive still
+  // lead the list so a partial address match is never discarded.
   let embedding: number[] | undefined;
   try {
     embedding = (await generateEmbedding(buildEmbeddingInput(query, [], ''))) || undefined;
@@ -306,7 +417,7 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
     tokenBudget: budget,
     traceId: `v2_${crypto.randomUUID()}`,
     signals: profile.weights,
-    space: request.space?.trim() || undefined,
+    space,
   });
 
   const rankedResults = retrieved.memories
@@ -323,26 +434,36 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
         matched_by: Object.keys(item.signals),
         matched_terms: item.lexicalEvidence?.matchedTerms,
         lexical_coverage: item.lexicalEvidence?.coverage,
-      },
+      } as RecallResult,
     }));
 
-  const results: RecallResult[] = rankedResults.map(({ result }) => result);
+  const shellById = new Map(shellRanked.map((s) => [s.result.ref, s]));
+  const merged: RecallResult[] = shellRanked.map(({ result }) => result);
+  for (const { result } of rankedResults) {
+    const existing = shellById.get(result.ref);
+    if (existing) {
+      existing.result.matched_by = ['shell', ...(result.matched_by || [])];
+      existing.result.confidence = Math.max(existing.result.confidence, result.confidence);
+      continue;
+    }
+    merged.push(result);
+  }
 
-  const budgetUsed = Math.min(budget, results.reduce((sum, result) => sum + estimateTokens(result.text), 0));
+  const budgetUsed = Math.min(budget, merged.reduce((sum, r) => sum + estimateTokens(r.text), 0));
   const top = rankedResults[0];
   // A BM25 match is deterministic keyword evidence. It must remain usable
   // when embeddings are unavailable or legacy memories are still pending
   // backfill; otherwise the engine finds an exact fact and then hides it.
   const hasKeywordEvidence = Boolean(top?.item.signals?.bm25 !== undefined);
-  const answerReady = Boolean(
-    top && (top.result.confidence >= 0.55 || hasKeywordEvidence),
-  );
+  const tier1Ready = Boolean(top && (top.result.confidence >= 0.55 || hasKeywordEvidence));
+  const shellReady = shellRanked.some(({ hit }) => hit.coverage >= 0.5);
+  const answerReady = tier1Ready || shellReady;
 
   return {
     query,
     answer_ready: answerReady,
     budget_used: budgetUsed,
-    results: answerReady ? results : [],
+    results: answerReady ? merged : [],
   };
 }
 
