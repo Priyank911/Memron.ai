@@ -126,4 +126,67 @@ run('Tier 0 scenarios (real migrated schema)', () => {
     const r = await engine.recallMemory(userId, { query: 'what is the project name' });
     for (const x of r.results) expect(x.matched_by).not.toContain('shell');
   });
+
+  // ── Production reproduction ─────────────────────────────────────────
+  // Beta memories written by a path that does not index shells (old Worker
+  // build, dashboard writes), then a verbose natural-language agent query.
+  const legacy = async (content: string, tags: string[] = [], space = 'default') => {
+    const { encrypt, hashContent } = await import('../lib/encryption.js');
+    const { generatePointerId } = await import('../lib/pointer.js');
+    const queries = await import('../db/queries.js');
+    const enc = encrypt(content);
+    const pointerId = generatePointerId();
+    await queries.insertMemory({
+      pointerId, userId, bucket: 'knowledge', title: content.slice(0, 100).replace(/\s+/g, ' ').trim(),
+      contentEncrypted: enc.encrypted, contentIv: enc.iv, contentTag: enc.tag, contentHash: hashContent(content),
+      tags, tokenCount: 3, originalTokens: 200, metadata: { type: 'fact', space, source: 'agent' },
+      status: 'knowledge', source: 'agent', indexStatus: 'pending',
+    });
+    return pointerId;
+  };
+  const BETA = {
+    memron: '# Memron Distributed Memory Backbone\n## Problem Solved\nMemron addresses context amnesia in AI systems by giving agents a persistent, user-owned memory layer exposed over MCP. ## Architecture\nContent is encrypted with AES-256-GCM, stored in Postgres, and retrieved with hybrid search. Forensic snapshots protect every mutation, and token compression keeps context small.',
+    arigraph: '# AriGraph: Learning Knowledge Graph World Models with Episodic Memory\nAriGraph builds a memory graph with semantic and episodic nodes so agents can plan in partially observable environments.',
+    gap: '# Graph-as-Policy (GaP) for Variational Automation Robotics\nGraph-as-Policy treats the knowledge graph itself as the policy that selects actions for robots.',
+    jev: '# Jev (also referred to as ev)\n## Overview\nJev is described as a fast, lightweight agent runtime used alongside Memron for tool execution.',
+  };
+
+  it('P1. memories written without shells self-heal on the first recall', async () => {
+    const m = await legacy(BETA.memron, ['Memron', 'distributed memory', 'MCP']);
+    await legacy(BETA.arigraph);
+    await legacy(BETA.gap);
+    await legacy(BETA.jev);
+    const before = (await client.query('SELECT count(*)::int AS n FROM shell_index')).rows[0].n;
+    expect(before).toBe(0);
+    const r = await engine.recallMemory(userId, { query: 'Memron' });
+    expect(r.answer_ready).toBe(true);
+    expect(refs(r)).toContain(m);
+    const after = (await client.query('SELECT count(*)::int AS n FROM shell_index')).rows[0].n;
+    expect(after).toBeGreaterThan(0);
+  });
+
+  it('P2. the exact verbose agent query from production returns the Memron memory', async () => {
+    const m = await legacy(BETA.memron, ['Memron', 'distributed memory', 'MCP']);
+    await legacy(BETA.arigraph);
+    await legacy(BETA.gap);
+    await legacy(BETA.jev);
+    const r = await engine.recallMemory(userId, {
+      query: 'What is Memron and how does it actually work? Explain its purpose, architecture, memory storage, retrieval, and operation.',
+      budget: 2000,
+    });
+    expect(r.answer_ready).toBe(true);
+    expect(refs(r)[0]).toBe(m);
+    // Answered by Tier 0 alone: no dependency on Tier 1 speed or availability.
+    expect(r.results[0].matched_by).toEqual(['shell']);
+  });
+
+  it('P3. a short conversational query about a stored name works', async () => {
+    const a = await legacy(BETA.arigraph);
+    const g = await legacy(BETA.gap);
+    await legacy(BETA.memron, ['Memron']);
+    const r1 = await engine.recallMemory(userId, { query: 'what is arigraph and how does it work' });
+    expect(refs(r1)[0]).toBe(a);
+    const r2 = await engine.recallMemory(userId, { query: 'explain graph as policy' });
+    expect(refs(r2)[0]).toBe(g);
+  });
 });

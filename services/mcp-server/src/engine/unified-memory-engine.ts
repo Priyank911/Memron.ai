@@ -17,7 +17,7 @@ import * as db from '../db/queries.js';
 import { enqueueMemoryIndexJob, type MemoryIndexQueue } from '../lib/memory-index-queue.js';
 import { hybridRetrieve } from '../retrieval/hybrid-retrieval.js';
 import { decrypt } from '../lib/encryption.js';
-import { buildShellRows, expandRelatedShells, lookupShells, type ShellHit } from '../retrieval/shell-index.js';
+import { buildShellRows, expandRelatedShells, healShellIndex, lookupShells, type ShellHit } from '../retrieval/shell-index.js';
 import { query as dbQuery } from '../db/client.js';
 
 export interface StoreRequest {
@@ -285,6 +285,8 @@ export async function storeMemory(
     shells: buildShellRows(userId, content, request.tags || []),
   });
 
+  console.info(JSON.stringify({ event: 'memory_stored', tier0: 'atomic', pointerId }));
+
   try {
     await enqueueMemoryIndexJob({
       userId,
@@ -404,6 +406,9 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
   let shellRanked: ShellRanked[] = [];
   let shellDecisive = false;
   try {
+    // Index anything that was written without shells before we look.
+    const healed = await healShellIndex(userId);
+    if (healed > 0) console.info(JSON.stringify({ event: 'shell_healed', count: healed }));
     const lookup = await lookupShells(userId, query);
     // A decisive answer keeps full matches plus a few anchor holders (the
     // memory that has the rarest keyword but misses a common one), so an
