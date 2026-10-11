@@ -24,7 +24,7 @@ let _pool: pg.Pool | null = null;
 let activeWorkerQueries = 0;
 const waitingWorkerQueries: Array<() => void> = [];
 
-async function acquireWorkerQuerySlot(): Promise<() => void> {
+async function acquireWorkerQuerySlot(waitTimeoutMs = 18_000): Promise<() => void> {
   const max = Math.max(
     1,
     Math.min(
@@ -36,7 +36,19 @@ async function acquireWorkerQuerySlot(): Promise<() => void> {
   if (activeWorkerQueries < max) {
     activeWorkerQueries++;
   } else {
-    await new Promise<void>((resolve) => waitingWorkerQueries.push(resolve));
+    await new Promise<void>((resolve, reject) => {
+      let waiter: (() => void) | undefined;
+      const timer = setTimeout(() => {
+        const index = waiter ? waitingWorkerQueries.indexOf(waiter) : -1;
+        if (index >= 0) waitingWorkerQueries.splice(index, 1);
+        reject(new Error('database_busy_retryable'));
+      }, waitTimeoutMs);
+      waiter = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      waitingWorkerQueries.push(waiter);
+    });
     activeWorkerQueries++;
   }
 
@@ -238,7 +250,9 @@ export async function query<T extends pg.QueryResultRow = any>(
     2_500,
     Math.min(15_000, Number(options?.queryTimeoutMs || getEnv('WORKER_DB_QUERY_TIMEOUT_MS') || 10_000)),
   );
-  const releaseWorkerSlot = workerRuntime ? await acquireWorkerQuerySlot() : () => undefined;
+  const releaseWorkerSlot = workerRuntime
+    ? await acquireWorkerQuerySlot(Math.max(1_000, workerQueryTimeoutMs + 5_000))
+    : () => undefined;
   let lastError: Error | null = null;
 
   try {

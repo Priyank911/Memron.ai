@@ -88,6 +88,20 @@ export interface HybridRetrievalResult {
   tokenEstimate: number;
 }
 
+const WORKER_SIGNAL_TIMEOUT_MS = 4_500;
+
+// All signals start together, so they share one deadline. Without it the
+// sequential awaits below would each get a fresh budget (4 x 4.5s worst case).
+function settleWithin<T>(promise: Promise<T>, fallback: T, deadline: number): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), Math.max(0, deadline - Date.now()));
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
+
 export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<HybridRetrievalResult> {
   const startTime = performance.now();
   
@@ -294,19 +308,20 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
 
   // Run in parallel — promises start above, so awaiting one by one here
   // costs no parallelism but yields per-signal latency for the pipeline eye.
+  const signalDeadline = Date.now() + WORKER_SIGNAL_TIMEOUT_MS;
   const signalStats: Record<string, SignalStat> = {};
   const tVector = performance.now();
-  const vectorHits = await vectorPromise;
+  const vectorHits = await settleWithin(vectorPromise, [], signalDeadline);
   signalStats.vector = { hits: vectorHits.length, ms: Math.round(performance.now() - tVector) };
   const tBm25 = performance.now();
-  const bm25Split = await bm25Promise;
+  const bm25Split = await settleWithin(bm25Promise, { mem: [], atomic: [] }, signalDeadline);
   const bm25Hits = [...bm25Split.mem, ...bm25Split.atomic];
   signalStats.bm25 = { hits: bm25Hits.length, ms: Math.round(performance.now() - tBm25) };
   const tGraph = performance.now();
-  const graphHits = await graphPromise;
+  const graphHits = await settleWithin(graphPromise, [], signalDeadline);
   signalStats.graph = { hits: graphHits.length, ms: Math.round(performance.now() - tGraph) };
   const tRecency = performance.now();
-  const recencyHits = await recencyPromise;
+  const recencyHits = await settleWithin(recencyPromise, [], signalDeadline);
   signalStats.recency = { hits: recencyHits.length, ms: Math.round(performance.now() - tRecency) };
 
   if (vectorHits.length) signalResults.push({ name: 'vector', weight: weights.vector, results: vectorHits });
@@ -386,7 +401,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
   // to 60 sequential round-trips per recall. Now: 3 queries total, assembled
   // in fused order below with identical budget/decrypt semantics.
   const fusedIds = gatedResults.map(r => r.id);
-  const [atomicRows, graphRows, memoryRows] = await Promise.all([
+  const [atomicRows, graphRows, memoryRows] = await settleWithin(Promise.all([
     fusedIds.length
       ? query<any>(`SELECT * FROM atomic_memories WHERE user_id = $1 AND memory_id = ANY($2::text[])`, [options.userId, fusedIds]).then(r => r.rows).catch(() => [])
       : Promise.resolve([]),
@@ -396,7 +411,7 @@ export async function hybridRetrieve(options: HybridRetrievalOptions): Promise<H
     fusedIds.length
       ? query<any>(`SELECT * FROM memories WHERE user_id = $1 AND is_active = true AND pointer_id = ANY($2::text[])`, [options.userId, fusedIds]).then(r => r.rows).catch(() => [])
       : Promise.resolve([]),
-  ]);
+  ]), [[], [], []], Date.now() + WORKER_SIGNAL_TIMEOUT_MS);
   const atomicById = new Map<string, any>(atomicRows.map((r: any) => [r.memory_id, r]));
   const graphById = new Map<string, any>(graphRows.map((r: any) => [r.node_id, r]));
   const memoryById = new Map<string, any>(memoryRows.map((r: any) => [r.pointer_id || String(r.id), r]));

@@ -60,7 +60,9 @@ dead_letter_queue = "memron-index-v2-dlq"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 5
-max_concurrency = 5
+# Keep enrichment behind foreground writes. The database is shared with the
+# MCP request path; high consumer concurrency turns a burst into DB starvation.
+max_concurrency = 1
 
 [observability]
 enabled = true
