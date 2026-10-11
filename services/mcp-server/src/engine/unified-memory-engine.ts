@@ -33,11 +33,17 @@ export interface RecallRequest {
   space?: string;
 }
 
+/** Shown to the calling agent when nothing stored is relevant, so it does not improvise from a near miss. */
+export const NO_MATCH_GUIDANCE =
+  'No stored memory is relevant to this query. Do not infer or reconstruct one. Tell the user nothing was found in memory, or answer from another source and say so.';
+
 export interface RecallAnswer {
   query: string;
   answer_ready: boolean;
   budget_used: number;
   results: RecallResult[];
+  /** Set only when answer_ready is false. */
+  guidance?: string;
 }
 
 export interface StoreResponse {
@@ -65,6 +71,8 @@ export interface RecallResponse {
   answer_ready: boolean;
   budget_used: number;
   results: RecallResult[];
+  /** Set only when answer_ready is false. */
+  guidance?: string;
   /** Present when one request contains multiple explicit questions. */
   answers?: RecallAnswer[];
 }
@@ -352,7 +360,9 @@ async function hydrateShellHits(
         type: String(row.metadata?.type || 'fact'),
         confidence: related
           ? 0.5
-          : Math.round(Math.min(0.95, 0.55 + 0.4 * hit.weightedCoverage + (hit.nameMatch ? 0.05 : 0)) * 100) / 100,
+          // Blend indexed and whole-query coverage so a hit that explains only a
+          // sliver of the query can never report near-certain confidence.
+          : Math.round(Math.min(0.95, 0.55 + 0.4 * (0.5 * hit.weightedCoverage + 0.5 * hit.coverage) + (hit.nameMatch ? 0.05 : 0)) * 100) / 100,
         age: relativeAge(row.created_at),
         matched_by: [related ? 'shell_related' : 'shell'],
         lexical_coverage: Math.round(hit.coverage * 100) / 100,
@@ -533,8 +543,9 @@ async function recallSingleMemory(userId: number, request: RecallRequest): Promi
   return {
     query,
     answer_ready: answerReady,
-    budget_used: budgetUsed,
+    budget_used: answerReady ? budgetUsed : 0,
     results: answerReady ? merged : [],
+    ...(answerReady ? {} : { guidance: NO_MATCH_GUIDANCE }),
   };
 }
 
@@ -576,5 +587,6 @@ export async function recallMemory(userId: number, request: RecallRequest): Prom
     budget_used: answers.reduce((sum, answer) => sum + answer.budget_used, 0),
     results: merged,
     answers,
+    ...(answers.some((answer) => answer.answer_ready) ? {} : { guidance: NO_MATCH_GUIDANCE }),
   };
 }

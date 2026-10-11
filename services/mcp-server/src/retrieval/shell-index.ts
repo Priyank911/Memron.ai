@@ -73,6 +73,24 @@ const GENERIC = new Set([
   'memory', 'memories', 'name', 'person', 'project', 'retrieve', 'stored', 'thing', 'things', 'use',
   'used', 'using', 'note', 'notes', 'stuff', 'work', 'new', 'old',
 ]);
+// Query framing ("top 3 ...", "best ...", "prioritize ...", "shortlist ...") says
+// how to answer, not what the memory is about. These words are shared by
+// unrelated memories, so they must never be evidence on their own.
+const FRAMING_RAW = [
+  'top', 'best', 'first', 'give', 'list', 'show', 'tell', 'shortlist', 'prioritize', 'prioritized',
+  'prioritizes', 'prioritizing', 'prioritise', 'recommend', 'recommended', 'recommendation', 'recommendations',
+  'compare', 'comparison', 'explain', 'describe', 'summarize', 'summary', 'based', 'including', 'include',
+];
+for (const w of FRAMING_RAW) { GENERIC.add(w); GENERIC.add(stem(w)); }
+
+/**
+ * Share of ALL substantive query terms a hit must cover. A memory holding the
+ * exact name the query is anchored on gets a lower bar (verbose agent queries
+ * wrap one name in filler), but never below MIN_NAME_COVERAGE: a stored phrase
+ * like "local-AI" must not answer a laptop shopping query.
+ */
+const MIN_RAW_COVERAGE = 0.4;
+const MIN_NAME_COVERAGE = 0.15;
 
 export function normalizeKey(raw: string): string {
   return raw
@@ -266,6 +284,8 @@ export interface ShellQuery {
   keys: string[];
   /** True when the query names a specific thing (capitalized, compound, quoted). */
   hasNamedEntity: boolean;
+  /** Terms the user wrote as proper nouns / identifiers (capitalized mid-sentence, CamelCase, ALLCAPS, compounds). */
+  entityTerms: string[];
   /** True when the user asked for everything around a subject ("jev related"). */
   broad: boolean;
 }
@@ -295,6 +315,24 @@ export function analyzeShellQuery(queryText: string): ShellQuery {
   }
   const caps = queryText.match(/\b[A-Z][a-z]{2,}\b/g) || [];
   if (caps.some((c) => !STOP.has(c.toLowerCase()) && !GENERIC.has(c.toLowerCase()))) hasNamedEntity = true;
+
+  // Entity-like terms: the only ones allowed to anchor a low-coverage answer.
+  const entityTerms = new Set<string>();
+  const addEntity = (tok: string) => {
+    for (const part of [tok, ...tok.split(/[^A-Za-z0-9]+/)]) {
+      const l = part.toLowerCase();
+      if (l.length < 3 || STOP.has(l) || GENERIC.has(l) || INTENT.has(l)) continue;
+      entityTerms.add(l);
+      entityTerms.add(stem(l));
+    }
+  };
+  for (const clause of queryText.split(/[.!?;:\n]+/)) {
+    const toks = clause.match(/[A-Za-z][A-Za-z0-9._-]*[A-Za-z0-9]/g) || [];
+    toks.forEach((tok, i) => {
+      if (isCompoundToken(tok) || /^[A-Z]{2,}[a-z]*$/.test(tok)) addEntity(tok);
+      else if (i > 0 && /^[A-Z][a-z]/.test(tok)) addEntity(tok);
+    });
+  }
 
   const terms: string[] = [];
   const seen = new Set<string>();
@@ -327,6 +365,7 @@ export function analyzeShellQuery(queryText: string): ShellQuery {
     terms,
     keys: Array.from(keys).filter((k) => k.length >= 2).slice(0, MAX_QUERY_KEYS),
     hasNamedEntity,
+    entityTerms: Array.from(entityTerms),
     broad,
   };
 }
@@ -577,10 +616,21 @@ export async function lookupShells(userId: number, queryText: string, limit = 20
     const anchorByName = Boolean(anchorTerm && e.nameCovered.has(anchorTerm));
     // Keep full matches, anchor holders, and strong partials.
     if (!(weighted >= 0.99 || coversAnchor || weighted >= 0.6)) continue;
+    // Evidence floor. Words nobody has ever stored ("laptops", "GPU", "VRAM")
+    // were dropped from the weighted denominator above, so a memory that shares
+    // two generic words can look like a full match. Judge against the WHOLE
+    // query instead: the memory must either hold the exact name the query is
+    // about, or cover a real share of everything the query asked for. A miss
+    // here is correct; Tier 1 may still find it by meaning, and if nothing
+    // does, the honest answer is "nothing stored".
+    const rawCoverage = covered.length / analysis.terms.length;
+    // The memory holds, by exact name, an entity the user wrote as a proper noun.
+    const nameAnchored = Array.from(e.nameCovered).some((t) => analysis.entityTerms.includes(t));
+    if (rawCoverage < (nameAnchored ? MIN_NAME_COVERAGE : MIN_RAW_COVERAGE)) continue;
     out.push({
       pointerId,
       score: weighted + 0.35 * Math.min(1, e.score / maxScore),
-      coverage: covered.length / analysis.terms.length,
+      coverage: rawCoverage,
       weightedCoverage: weighted,
       matchedKeys: e.keys.size,
       nameMatch: e.name,

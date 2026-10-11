@@ -127,6 +127,52 @@ run('Tier 0 scenarios (real migrated schema)', () => {
     for (const x of r.results) expect(x.matched_by).not.toContain('shell');
   });
 
+
+  // ── Precision: never answer from an unrelated memory ───────────────
+  // Production report: the agent asked for "top 3 laptops ..." and Tier 0 returned
+  // an unrelated security memory because it shared two generic words
+  // ("top", "prioritized"). Unaddressable words (laptops, GPU, VRAM, CUDA) were
+  // dropped from the denominator, so a 1-of-20-terms match looked complete.
+  const LAPTOP_Q = 'top 3 laptops for running local AI models; prioritize GPU VRAM and CUDA support, cooling and sustained power, system RAM, storage, upgradeability; shortlist by workload and budget';
+  const SECURITY = [
+    'JWT security review checklist: check algorithm confusion and alg:none acceptance, weak signing secrets, untrusted kid/jku/jwk inputs, signature-validation gaps, missing issuer/audience/expiry checks, token leakage, and replay. Use only for authorized defensive security testing.',
+    'Top five authorized security-recon methods: asset and scope inventory; passive OSINT and DNS/subdomain discovery; live-host and service enumeration; web/API endpoint and parameter discovery; and technology, configuration, and exposure fingerprinting with prioritized validation.',
+    'Defensive local-AI safety evaluation methods: establish a baseline with benign prompts, test isolation boundaries between system instructions and user input, log prompts, outputs, model version and settings, and apply mitigations such as instruction hierarchy.',
+  ];
+
+  it('6. a query about a topic that is not stored returns nothing, not a lookalike', async () => {
+    for (const c of SECURITY) await store(c, 'personal:security');
+    const r = await engine.recallMemory(userId, { query: LAPTOP_Q, budget: 2000 });
+    expect(r.results).toEqual([]);
+    expect(r.answer_ready).toBe(false);
+    expect(r.guidance).toMatch(/No stored memory is relevant/);
+  });
+
+  it('6b. the same query finds the laptop memory once it is stored, ahead of every other memory', async () => {
+    for (const c of SECURITY) await store(c, 'personal:security');
+    const laptops = await store('Top 5 laptops for running local AI models: ASUS ROG Strix Scar 18 with RTX 5090 24GB VRAM, Lenovo Legion Pro 7i, MSI Titan 18 HX, Razer Blade 16, and MacBook Pro M4 Max with 128GB unified memory. Prioritize GPU VRAM, cooling, and RAM upgradeability.', 'personal:hardware');
+    const r = await engine.recallMemory(userId, { query: LAPTOP_Q, budget: 2000 });
+    expect(r.answer_ready).toBe(true);
+    expect(refs(r)[0]).toBe(laptops.ref);
+    expect(refs(r)).toHaveLength(1);
+  });
+
+  it('6c. a short query on the stored topic still returns the laptop memory', async () => {
+    for (const c of SECURITY) await store(c, 'personal:security');
+    const laptops = await store('Top 5 laptops for running local AI models: ASUS ROG Strix Scar 18 with RTX 5090 24GB VRAM, Lenovo Legion Pro 7i, MSI Titan 18 HX.', 'personal:hardware');
+    for (const q of ['laptops for local AI', 'best laptop for running local models', 'top 3 laptops']) {
+      const r = await engine.recallMemory(userId, { query: q });
+      expect(refs(r), q).toContain(laptops.ref);
+    }
+  });
+
+  it('6d. weak generic overlap alone ("top", "prioritize") never produces an answer', async () => {
+    for (const c of SECURITY) await store(c, 'personal:security');
+    const r = await engine.recallMemory(userId, { query: 'top 3 camping tents; prioritize weight and waterproofing' });
+    expect(r.results).toEqual([]);
+    expect(r.answer_ready).toBe(false);
+  });
+
   // ── Production reproduction ─────────────────────────────────────────
   // Beta memories written by a path that does not index shells (old Worker
   // build, dashboard writes), then a verbose natural-language agent query.
